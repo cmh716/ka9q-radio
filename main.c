@@ -104,6 +104,11 @@ double rx888_tune(struct frontend *,double);
 float rx888_gain(struct frontend *, float);
 float rx888_atten(struct frontend *,float);
 
+// In fobos.c
+int fobos_setup(struct frontend *,dictionary *,char const *);
+int fobos_startup(struct frontend *);
+double fobos_tune(struct frontend *,double);
+
 // In airspy.c
 int airspy_setup(struct frontend *,dictionary *,char const *);
 int airspy_startup(struct frontend *);
