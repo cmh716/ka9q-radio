@@ -68,7 +68,6 @@ int find_serial_position(const char *serials, const char *serialnumcfg) {
 ///////////////////////////////////////////////////////////
 int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,char const * const section){
     assert(dictionary != NULL);
-    //struct sdrstate * const sdr = (struct sdrstate *)calloc(1,sizeof(struct sdrstate));
     struct sdrstate * const sdr = calloc(1,sizeof(struct sdrstate));
     // Cross-link generic and hardware-specific control structures
     sdr->frontend = frontend;
@@ -76,9 +75,9 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     frontend->isreal = false; // Make sure the right kind of filter gets created!
     frontend->bitspersample = 16; // For gain scaling
     frontend->rf_agc = false; // On by default unless gain or atten is specified
-    
+
     sdr->buff_count = 0;
-    sdr->max_buff_count = 2048; 
+    sdr->max_buff_count = 65536; 
     
     
     // Read Config Files
@@ -92,6 +91,9 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     FREE(frontend->description);
     frontend->description = strdup(config_getstring(Dictionary,section,"description","fobos"));
     frontend->samprate = config_getdouble(Dictionary,section,"samprate",8000000.0);
+    frontend->min_IF = -0.47 * frontend->samprate;
+    frontend->max_IF = 0.47 * frontend->samprate;
+
     const char *serialnumcfg = config_getstring(Dictionary, section, "serial", NULL);
     const char *frequencycfg = config_getstring(Dictionary, section, "frequency", "100m0");
     int dirsamplecfg = config_getint(Dictionary, section, "direct_sampling", 0);
@@ -107,7 +109,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     result = fobos_rx_get_api_info(lib_version, drv_version);
     if (result != 0)
     {
-      printf("Unable to find Fobos Drivers. Please check libfobos is installed.\n");
+      fprintf(stdout, "Unable to find Fobos Drivers. Please check libfobos is installed.\n");
       return -1; 
     }
   
@@ -119,7 +121,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         fprintf(stderr, "No Fobos SDR devices found\n");
         return -1;
     }
-    fprintf(stdout, "Found %d Fobos SDR device(s)\n", fobos_count);
+    fprintf(stderr, "Found %d Fobos SDR device(s)\n", fobos_count);
   
     // If the config specifies a serial number look for it in the list -- otherwise assume device 0
     if (serialnumcfg == NULL) {
@@ -130,7 +132,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         if (position >= 0) {
             sdr->device = position;
         } else {
-            printf("Serial number '%s' not found in the list of connected Fobos devices\n", serialnumcfg);
+            fprintf(stderr, "Serial number '%s' not found in the list of connected Fobos devices\n", serialnumcfg);
             return -1; 
         }
       }
