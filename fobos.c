@@ -1,4 +1,4 @@
-// Fobos 
+// Written by KC2DAC Dec 2024, adapted from existing KA9Q SDR handler programs
 
 #define _GNU_SOURCE 1
 #include <assert.h>
@@ -31,34 +31,14 @@ struct sdrstate {
   int max_buff_count;
   int device;
   unsigned int next_sample_num;
-  //char serial[256];
-
-  //bool bias; // Bias tee on/off
-
-  // AGC
-  //bool agc;
-  //int holdoff_counter; // Time delay when we adjust gains
-  //int gain;      // Gain passed to manual gain setting
   float scale;         // Scale samples for #bits and front end gain
-
-  // Sample statistics
-  //  int clips;  // Sample clips since last reset
-  //  float DC;      // DC offset for real samples
-
-  //pthread_t read_thread;
-  //pthread_t cmd_thread;
   pthread_t monitor_thread;
 };
 
 
 static float Power_smooth = 0.05; // Calculate this properly someday
 static void rx_callback(float *buf, uint32_t buf_length, void *ctx);
-//static double set_correct_freq(struct sdrstate *sdr,double freq);
-//static int rx_callback(airspy_transfer *transfer);
 static void *fobos_monitor(void *p);
-//static double true_freq(uint64_t freq);
-//static void set_gain(struct sdrstate *sdr,int gainstep);
-
 
 
 int find_serial_position(const char *serials, const char *serialnumcfg) {
@@ -85,7 +65,6 @@ int find_serial_position(const char *serials, const char *serialnumcfg) {
 }
 
 ///////////////////////////////////////////////////////////
-//int fobos_setup(struct frontend *frontend,dictionary *dictionary,char const *section)
 int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,char const * const section){
     assert(dictionary != NULL);
     //struct sdrstate * const sdr = (struct sdrstate *)calloc(1,sizeof(struct sdrstate));
@@ -94,7 +73,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     sdr->frontend = frontend;
     frontend->context = sdr;
     frontend->isreal = false; // Make sure the right kind of filter gets created!
-    frontend->bitspersample = 14; // For gain scaling
+    frontend->bitspersample = 16; // For gain scaling
     frontend->rf_agc = false; // On by default unless gain or atten is specified
     
     sdr->buff_count = 0;
@@ -139,7 +118,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         fprintf(stderr, "No Fobos SDR devices found\n");
         return -1;
     }
-    fprintf(stderr, "Found %d Fobos SDR device(s)\n", fobos_count);
+    fprintf(stdout, "Found %d Fobos SDR device(s)\n", fobos_count);
   
     // If the config specifies a serial number look for it in the list -- otherwise assume device 0
     if (serialnumcfg == NULL) {
@@ -169,14 +148,14 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         
         result = fobos_rx_get_board_info(dev, hw_revision, fw_version, manufacturer, product, serial);
         if (result == FOBOS_ERR_OK) {
-            fprintf(stderr, "--------------------------------------------\n");
-            fprintf(stderr, "Library Version:    %s\n", lib_version);
-            fprintf(stderr, "Driver Version:     %s\n", drv_version);
-            fprintf(stderr, "Hardware Revision:  %s\n", hw_revision);
-            fprintf(stderr, "Firmware Version:   %s\n", fw_version);
-            fprintf(stderr, "Manufacturer:       %s\n", manufacturer);
-            fprintf(stderr, "Product:            %s\n", product);
-            fprintf(stderr, "--------------------------------------------\n");
+            fprintf(stdout, "--------------------------------------------\n");
+            fprintf(stdout, "Library Version:    %s\n", lib_version);
+            fprintf(stdout, "Driver Version:     %s\n", drv_version);
+            fprintf(stdout, "Hardware Revision:  %s\n", hw_revision);
+            fprintf(stdout, "Firmware Version:   %s\n", fw_version);
+            fprintf(stdout, "Manufacturer:       %s\n", manufacturer);
+            fprintf(stdout, "Product:            %s\n", product);
+            fprintf(stdout, "--------------------------------------------\n");
         } else {
             fprintf(stderr, "Error fetching device info from fobos device: %d\n", sdr->device);
             return -1;
@@ -206,11 +185,11 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         result = fobos_rx_get_samplerates(dev, sampvalues, &samplecount);
         if (result == FOBOS_ERR_OK) {
             fprintf(stderr, "--------------------------------------------\n");
-            fprintf(stderr, "Supported Sample Rates for SDR #%d:\n", sdr->device);
+            fprintf(stdout, "Supported Sample Rates for SDR #%d:\n", sdr->device);
             for (unsigned int i = 0; i < samplecount; i++) {
-                fprintf(stderr, "  %.0f \n", sampvalues[i]);
+                fprintf(stdout, "  %.0f \n", sampvalues[i]);
             }
-            fprintf(stderr, "--------------------------------------------\n");
+            fprintf(stdout, "--------------------------------------------\n");
         } else {
             fprintf(stderr, "Error fetching sample rates (error code: %d)\n", result);
             fobos_rx_close(dev);
@@ -266,26 +245,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     return 0;     
   } // End of Setup
 
-// 
-// static void *read_thread(void *arg) {   
-//        struct rx_ctx_t rx_ctx;
-//        rx_ctx.buff_count = 0;
-//        rx_ctx.dev = dev;
-//        rx_ctx.max_buff_count = 2048; // number of buffers to record
-//        fprintf(stdout, "Starting asynchronous read\n");
-//        // Call the Fobos asynchronous read function
-//        fprintf(stdout, "Starting asynchronous read\n");
-//        int result = fobos_rx_read_async(dev, rx_callback, &rx_ctx, 16, 65536);
-//        if (result != 0) {
-//            // Log the error and exit the thread if the function fails
-//            fprintf(stderr, "fobos_rx_read_async failed with error code: %d\n", result);
-//            exit(EX_NOINPUT); // Exit the thread due to an error
-//        }
-//    
-//        return NULL; // Return NULL when the thread exits cleanly
-//    }
 
-//static void *read_thread(void *arg) {  
 static void *fobos_monitor(void *p){
      struct sdrstate * const sdr = (struct sdrstate *)p;
      assert(sdr != NULL);
@@ -305,59 +265,42 @@ static void *fobos_monitor(void *p){
 
 static bool Name_set = false;
 static void rx_callback(float *buf, uint32_t len, void *ctx) {
-   struct sdrstate *sdr = (struct sdrstate *)ctx;
-   assert(sdr != NULL);
-   struct frontend * const frontend = sdr->frontend;
-   assert(frontend != NULL);
-
-   if (buf == NULL || len == 0 || len > 1e6) {
-       fprintf(stderr, "Invalid buffer or length received: buf=%p, len=%u\n", buf, len);
-       return;
-  }
-
-   fprintf(stderr, "Callback buffer address: %p, len: %u\n", (void *)buf, len);
-   
-   
-   for (size_t i = 0; i < 10; i++) {  // Print the first 10 samples
-       fprintf(stderr, "Sample[%zu]: %f\n", i, buf[i]);
-   }
+    struct sdrstate *sdr = (struct sdrstate *)ctx;
+    assert(sdr != NULL);
+    struct frontend * const frontend = sdr->frontend;
+    assert(frontend != NULL);
 
    if(!Name_set){
-     pthread_setname("fobos-cb");
-     Name_set = true;
-   }
+       pthread_setname("fobos-cb");
+       Name_set = true;
+     }
 
-     float energy = 0;
-     int const sampcount = len/2;
-     float complex * const wptr = frontend->in.input_write_pointer.c;
-     assert(wptr != NULL);
-     
-     
-    for(int i=0; i < sampcount; i++){
+    // Ensure len is a valid even number (interleaved I/Q samples)
+    assert(len % 2 == 0);
+    int const sampcount = len / 2;
+
+    float complex * const wptr = frontend->in.input_write_pointer.c;
+    assert(wptr != NULL);
+
+    float in_energy = 0;
+    for (int i = 0; i < sampcount; i++) {
         float complex samp;
-        if(buf[2*i] == 0 || buf[2*i] == 255){
-          frontend->overranges++;
-          frontend->samp_since_over = 0;
-        } else
-          frontend->samp_since_over++;
-      
-        if(buf[2*i+1] == 0 || buf[2*i+1] == 255){
-          frontend->overranges++;
-          frontend->samp_since_over = 0;
-        } else
-          frontend->samp_since_over++;
-        __real__ samp = (int)buf[2*i] - 128; // Excess-128
-        __imag__ samp = (int)buf[2*i+1] - 128;
-        energy += cnrmf(samp);
-        wptr[i] = sdr->scale * samp;
-      }
-      frontend->timestamp = gps_time_ns();
-      write_cfilter(&frontend->in,NULL,sampcount); // Update write pointer, invoke FFT
-      frontend->if_power_instant = energy / sampcount;
-      frontend->if_power += Power_smooth * (frontend->if_power_instant - frontend->if_power);
-      frontend->samples += sampcount;
-      return;
-   }
+        __real__ samp = buf[2 * i];     // Extract I component
+        __imag__ samp = buf[2 * i + 1]; // Extract Q component
+        in_energy += cnrmf(samp);       // Calculate energy of the sample
+        wptr[i] = samp;                 // Store sample in write pointer buffer
+    }
+
+    frontend->samples += sampcount;
+    frontend->timestamp = gps_time_ns();
+    write_cfilter(&frontend->in, NULL, sampcount); // Update write pointer, invoke FFT
+    //fprintf(stderr, "write_cfilter invoked with sampcount: %d\n", sampcount);
+
+    if (isfinite(in_energy)) {
+        frontend->if_power_instant = in_energy / sampcount;
+        frontend->if_power += Power_smooth * (frontend->if_power_instant - frontend->if_power);
+    }
+}
 
 int fobos_startup(struct frontend * const frontend){
   struct sdrstate * const sdr = (struct sdrstate *)frontend->context;
