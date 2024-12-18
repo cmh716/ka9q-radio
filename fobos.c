@@ -306,8 +306,6 @@ static void rx_callback(float *buf, uint32_t len, void *ctx) {
 
 int fobos_startup(struct frontend * const frontend){
   struct sdrstate * const sdr = (struct sdrstate *)frontend->context;
-  //struct sdrstate * const sdr = frontend->context;
-  //pthread_create(&sdr->read_thread,NULL,read_thread,sdr);
   pthread_create(&sdr->monitor_thread,NULL,fobos_monitor,sdr);
   fprintf(stdout,"fobos read thread running\n");
   return 0;
@@ -315,6 +313,16 @@ int fobos_startup(struct frontend * const frontend){
 
 
 double fobos_tune(struct frontend * const frontend,double const freq){
+  fprintf(stdout, "Trying to tune to: %f\n", freq);
+  struct sdrstate * const sdr = (struct sdrstate *)frontend->context;
+  double frequency_actual = 0.0;
+  int result = fobos_rx_set_frequency(dev, freq, &frequency_actual);
+  if (result != 0) {
+   fprintf(stderr, "fobos_rx_set_frequency failed with error code: %d\n", result);
+   fobos_rx_close(dev);
+   return -1;
+  }
+   frontend->frequency = freq;
   return frontend->frequency;
 }
 
