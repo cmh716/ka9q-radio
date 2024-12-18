@@ -1,6 +1,7 @@
 // Written by KC2DAC Dec 2024, adapted from existing KA9Q SDR handler programs
 
 #define _GNU_SOURCE 1
+#define SAMPLE_LOG_COUNT 1024  // Number of samples to log
 #include <assert.h>
 #include <pthread.h>
 #include <fobos.h>
@@ -253,8 +254,7 @@ static void *fobos_monitor(void *p){
      
      fprintf(stdout, "Starting asynchronous read\n");
      realtime();
-     //int result = fobos_rx_read_async(dev, rx_callback, &rx_ctx, 16, 65536);
-     int result = fobos_rx_read_async(dev, rx_callback, sdr, 0, 0);
+     int result = fobos_rx_read_async(dev, rx_callback, sdr, 16, 65536);
      if (result != 0) {
          fprintf(stderr, "fobos_rx_read_async failed with error code: %d\n", result);
          exit(EXIT_FAILURE); // Exit the thread due to an error
