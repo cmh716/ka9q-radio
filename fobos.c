@@ -73,11 +73,11 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     sdr->frontend = frontend;
     frontend->context = sdr;
     frontend->isreal = false; // Make sure the right kind of filter gets created!
-    frontend->bitspersample = 16; // For gain scaling
+    frontend->bitspersample = 14; // For gain scaling
     frontend->rf_agc = false; // On by default unless gain or atten is specified
 
     sdr->buff_count = 0;
-    sdr->max_buff_count = 65536; 
+    sdr->max_buff_count = 2048; 
     
     
     // Read Config Files
@@ -90,7 +90,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     sdr->device = -1;
     FREE(frontend->description);
     frontend->description = strdup(config_getstring(Dictionary,section,"description","fobos"));
-    frontend->samprate = config_getdouble(Dictionary,section,"samprate",8000000.0);
+    double requestsample = config_getdouble(Dictionary,section,"samprate",8000000.0);
     frontend->min_IF = -0.47 * frontend->samprate;
     frontend->max_IF = 0.47 * frontend->samprate;
 
@@ -187,7 +187,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         // Second call to fetch the actual sample rates
         result = fobos_rx_get_samplerates(dev, sampvalues, &samplecount);
         if (result == FOBOS_ERR_OK) {
-            fprintf(stderr, "--------------------------------------------\n");
+            fprintf(stdout, "--------------------------------------------\n");
             fprintf(stdout, "Supported Sample Rates for SDR #%d:\n", sdr->device);
             for (unsigned int i = 0; i < samplecount; i++) {
                 fprintf(stdout, "  %.0f \n", sampvalues[i]);
@@ -199,7 +199,20 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
         return -1;
         }
         // End of fetching sample rates here
-        
+
+        // Set the Actual Sample Rate
+        double samprate_actual = 0.0;
+        result = fobos_rx_set_samplerate(dev, frontend->samprate, &samprate_actual);
+        if (result == FOBOS_ERR_OK) {
+           frontend->samprate = samprate_actual;
+            fprintf(stdout, "Sample rate set to %f:\n", samprate_actual);
+        } else {
+            fprintf(stderr, "Error setting sample rate\n", result);
+            fobos_rx_close(dev);
+        return -1;
+        }
+
+
         // Set Frequency
         double init_frequency = parse_frequency(frequencycfg,false);
         double frequency_actual = 0.0;
@@ -209,6 +222,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
          fobos_rx_close(dev);
          return -1;
         }
+        frontend->frequency = frequency_actual;
         
         // Set Direct Sampling vs. Non
         result = fobos_rx_set_direct_sampling(dev, dirsamplecfg);
@@ -322,7 +336,7 @@ double fobos_tune(struct frontend * const frontend,double const freq){
    fobos_rx_close(dev);
    return -1;
   }
-   frontend->frequency = freq;
+   frontend->frequency = frequency_actual;
   return frontend->frequency;
 }
 
