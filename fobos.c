@@ -292,11 +292,7 @@ static void rx_callback(float *buf, uint32_t len, void *ctx) {
 
     // Ensure len is a valid even number (interleaved I/Q samples)
     assert(len % 2 == 0);
-    int const sampcount = len / 2;
-    
-    //for (int i = 0; i < sampcount; i++) {
-    //    printf("I: %f, Q: %f\n", buf[2 * i], buf[2 * i + 1]);
-    //}
+    int const sampcount = len;
 
     float complex * const wptr = frontend->in.input_write_pointer.c;
     assert(wptr != NULL);
