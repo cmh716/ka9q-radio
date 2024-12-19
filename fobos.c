@@ -91,9 +91,6 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     FREE(frontend->description);
     frontend->description = strdup(config_getstring(Dictionary,section,"description","fobos"));
     double requestsample = config_getdouble(Dictionary,section,"samprate",8000000.0);
-    frontend->min_IF = -0.47 * frontend->samprate;
-    frontend->max_IF = 0.47 * frontend->samprate;
-
     const char *serialnumcfg = config_getstring(Dictionary, section, "serial", NULL);
     const char *frequencycfg = config_getstring(Dictionary, section, "frequency", "100m0");
     int dirsamplecfg = config_getint(Dictionary, section, "direct_sampling", 0);
@@ -202,9 +199,11 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
 
         // Set the Actual Sample Rate
         double samprate_actual = 0.0;
-        result = fobos_rx_set_samplerate(dev, frontend->samprate, &samprate_actual);
+        result = fobos_rx_set_samplerate(dev, requestsample, &samprate_actual);
         if (result == FOBOS_ERR_OK) {
            frontend->samprate = samprate_actual;
+           frontend->min_IF = -0.47 * frontend->samprate;
+           frontend->max_IF = 0.47 * frontend->samprate;
             fprintf(stdout, "Sample rate set to %f:\n", samprate_actual);
         } else {
             fprintf(stderr, "Error setting sample rate\n", result);
@@ -294,6 +293,10 @@ static void rx_callback(float *buf, uint32_t len, void *ctx) {
     // Ensure len is a valid even number (interleaved I/Q samples)
     assert(len % 2 == 0);
     int const sampcount = len / 2;
+    
+    //for (int i = 0; i < sampcount; i++) {
+    //    printf("I: %f, Q: %f\n", buf[2 * i], buf[2 * i + 1]);
+    //}
 
     float complex * const wptr = frontend->in.input_write_pointer.c;
     assert(wptr != NULL);
