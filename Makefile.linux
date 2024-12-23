@@ -1,6 +1,40 @@
 # Primary Linux makefile for ka9q-radio package
 # Copyright 2017-2024, Phil Karn, KA9Q
 
+
+# Build and install libfobos from source because it's not in package managers yet
+PREREQUISITE_REPO = https://github.com/rigexpert/libfobos.git
+PREREQUISITE_DIR = libfobos
+BUILD_DIR = $(PREREQUISITE_DIR)/build
+TARGET = libfobos
+
+# Check if running as root (UID 0 means root)
+ifeq ($(shell id -u), 0)
+	SUDO =
+else
+	SUDO = sudo
+endif
+
+# Default target
+all: $(TARGET)
+
+# Rule to clone the prerequisite repo, create the build directory, and install it
+$(BUILD_DIR)/Makefile: $(PREREQUISITE_DIR)
+		@echo "Cloning the prerequisite repository..."
+		git clone $(PREREQUISITE_REPO)
+		cd $(PREREQUISITE_DIR) && mkdir build
+		# You could also check if the repo is already cloned, and skip this step if it's present
+
+# Install the prerequisite
+install-prerequisite: $(BUILD_DIR)/Makefile
+		@echo "Running cmake and make for the prerequisite..."
+		cd $(PREREQUISITE_DIR)/build && cmake .. && make && $(SUDO) make install
+
+# Rule to compile your program
+$(TARGET): install-prerequisite
+		@echo "Compiling $(TARGET)..."
+		# Add commands to compile your main program here
+
 # for production
 DOPTS = -DNDEBUG=1 -O3
 
