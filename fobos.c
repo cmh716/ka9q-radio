@@ -1,7 +1,14 @@
 // Written by KC2DAC Dec 2024, adapted from existing KA9Q SDR handler programs
 
+// Stop streaming
+// No AGC?
+// Documentation
+// SIGINT properly try to close SDR
+
+
+
+
 #define _GNU_SOURCE 1
-#define SAMPLE_LOG_COUNT 1024  // Number of samples to log
 #include <assert.h>
 #include <pthread.h>
 #include <fobos.h>
@@ -36,7 +43,6 @@ struct sdrstate {
   pthread_t monitor_thread;
 };
 
-
 static float Power_smooth = 0.05; // Calculate this properly someday
 static void rx_callback(float *buf, uint32_t buf_length, void *ctx);
 static void *fobos_monitor(void *p);
@@ -66,7 +72,7 @@ int find_serial_position(const char *serials, const char *serialnumcfg) {
 }
 
 ///////////////////////////////////////////////////////////
-int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,char const * const section){
+int fobos_setup(struct frontend * const frontend,dictionary * const dictionary,char const * const section){
     assert(dictionary != NULL);
     struct sdrstate * const sdr = calloc(1,sizeof(struct sdrstate));
     // Cross-link generic and hardware-specific control structures
@@ -82,21 +88,21 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
     
     // Read Config Files
     {
-    char const *device = config_getstring(Dictionary,section,"device",NULL);
+    char const *device = config_getstring(dictionary,section,"device",NULL);
     if(strcasecmp(device,"fobos") != 0)
       return -1; // Leave if not Fobos in the config
     }
   
     sdr->device = -1;
     FREE(frontend->description);
-    frontend->description = strdup(config_getstring(Dictionary,section,"description","fobos"));
-    double requestsample = config_getdouble(Dictionary,section,"samprate",8000000.0);
-    const char *serialnumcfg = config_getstring(Dictionary, section, "serial", NULL);
-    const char *frequencycfg = config_getstring(Dictionary, section, "frequency", "100m0");
-    int dirsamplecfg = config_getint(Dictionary, section, "direct_sampling", 0);
-    int lna_gaincfg = config_getint(Dictionary, section, "lna_gain", 0); 
-    int vga_gaincfg = config_getint(Dictionary, section, "vga_gain", 0); 
-    int clk_sourcecfg = config_getint(Dictionary, section, "clk_source", 0); 
+    frontend->description = strdup(config_getstring(dictionary,section,"description","fobos"));
+    double requestsample = config_getdouble(dictionary,section,"samprate",8000000.0);
+    const char *serialnumcfg = config_getstring(dictionary, section, "serial", NULL);
+    const char *frequencycfg = config_getstring(dictionary, section, "frequency", "100m0");
+    int dirsamplecfg = config_getint(dictionary, section, "direct_sampling", 0);
+    int lna_gaincfg = config_getint(dictionary, section, "lna_gain", 0); 
+    int vga_gaincfg = config_getint(dictionary, section, "vga_gain", 0); 
+    int clk_sourcecfg = config_getint(dictionary, section, "clk_source", 0); 
       
     // Get Fobos Library and Driver Version
     int result = 0;
@@ -206,7 +212,7 @@ int fobos_setup(struct frontend * const frontend,dictionary * const Dictionary,c
            frontend->max_IF = 0.47 * frontend->samprate;
             fprintf(stdout, "Sample rate set to %f:\n", samprate_actual);
         } else {
-            fprintf(stderr, "Error setting sample rate\n", result);
+            fprintf(stderr, "Error setting sample rate %f\n", requestsample);
             fobos_rx_close(dev);
         return -1;
         }
