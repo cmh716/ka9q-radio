@@ -28,7 +28,7 @@ $(BUILD_DIR)/Makefile: $(PREREQUISITE_DIR)
 # Install the prerequisite
 install-prerequisite: $(BUILD_DIR)/Makefile
 		@echo "Running cmake and make for the prerequisite..."
-		cd $(PREREQUISITE_DIR)/build && cmake .. && make && $(SUDO) make install
+		cd $(PREREQUISITE_DIR)/build && cmake .. && make && $(SUDO) make install && $(SUDO) ldconfig
 
 # Rule to compile your program
 $(TARGET): install-prerequisite
