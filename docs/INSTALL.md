@@ -12,7 +12,7 @@ Prerequisites
 
 To build and install this package on Debian (including the Raspberry Pi), install the prerequisite packages:
 
-sudo apt install avahi-utils build-essential make gcc libairspy-dev libairspyhf-dev libavahi-client-dev libbsd-dev libfftw3-dev libhackrf-dev libiniparser-dev libncurses5-dev libopus-dev librtlsdr-dev libusb-1.0-0-dev libusb-dev portaudio19-dev libasound2-dev uuid-dev rsync libogg-dev libsamplerate-dev
+sudo apt install avahi-utils build-essential make gcc libairspy-dev libairspyhf-dev libavahi-client-dev libbsd-dev libfftw3-dev libhackrf-dev libiniparser-dev libncurses5-dev libopus-dev librtlsdr-dev libusb-1.0-0-dev libusb-dev portaudio19-dev libasound2-dev uuid-dev rsync libogg-dev libsamplerate-dev git cmake
 
 And additionally on the Raspberry Pi:
 
@@ -31,8 +31,8 @@ Compiling and Installing
 ------------------------
 
 $ cd ka9q-radio  
-$ ln -s Makefile.[linux|pi] Makefile  
-$ make  
+$ ln -s Makefile.[linux|pi|sdrplay|fobos] Makefile  
+$ make  (if compiling with Fobos SDR support, it'll prompt for sudo password to install libfobos drivers - you can avoid via sudo make)
 $ sudo make install  
 
 This will write into the following directories:
