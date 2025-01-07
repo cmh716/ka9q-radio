@@ -104,6 +104,11 @@ double rx888_tune(struct frontend *,double);
 float rx888_gain(struct frontend *, float);
 float rx888_atten(struct frontend *,float);
 
+// In fobos.c
+int fobos_setup(struct frontend *, dictionary *, char const *);
+int fobos_startup(struct frontend *);
+double fobos_tune(struct frontend *, double);
+
 // In airspy.c
 int airspy_setup(struct frontend *,dictionary *,char const *);
 int airspy_startup(struct frontend *);
@@ -619,6 +624,12 @@ static int setup_hardware(char const *sname){
     Frontend.tune = rx888_tune;
     Frontend.gain = rx888_gain;
     Frontend.atten = rx888_atten;
+#ifdef FOBOS
+  } else if (strcasecmp(device, "fobos") == 0) {
+    Frontend.setup = fobos_setup;
+    Frontend.start = fobos_startup;
+    Frontend.tune = fobos_tune;
+#endif
   } else if(strcasecmp(device,"airspy") == 0){
     Frontend.setup = airspy_setup;
     Frontend.start = airspy_startup;
