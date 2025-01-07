@@ -90,7 +90,7 @@ install: $(DAEMONS) $(EXECS)
 	systemctl daemon-reload
 
 clean:
-	-rm -f *.o *.a .depend $(EXECS) $(DAEMONS)
+	-rm -fr libfobos *.o *.a .depend $(EXECS) $(DAEMONS)
 
 .PHONY: clean all install
 
