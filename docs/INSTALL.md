@@ -11,34 +11,49 @@ Prerequisites
 -------------
 
 To build and install this package on Debian (including the Raspberry Pi), install the prerequisite packages:
-
+```
 sudo apt install avahi-utils build-essential make gcc libairspy-dev libairspyhf-dev libavahi-client-dev libbsd-dev libfftw3-dev libhackrf-dev libiniparser-dev libncurses5-dev libopus-dev librtlsdr-dev libusb-1.0-0-dev libusb-dev portaudio19-dev libasound2-dev uuid-dev rsync libogg-dev libsamplerate-dev libliquid-dev
-
 (libliquid-dev isn't actually used yet, but it probably will be soon.)
+```
 
 And additionally on the Raspberry Pi:
-
+```
 sudo apt install libpigpio-dev
+```
 
 Although not needed to build ka9q-radio, I find it useful to install the following:
-
+```
 sudo apt install sox libsox-fmt-all opus-tools flac tcpdump wireshark
+```
 
 And if your system is in a remote location, I strongly recommend this one:
-
+```
 sudo apt install molly-guard
-
+```
 
 Compiling and Installing
 ------------------------
+SDR Device Support: 
 
+| SDR Device    | Driver | Description |
+| -------- | ------- | ------- |
+| Airspy  | Built-in support    | No additional work is required to use this SDR |
+| Airspy HF | Built-in support | No additional work is required to use this SDR  |
+| RX888 MK II | Built-in support | No additional work is required to use this SDR |
+| Funcube  | Built-in support | No additional work is required to use this SDR  |
+| SDRPlay | You must first install the [SDRPlay Driver](https://www.sdrplay.com/api/) before compiling | Append `SDRPLAY=1` to the make command to add SDRPlay Radio Support  |
+| Fobos SDR | You must first succesfully install the [libfobos Driver](https://github.com/rigexpert/libfobos) and run `sudo ldconfig` before compiling. | Append `FOBOS=1` to the make command to add Fobos SDR Support  |
+
+
+```
 $ cd ka9q-radio  
-$ ln -s Makefile.[linux|pi] Makefile  
-$ make  
+$ ln -s Makefile.[linux|pi|sdrplay|fobos] Makefile
+$ make   [Append FOBOS=1 and/or SDRPLAY=1 if you have the drivers installed and require access to these devices]
 $ sudo make install  
+```
 
 This will write into the following directories:
-
+```
 /usr/local/sbin	     	 	   daemon binaries (e.g., 'radiod')  
 /usr/local/bin		 	   application programs (e.g., 'control')  
 /usr/local/share/ka9q-radio	   support files (e.g., 'modes.conf')  
@@ -48,14 +63,15 @@ This will write into the following directories:
 /etc/udev/rules.d		   device daemon rule files (e.g., 52-airspy.rules)  
 /etc/fftw			   FFTW "wisdom" files (i.e., wisdomf)  
 /etc/radio			   program config files (e.g., radio@2m.conf - but *will not* overwrite existing files)
-
+```
 It will also create several special system users and groups so that
 the daemons don't have to run with root permissions. I recommend that
 you add your own user ID to the **radio** group so you can 
 modify most of the relevant installed directories and files without
 becoming root:
-
+```
 $ sudo addgroup your_user_name radio
+```
 
 Membership in a few other groups can minimize the need to run as root:
 

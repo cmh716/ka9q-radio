@@ -30,6 +30,26 @@ CFILES = airspy.c airspyhf.c aprs.c aprsfeed.c attr.c audio.c avahi.c avahi_brow
 
 HFILES = attr.h ax25.h bandplan.h conf.h config.h decimate.h ezusb.h fcd.h fcdhidcmd.h filter.h hidapi.h iir.h misc.h monitor.h morse.h multicast.h osc.h radio.h rx888.h status.h
 
+LDFLAGS = -lavahi-client -lavahi-common -lfftw3f_threads -lfftw3f -liniparser -lairspy -lairspyhf -lrtlsdr -lopus -lportaudio -lusb-1.0 -lbsd -lm -lpthread
+
+RADIOD_OBJECTS = main.o audio.o fm.o wfm.o linear.o spectrum.o radio.o radio_status.o rtcp.o rx888.o airspy.o airspyhf.o funcube.o rtlsdr.o sig_gen.o ezusb.o libfcd.a libradio.a
+
+# If FOBOS is set, add the necessary flags, files, and libraries
+ifdef FOBOS
+CFLAGS += -DFOBOS
+CFILES := $(CFILES) fobos.c
+RADIOD_OBJECTS := $(RADIOD_OBJECTS) fobos.o
+LDFLAGS += -lfobos
+endif
+
+# If SDRPLAY is set, add the necessary flags, files, and libraries
+ifdef SDRPLAY
+CFLAGS += -DSDRPLAY
+CFILES := $(CFILES) sdrplay.c
+RADIOD_OBJECTS := $(RADIOD_OBJECTS) sdrplay.o
+LDFLAGS += -lsdrplay_api
+endif
+
 all: $(DAEMONS) $(EXECS)
 
 # NB: no longer copies files to /etc/radio. Must be installed manually.
@@ -123,8 +143,8 @@ powers: powers.o libradio.a
 pl: pl.o libradio.a
 	$(CC) $(LDOPTS) -o $@ $^ -lfftw3f_threads -lfftw3f -lbsd -lm -lpthread
 
-radiod: main.o audio.o fm.o wfm.o linear.o spectrum.o radio.o radio_status.o rtcp.o rx888.o airspy.o airspyhf.o funcube.o rtlsdr.o sig_gen.o ezusb.o libfcd.a libradio.a
-	$(CC) $(LDOPTS) -o $@ $^ -lavahi-client -lavahi-common -lfftw3f_threads -lfftw3f -liniparser -lairspy -lairspyhf -lrtlsdr -lopus -lportaudio -lusb-1.0 -lbsd -lm -lpthread
+radiod: $(RADIOD_OBJECTS)
+	$(CC) $(LDOPTS) -o $@ $^ $(LDFLAGS)
 
 rdsd: rdsd.o libradio.a
 	$(CC) $(LDOPTS) -o $@ $^ -lavahi-client -lavahi-common -lfftw3f_threads -lfftw3f -lbsd -lm -lpthread
