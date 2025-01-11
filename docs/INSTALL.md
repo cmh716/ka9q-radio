@@ -47,7 +47,7 @@ SDR Device Support:
 
 ```
 $ cd ka9q-radio  
-$ ln -s Makefile.[linux|pi|sdrplay|fobos] Makefile
+$ ln -s Makefile.[linux|debug|pi] Makefile
 $ make   [Append FOBOS=1 and/or SDRPLAY=1 if you have the drivers installed and require access to these devices]
 $ sudo make install  
 ```
