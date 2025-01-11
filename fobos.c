@@ -69,9 +69,7 @@ int find_serial_position(const char *serials, const char *serialnumcfg) {
 int fobos_setup(struct frontend *const frontend, dictionary *const dictionary,
                 char const *const section) {
   assert(dictionary != NULL);
-
-  config_validate_section(stdout, Dictionary, "hardware", fobos_keys, NULL);
-
+  config_validate_section(stdout, dictionary, "fobos", fobos_keys, NULL);
   struct sdrstate *const sdr = calloc(1, sizeof(struct sdrstate));
   // Cross-link generic and hardware-specific control structures
   sdr->frontend = frontend;
