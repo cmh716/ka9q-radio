@@ -86,7 +86,10 @@ void *lmalloc(size_t size);
 static void suggest(int level,int size,int dir,int clex);
 static float noise_gain(struct filter_out const * const slave);
 static bool goodchoice(unsigned long n);
-
+#if 0
+static unsigned long gcd(unsigned long a,unsigned long b);
+static unsigned long lcm(unsigned long a,unsigned long b);
+#endif
 
 // Create fast convolution filters
 // The filters are now in two parts, filter_in (the master) and filter_out (the slave)
@@ -130,8 +133,9 @@ struct filter_in *create_filter_input(struct filter_in *master,int const L,int c
 
   if(master == NULL)
     return NULL;
-  if(!goodchoice(N))
-    fprintf(stdout,"create_filter_input(L=%d, M=%d): N=%d is not a good blocksize for FFTW3\n",L,M,N);
+  if(!goodchoice(N)){
+    fprintf(stdout,"create_filter_input(L=%d, M=%d): N=%d is not an efficient blocksize for FFTW3\n",L,M,N);
+  }
 
 
   for(int i=0; i < ND; i++){
@@ -152,6 +156,7 @@ struct filter_in *create_filter_input(struct filter_in *master,int const L,int c
   // But we have a set of worker threads operating on a job queue to allow a controlled number
   // of independent FFTs to execute at the same time
   if(!FFTW_init){
+    printf("FFTW version: %s\n", fftwf_version);
     fftwf_init_threads();
     bool sr = fftwf_import_system_wisdom();
     fprintf(stdout,"fftwf_import_system_wisdom() %s\n",sr ? "succeeded" : "failed");
@@ -312,8 +317,21 @@ struct filter_out *create_filter_output(struct filter_out *slave,struct filter_i
       fprintf(stdout,"fftwf_export_wisdom_to_filename(%s) failed\n",Wisdom_file);
     break;
   }
-  if(!goodchoice(slave->bins))
-    fprintf(stdout,"create_filter_output: N=%d is not a good blocksize for FFTW3\n",slave->bins);
+  if(!goodchoice(slave->bins)){
+    int const n = slave->bins;
+    int const ell = slave->olen;
+    int const overlap = n / (n - ell);
+    int const step = overlap;
+    for(int nn = n + step; nn < master->ilen + master->impulse_length - 1; nn += step){
+      if(goodchoice(nn)){
+	int nell = nn * ell / n;
+	int nm = nn - nell + 1;
+	fprintf(stdout,"create_filter_output: N=%d is not an efficient blocksize for FFTW3.",n);
+	fprintf(stdout," Next good choice is N = %d (L=%d, M=%d); set samprate = %d * blockrate\n",nn,nell,nm,ell);
+	break;
+      }
+    }
+  }
 
   slave->next_jobnum = master->next_jobnum;
   pthread_mutex_unlock(&FFTW_planning_mutex);
@@ -1174,10 +1192,8 @@ static bool goodchoice(unsigned long n){
     return true;
 }
 
-#if 0 // Use these later for determining valid output sample rates
-static unsigned long gcd(unsigned long a,unsigned long b);
-static unsigned long lcm(unsigned long a,unsigned long b);
 
+#if 0
 // Greatest common divisor
 static unsigned long gcd(unsigned long a,unsigned long b){
   while(b != 0){
@@ -1187,6 +1203,7 @@ static unsigned long gcd(unsigned long a,unsigned long b){
   }
   return a;
 }
+
 
 static unsigned long lcm(unsigned long a,unsigned long b){
   if(a == 0 || b == 0)
