@@ -38,6 +38,39 @@ enum sdrplay_status {
   DEVICE_STREAMING = 8
 };
 
+char const *SDRplay_keys[] = {
+  "device",
+  "serial",
+  "rspduo-mode",
+  "antenna",
+  "ifreq",
+  "bandwidth",
+  "samprate",
+  "calibrate",
+  "frequency",
+  "lna-state",
+  "rf-att",
+  "rf-gr",
+  "if-att", 
+  "if-gr",
+  "if-agc",
+  "if-agc-rate",
+  "if-agc-setpoint-dbfs",
+  "if-agc-attack-ms",
+  "if-agc-decay-ms",
+  "if-agc-decay-delay-ms",
+  "if-agc-decay-threshold-db",
+  "dc-offset-corr",
+  "iq-imbalance-corr",
+  "bulk-transfer-mode",
+  "rf-notch",
+  "dab-notch",
+  "am-notch",
+  "bias-t",
+  "description",
+  NULL
+};
+
 // Anything generic should be in 'struct frontend' section 'sdr' in radio.h
 struct sdrstate {
   struct frontend *frontend;  // Avoid references to external globals
@@ -137,7 +170,7 @@ static void show_device_params(struct sdrstate *sdr);
 
 int sdrplay_setup(struct frontend * const frontend,dictionary * const Dictionary,char const * const section){
   assert(Dictionary != NULL);
-
+  config_validate_section(stdout,Dictionary,"sdrplay",SDRplay_keys,NULL);
   struct sdrstate * const sdr = calloc(1,sizeof(struct sdrstate));
   // Cross-link generic and hardware-specific control structures
   sdr->frontend = frontend;
