@@ -14,10 +14,11 @@
 #include "radio.h"
 
 // Spectrum analysis thread
-void *demod_spectrum(void *arg){
-  assert(arg != NULL);
+int demod_spectrum(void *arg){
   struct channel * const chan = arg;
-
+  assert(chan != NULL);
+  if(chan == NULL)
+    return -1;
   {
     char name[100];
     snprintf(name,sizeof(name),"spect %u",chan->output.rtp.ssrc);
@@ -69,7 +70,7 @@ void *demod_spectrum(void *arg){
       old_bins = fft_bins;
 
       // Special filter without a response curve or IFFT
-      if(create_filter_output(&chan->filter.out,&Frontend.in,NULL,fft_bins,SPECTRUM) == NULL)
+      if(create_filter_output(&chan->filter.out,&Frontend.in,NULL,fft_bins,SPECTRUM) != 0)
 	assert(0);
 
       // Although we don't use filter_output, chan->filter.min_IF and max_IF still need to be set
@@ -92,5 +93,5 @@ void *demod_spectrum(void *arg){
   FREE(chan->status.command);
   FREE(chan->filter.energies);
   delete_filter_output(&chan->filter.out);
-  return NULL;
+  return 0;
 }

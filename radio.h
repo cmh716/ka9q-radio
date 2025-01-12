@@ -22,7 +22,9 @@
 #include "filter.h"
 #include "iir.h"
 
-// The four demodulator types
+/**
+   @brief The four demodulator types
+ */
 enum demod_type {
   LINEAR_DEMOD = 0,     // Linear demodulation, i.e., everything else: SSB, CW, DSB, CAM, IQ
   FM_DEMOD,             // Frequency/phase demodulation
@@ -31,6 +33,9 @@ enum demod_type {
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 
+/**
+   @brief list of demodulator enums and readable strings
+*/
 struct demodtab {
   enum demod_type type;
   char name[16];
@@ -143,12 +148,22 @@ struct channel {
     float max_IF;         // (settable)
     // Window shape factor for Kaiser window
     float kaiser_beta;  // settable
-    bool isb;           // Independent sideband mode (settable, currently unimplemented)
     float *energies;    // Vector of smoothed bin energies
     int bin_shift;      // FFT bin shift for frequency conversion
     double remainder;   // Frequency remainder for fine tuning
     complex double phase_adjust; // Block rotation of phase
   } filter;
+
+  // Optional secondary filter (linear demod only)
+  struct {
+    struct filter_in in;
+    struct filter_out out;
+    float low;
+    float high;
+    float kaiser_beta;
+    bool isb;
+    unsigned int blocking;       // Ratio of output to input blocksize; 0 = filter2 disabled
+  } filter2;
 
   enum demod_type demod_type;  // Index into demodulator table (Linear, FM, FM Stereo, Spectrum)
   char preset[32];       // name of last mode preset
@@ -234,8 +249,8 @@ struct channel {
     float *queue; // Mirrored ring buffer
     size_t queue_size; // Size of allocation, in floats
     unsigned wp,rp; // Queue write and read indices
-    unsigned minpacket;  // minimum output packet size in blocks (0-3)
-                         // i.e, no minimum or at least 20ms, 40ms or 60ms/packet
+    unsigned minpacket;  // minimum output packet size in blocks (0-4)
+                         // i.e, no minimum or at least 20ms, 40ms, 60ms or 80ms /packet for 20ms blocktime
   } output;
 
   struct {
@@ -305,10 +320,10 @@ void *sap_send(void *);
 void *radio_status(void *);
 
 // Demodulator thread entry points
-void *demod_fm(void *);
-void *demod_wfm(void *);
-void *demod_linear(void *);
-void *demod_spectrum(void *);
+int demod_fm(void *);
+int demod_wfm(void *);
+int demod_linear(void *);
+int demod_spectrum(void *);
 
 int send_output(struct channel * restrict ,const float * restrict,int,bool);
 int send_radio_status(struct sockaddr const *,struct frontend const *, struct channel *);
