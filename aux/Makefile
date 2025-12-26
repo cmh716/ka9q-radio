@@ -37,7 +37,12 @@ install-Linux:
 	chmod g+w $(SYSFILES)
 	# Setup kernel configuration
 	rsync $(SYSCTL) /etc/sysctl.d
+ifeq ($(IN_DOCKER),1)
+	@echo "Skipping sysctl tuning in Docker"
+else
 	sysctl -q -p $(SYSCTL)
+endif
+	rsync $(BLACKLIST) /etc/modprobe.d
 	rsync $(BLACKLIST) /etc/modprobe.d
 	# Setup log rotation
 	rsync $(LOGROTATE_FILES) /etc/logrotate.d
