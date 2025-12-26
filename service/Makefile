@@ -11,8 +11,13 @@ clean:
 install: install-$(UNAME_S)
 
 install-Linux:
+ifeq ($(IN_DOCKER),1)
+	@echo "Skipping systemctl tuning in Docker"
+else
+	rsync $(BLACKLIST) /etc/modprobe.d
 	rsync * /etc/systemd/system
 	systemctl daemon-reload
+endif
 
 install-Darwin:
 	# TODO
