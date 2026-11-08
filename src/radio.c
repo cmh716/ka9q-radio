@@ -985,6 +985,9 @@ static void *demod_thread(void *p){
     case FM_DEMOD:
       status = demod_fm(p);
       break;
+    case P25_DEMOD:
+      status = demod_p25(p);
+      break;
     case WFM_DEMOD:
       status = demod_wfm(p);
       break;
@@ -1304,7 +1307,7 @@ int downconvert(chan_t * const chan){
       chan->sig.n0 += N0_alpha * (estimate_noise(chan,shift) - chan->sig.n0);
     }
     // set fine tuning frequency & phase
-    double const samptime = 1.0 / chan->output.samprate;
+    double const samptime = 1.0 / channel_input_samprate(chan);
     double const slope = chan->tune.sweep_rate * samptime * samptime; // turns/sample
     uint64_t const sweep_increment = set_nco(-slope);
     uint64_t increment = set_nco(-(remainder * samptime + 0.5 * slope));
@@ -1385,8 +1388,9 @@ void response(chan_t * const chan){
 
 // Set main downconverter filter, and filter2 if enabled, to specified channel bandwidth
 int set_channel_filter(chan_t * const chan){
+  int const samprate = channel_input_samprate(chan);
   // Limit to Nyquist rate
-  float const nyquist = chan->output.samprate / 2.0f;
+  float const nyquist = samprate / 2.0f;
   float lower = max(chan->filter.min_IF, -nyquist);
   float upper = min(chan->filter.max_IF, nyquist);
   assert(lower < upper); // already been checked and optionally swapped a few times
@@ -1394,14 +1398,14 @@ int set_channel_filter(chan_t * const chan){
   if(Verbose > 1)
     fprintf(stderr,"%s new filter: IF=[%'.0f,%'.0f], samprate %'d, kaiser beta %.1f, filter2 %d\n",
 	    chan->name, lower, upper,
-	    chan->output.samprate, chan->filter.kaiser_beta,chan->filter2.blocking);
+	    samprate, chan->filter.kaiser_beta,chan->filter2.blocking);
 
   bool const old_isb = chan->filter2.out.isb; // Copy old state of ISB flag
   delete_filter_output(&chan->filter2.out);
   delete_filter_input(&chan->filter2.in);
   if(chan->filter2.blocking > 0){
     assert(Blocktime != 0);
-    int const blocksize = (int)lrint(chan->filter2.blocking * chan->output.samprate * Blocktime);
+    int const blocksize = (int)lrint(chan->filter2.blocking * samprate * Blocktime);
     float const binsize = (float) ((Overlap - 1) / (Blocktime * Overlap));
     float const margin = 4.0f * binsize; // 4 bins should be enough even for large Kaiser betas
 
@@ -1419,8 +1423,8 @@ int set_channel_filter(chan_t * const chan){
     if(isnan(chan->filter2.kaiser_beta) || chan->filter2.kaiser_beta < 0 || !isfinite(chan->filter2.kaiser_beta))
       chan->filter2.kaiser_beta = chan->filter.kaiser_beta;
     set_filter(&chan->filter2.out,
-	       lower/chan->output.samprate,
-	       upper/chan->output.samprate,
+	       lower/samprate,
+	       upper/samprate,
 	       chan->filter2.kaiser_beta);
     // Widen the main filter a little to keep its broad skirts from cutting into filter2's response
     // I.e., the main filter becomes a roofing filter
@@ -1430,8 +1434,8 @@ int set_channel_filter(chan_t * const chan){
   }
   // Set main filter
   set_filter(&chan->filter.out,
-	     lower/chan->output.samprate,
-	     upper/chan->output.samprate,
+	     lower/samprate,
+	     upper/samprate,
 	     chan->filter.kaiser_beta);
 
   return 0;

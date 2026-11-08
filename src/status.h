@@ -181,6 +181,7 @@ enum demod_type {
   SPECT_DEMOD,          // Spectrum analysis pseudo-demod
   SPECT2_DEMOD,         // spectrum v2: 8-bit log bins, low-to-high order
   IDLE_DEMOD,           // placeholder that just processes commands
+  P25_DEMOD,             // Native P25 Phase 1 C4FM decoder
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

@@ -218,6 +218,12 @@ bool decode_radio_commands(chan_t * const chan,uint8_t const * const buffer,int 
 	int const new_sample_rate = round_samprate(decode_int(cp,optlen)); // Force to multiple of block rate
 	if(new_sample_rate == 0)
 	  break; // invalid
+	if(chan->demod_type == P25_DEMOD &&
+	   new_sample_rate != P25_AUDIO_SAMPRATE){
+	  fprintf(stderr,"%s: P25 audio rate is fixed at %d Hz\n",
+		  chan->name,P25_AUDIO_SAMPRATE);
+	  break;
+	}
 	if(Verbose)
 	  fprintf(stderr,"%s change samprate %'u -> %'u\n",chan->name,chan->output.samprate,new_sample_rate);
 	chan->output.samprate = new_sample_rate;
@@ -403,6 +409,10 @@ bool decode_radio_commands(chan_t * const chan,uint8_t const * const buffer,int 
     case OUTPUT_CHANNELS: // int
       {
 	int const i = decode_int(cp,optlen);
+	if(chan->demod_type == P25_DEMOD && i != 1){
+	  fprintf(stderr,"%s: P25 audio is mono\n",chan->name);
+	  break;
+	}
 	if((i == 1 || i == 2) && i != chan->output.channels){
 	  send_output(chan, NULL, 0, false); // flush
 	  chan->output.channels = i;
@@ -834,6 +844,9 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
       encode_float(&bp,DEEMPH_TC,0);
     encode_float(&bp,DEEMPH_GAIN,voltage2dB(chan->fm.gain));
     encode_float(&bp,FM_SNR,power2dB(chan->fm.snr));
+    break;
+  case P25_DEMOD:
+    encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     break;
   case SPECT_DEMOD:
   case SPECT2_DEMOD:

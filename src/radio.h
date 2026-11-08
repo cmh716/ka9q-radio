@@ -32,6 +32,9 @@
 char const *demod_name_from_type(enum demod_type type);
 int demod_type_from_name(char const *name);
 
+#define P25_IQ_SAMPRATE 48000
+#define P25_AUDIO_SAMPRATE 8000
+
 /**
 @brief Front end control block, one per radiod instance
 */
@@ -106,6 +109,8 @@ struct frontend {
   double spurs[NSPURS]; // List of frequency spurs to notch, in Hertz (testing)
 };
 
+enum p25_modulation { P25_C4FM = 0, P25_CQPSK };
+
 /**
 @brief  radiod channel state block
 
@@ -169,7 +174,11 @@ struct channel {
     int blocking;  // Ratio of output to input blocksize; 0 = filter2 disabled
   } filter2;
 
-  enum demod_type demod_type;  // Index into demodulator table (Linear, FM, FM Stereo, Spectrum, Idle)
+  enum demod_type demod_type;  // Index into demodulator table
+  struct {
+    uint16_t nac;
+    enum p25_modulation modulation;
+  } p25;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate
   int sampcount;               // Count of baseband samples
@@ -328,6 +337,10 @@ struct channel {
 };
 typedef struct channel chan_t;
 
+static inline int channel_input_samprate(chan_t const *chan){
+  return chan->demod_type == P25_DEMOD ? P25_IQ_SAMPRATE : chan->output.samprate;
+}
+
 extern struct frontend Frontend;
 extern chan_t Channel_list[];
 extern chan_t Template;
@@ -381,6 +394,7 @@ void *radio_status(void *);
 // Demodulator thread entry points
 int demod_idle(void *);
 int demod_fm(void *);
+int demod_p25(void *);
 int demod_wfm(void *);
 int demod_linear(void *);
 int demod_spectrum(void *);

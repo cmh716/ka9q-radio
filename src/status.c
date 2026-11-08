@@ -19,6 +19,7 @@ struct demodtab const Demodtab[] = {
       {SPECT_DEMOD,    "spectrum", }, // Spectrum analysis
       {SPECT2_DEMOD,   "spectrum2", },
       {IDLE_DEMOD,     "idle", },
+      {P25_DEMOD,      "p25", },
 };
 
 // Encode 64-bit integer, big endian, leading zeroes suppressed

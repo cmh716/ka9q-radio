@@ -317,6 +317,9 @@ static int setup_opus(chan_t *chan){
     if(chan->output.samprate <= 24000)
       opus_bw_code = OPUS_BANDWIDTH_MEDIUMBAND;
     break;
+  case P25_DEMOD:
+    opus_bw_code = OPUS_BANDWIDTH_NARROWBAND;
+    break;
   case LINEAR_DEMOD:
     {
       // Set opus bandwidth according to IF filter

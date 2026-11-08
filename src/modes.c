@@ -157,6 +157,8 @@ char const *Channel_keys[] = {
   "opus-fec",
   "opus-signal",
   "pacing",
+  "p25-demod",
+  "p25-nac",
   "pl", // do these too (sigh)
   "pll-bw",
   "pll",
@@ -238,11 +240,50 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
     return -1;
 
   char const * demod_name = config_getstring(table,sname,"demod",NULL);
+  if(demod_name == NULL && table == Preset_table &&
+     strcasecmp(sname,"p25") == 0)
+    demod_name = "p25";
   if(demod_name){
+    enum demod_type const old_demod = chan->demod_type;
     int const x = demod_type_from_name(demod_name);
     if(chan->demod_type >= 0)
       chan->demod_type = x;
+    if(chan->demod_type == P25_DEMOD && old_demod != P25_DEMOD){
+      chan->output.gain = 1.0f;
+      chan->filter.min_IF = -12000.0f;
+      chan->filter.max_IF = 12000.0f;
+    }
     snprintf(chan->name, sizeof chan->name, "%s %u", demod_name, chan->output.rtp.ssrc);
+  }
+  if(chan->demod_type == P25_DEMOD){
+    chan->p25.nac = 0;
+    chan->p25.modulation = P25_C4FM;
+    char const *p25_demod = config_getstring(table,sname,"p25-demod",NULL);
+    if(p25_demod != NULL){
+      if(strcasecmp(p25_demod,"c4fm") == 0)
+        chan->p25.modulation = P25_C4FM;
+      else if(strcasecmp(p25_demod,"cqpsk") == 0)
+        chan->p25.modulation = P25_CQPSK;
+      else{
+        fprintf(stderr,"%s: unsupported P25 demodulator '%s' "
+                "(expected c4fm or cqpsk)\n",chan->name,p25_demod);
+        chan->demod_type = INVALID_DEMOD;
+        return -1;
+      }
+    }
+    char const *nac_text = config_getstring(table,sname,"p25-nac",NULL);
+    if(nac_text != NULL){
+      char *end;
+      errno = 0;
+      unsigned long const nac = strtoul(nac_text,&end,0);
+      if(errno != 0 || end == nac_text || *end != '\0' || nac > 0x0fff){
+        fprintf(stderr,"%s: invalid P25 NAC '%s' (expected 0..0xfff)\n",
+                chan->name,nac_text);
+        chan->demod_type = INVALID_DEMOD;
+        return -1;
+      }
+      chan->p25.nac = (uint16_t)nac;
+    }
   }
   chan->use_dns = config_getboolean(table, sname, "dns", chan->use_dns);
   chan->advertise = config_getboolean(table,sname,"advertise",chan->advertise);
@@ -262,6 +303,16 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
     chan->output.channels = 1;
   if(config_getboolean(table,sname,"stereo",false))
     chan->output.channels = 2;
+  if(chan->demod_type == P25_DEMOD){
+    if(chan->output.samprate != P25_AUDIO_SAMPRATE &&
+       config_getstring(table,sname,"samprate",NULL) != NULL)
+      fprintf(stderr,"%s: P25 audio rate is fixed at %d Hz; ignoring samprate\n",
+              chan->name,P25_AUDIO_SAMPRATE);
+    if(chan->output.channels != 1)
+      fprintf(stderr,"%s: P25 audio is mono; ignoring channel count\n",chan->name);
+    chan->output.samprate = P25_AUDIO_SAMPRATE;
+    chan->output.channels = 1;
+  }
   {
     char const *cp = config_getstring(table,sname,"encoding",NULL);
     if(cp){
