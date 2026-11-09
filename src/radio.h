@@ -32,8 +32,9 @@
 char const *demod_name_from_type(enum demod_type type);
 int demod_type_from_name(char const *name);
 
-#define P25_IQ_SAMPRATE 48000
-#define P25_AUDIO_SAMPRATE 8000
+// Digital voice (P25, DMR): fixed rates of the decoder in contrib/digital-voice
+#define DV_IQ_SAMPRATE_RADIOD 48000
+#define DV_AUDIO_SAMPRATE 8000
 
 /**
 @brief Front end control block, one per radiod instance
@@ -181,6 +182,9 @@ struct channel {
     uint16_t last_nac;            // NAC of the last frame received
     bool have_nac;                // last_nac is valid
   } p25;
+  struct {
+    int slot;                     // timeslot to play, 1 or 2; 0 = first to start a call
+  } dmr;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate
   int sampcount;               // Count of baseband samples
@@ -339,8 +343,11 @@ struct channel {
 };
 typedef struct channel chan_t;
 
+static inline bool is_dv_demod(enum demod_type type){
+  return type == P25_DEMOD || type == DMR_DEMOD;
+}
 static inline int channel_input_samprate(chan_t const *chan){
-  return chan->demod_type == P25_DEMOD ? P25_IQ_SAMPRATE : chan->output.samprate;
+  return is_dv_demod(chan->demod_type) ? DV_IQ_SAMPRATE_RADIOD : chan->output.samprate;
 }
 
 extern struct frontend Frontend;
@@ -396,7 +403,7 @@ void *radio_status(void *);
 // Demodulator thread entry points
 int demod_idle(void *);
 int demod_fm(void *);
-int demod_p25(void *);
+int demod_dv(void *);
 int demod_wfm(void *);
 int demod_linear(void *);
 int demod_spectrum(void *);

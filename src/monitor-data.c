@@ -351,8 +351,8 @@ static void *decode_task(void *arg){
     if(q < 0 || q > 3 * DAC_samprate / 2)
       reset_playout(sp);
     // Do PL detection and notching even when muted
-    // but not on P25: vocoded speech gives false tone/DCS hits, and there's no tone to notch
-    if(sp->notch_enable && sp->chan.demod_type != P25_DEMOD){
+    // but not on digital voice: vocoded speech gives false tone/DCS hits, and there's no tone to notch
+    if(sp->notch_enable && !is_dv_demod(sp->chan.demod_type)){
       run_pl(sp);
       apply_notch(sp);
     }

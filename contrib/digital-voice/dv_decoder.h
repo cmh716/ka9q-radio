@@ -1,0 +1,20 @@
+// Internal base class behind the dv.h C API
+// SPDX-License-Identifier: GPL-3.0-or-later
+#ifndef KA9Q_DV_DECODER_H
+#define KA9Q_DV_DECODER_H
+
+#include <complex>
+#include <cstddef>
+
+#include "dv.h"
+
+struct dv_decoder {
+  virtual ~dv_decoder() = default;
+  virtual void process(std::complex<float> const *samples, size_t count) = 0;
+  virtual void get_stats(dv_stats *stats) const = 0;
+};
+
+dv_decoder *dv_create_p25(bool cqpsk, uint16_t nac, dv_pcm_callback callback, void *user_data);
+dv_decoder *dv_create_dmr(int slot, dv_pcm_callback callback, void *user_data);
+
+#endif

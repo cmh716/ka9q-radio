@@ -6,18 +6,18 @@
 #include <cstdint>
 #include <memory>
 
-#include "p25_native.h"
+#include "dv.h"
 
 class p25_voice {
 public:
-  p25_voice(uint16_t nac, p25_native_pcm_callback callback, void *user_data);
+  p25_voice(uint16_t nac, dv_pcm_callback callback, void *user_data);
   ~p25_voice();
   p25_voice(const p25_voice&) = delete;
   p25_voice& operator=(const p25_voice&) = delete;
 
   void rx_dibit(uint8_t dibit);
   // Fills the frame-layer fields of stats
-  void get_stats(p25_native_stats *stats) const;
+  void get_stats(dv_stats *stats) const;
 
 private:
   struct impl;

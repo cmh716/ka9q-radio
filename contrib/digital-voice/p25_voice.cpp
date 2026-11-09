@@ -50,9 +50,9 @@ struct p25_voice::impl {
   std::unique_ptr<imbe_vocoder> vocoder;
   ezpwd::RS<63, 55> rs_ess;   // RS(24,16,9) shortened
   ezpwd::RS<63, 47> rs_hdu;   // RS(36,20,17) shortened
-  p25_native_pcm_callback callback;
+  dv_pcm_callback callback;
   void *user_data;
-  p25_native_stats stats{};
+  dv_stats stats{};
   // Assume clear (as OP25 does) until an HDU or LDU2 says otherwise
   bool encrypted = false;
 
@@ -95,12 +95,12 @@ struct p25_voice::impl {
   void decode_voice(bit_vector const& frame)
   {
     if (encrypted) {
-      stats.voice_encrypted += nof_voice_codewords;
+      stats.voice_muted += nof_voice_codewords;
       return;
     }
     basic_op_scope scope(&arithmetic);
     voice_codeword bits(voice_codeword_sz);
-    int16_t pcm[P25_NATIVE_PCM_SAMPLES];
+    int16_t pcm[DV_PCM_SAMPLES];
     for (size_t n = 0; n < nof_voice_codewords; n++) {
       imbe_deinterleave(frame, bits, n);
       uint32_t u[8], first_errors, total_errors;
@@ -147,7 +147,7 @@ struct p25_voice::impl {
   }
 };
 
-p25_voice::p25_voice(uint16_t nac, p25_native_pcm_callback callback, void *user_data)
+p25_voice::p25_voice(uint16_t nac, dv_pcm_callback callback, void *user_data)
   : impl_(new impl)
 {
   impl_->callback = callback;
@@ -165,13 +165,13 @@ void p25_voice::rx_dibit(uint8_t dibit)
     impl_->process_frame();
 }
 
-void p25_voice::get_stats(p25_native_stats *stats) const
+void p25_voice::get_stats(dv_stats *stats) const
 {
   stats->frames = impl_->stats.frames;
   stats->ldu1 = impl_->stats.ldu1;
   stats->ldu2 = impl_->stats.ldu2;
   stats->voice_decoded = impl_->stats.voice_decoded;
-  stats->voice_encrypted = impl_->stats.voice_encrypted;
+  stats->voice_muted = impl_->stats.voice_muted;
   stats->last_nac = impl_->stats.last_nac;
   stats->last_bch_errors = impl_->stats.last_bch_errors;
 }

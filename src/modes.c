@@ -159,6 +159,7 @@ char const *Channel_keys[] = {
   "pacing",
   "p25-demod",
   "p25-nac",
+  "dmr-slot",
   "pl", // do these too (sigh)
   "pll-bw",
   "pll",
@@ -266,6 +267,15 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	fprintf(stderr,"%s: invalid p25-nac '%s' (expected 0..0xfff), ignored\n",sname,cp);
       else
 	chan->p25.nac = (uint16_t)nac;
+    }
+    cp = config_getstring(table,sname,"dmr-slot",NULL);
+    if(cp != NULL){
+      char *end;
+      long const slot = strtol(cp,&end,10);
+      if(end == cp || *end != '\0' || slot < 0 || slot > 2)
+	fprintf(stderr,"%s: invalid dmr-slot '%s' (expected 1, 2 or 0 for either), ignored\n",sname,cp);
+      else
+	chan->dmr.slot = (int)slot;
     }
   }
   chan->use_dns = config_getboolean(table, sname, "dns", chan->use_dns);

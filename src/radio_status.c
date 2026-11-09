@@ -835,6 +835,9 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_float(&bp,DEEMPH_GAIN,voltage2dB(chan->fm.gain));
     encode_float(&bp,FM_SNR,power2dB(chan->fm.snr));
     break;
+  case DMR_DEMOD:
+    encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
+    break;
   case P25_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     if(chan->p25.have_nac)

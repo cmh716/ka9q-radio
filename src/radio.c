@@ -986,7 +986,8 @@ static void *demod_thread(void *p){
       status = demod_fm(p);
       break;
     case P25_DEMOD:
-      status = demod_p25(p);
+    case DMR_DEMOD:
+      status = demod_dv(p);
       break;
     case WFM_DEMOD:
       status = demod_wfm(p);
@@ -1307,7 +1308,7 @@ int downconvert(chan_t * const chan){
       chan->sig.n0 += N0_alpha * (estimate_noise(chan,shift) - chan->sig.n0);
     }
     // set fine tuning frequency & phase
-    // Use the rate actually coming out of the filter: it differs from the output (audio) rate in WFM and P25
+    // Use the rate actually coming out of the filter: it differs from the output (audio) rate in WFM, P25 and DMR
     double const samptime = Blocktime / olen;
     double const slope = chan->tune.sweep_rate * samptime * samptime; // turns/sample
     uint64_t const sweep_increment = set_nco(-slope);

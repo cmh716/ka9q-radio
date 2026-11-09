@@ -183,6 +183,7 @@ enum demod_type {
   SPECT2_DEMOD,         // spectrum v2: 8-bit log bins, low-to-high order
   IDLE_DEMOD,           // placeholder that just processes commands
   P25_DEMOD,            // P25 Phase 1 voice (C4FM or CQPSK)
+  DMR_DEMOD,            // DMR voice
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

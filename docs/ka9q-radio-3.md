@@ -15,7 +15,7 @@ Each section configures one or more channels with the same mode,
 output multicast stream and sample rate, differing only in frequency. What follows
 is a list of parameter settings with their default values:
 
-### mode = pm | npm | fm | nfm | wfm | p25 | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
+### mode = pm | npm | fm | nfm | wfm | p25 | dmr | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
 
 No default. Required unless specified in [global].
 
@@ -55,7 +55,7 @@ Parameters in *presets.conf*
 The parameters that may be set in *presets.conf* and selectively overridden
 in each receiver channel group are:
 
-### demod = linear | fm | wfm | p25
+### demod = linear | fm | wfm | p25 | dmr
 
 Selects one of
 the demodulators built into *radiod*, distinct from the
@@ -73,6 +73,7 @@ appropriate bandwidth and sample rates, but the one built into the WFM demodulat
 more convenient.)
 "P25" decodes APCO Project 25 Phase 1 digital voice (C4FM or CQPSK) and
 always produces mono 8 kHz audio; encrypted calls are muted.
+"DMR" decodes DMR (Tier I/II) digital voice, also to mono 8 kHz audio.
 
 ### samprate =
 
@@ -294,6 +295,11 @@ P25 modulation: **c4fm** for conventional and most trunked systems,
 ### p25-nac = 0
 
 P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accepts any NAC.
+
+### dmr-slot = 0
+
+DMR timeslot to play: 1 or 2. 0 (default) plays whichever slot starts a call first and stays
+with it until that call ends. Encrypted DMR is not detected and will play as noise.
 
 ### pacing = on | off
 

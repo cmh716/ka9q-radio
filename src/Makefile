@@ -128,14 +128,14 @@ LIBDSP = kernels.o filter.o iir.o window.o osc.o pll.o sine.o sincospi.o sincosp
 LIBSTATUS = status.o decode_status.o
 
 # radiod uses a lot of unique objects. It should probably move to its own directory
-RADIOD_OBJECTS = main.o audio.o avahi.o modes.o fm.o p25.o wfm.o linear.o spectrum.o radio.o n0.o radio_status.o rtcp.o libdsp.a libstatus.a libradio.a
+RADIOD_OBJECTS = main.o audio.o avahi.o modes.o fm.o dv.o wfm.o linear.o spectrum.o radio.o n0.o radio_status.o rtcp.o libdsp.a libstatus.a libradio.a
 
 ## source files for dependency generation (see DEPS=)
 # List every .c file in the tree so `-include $(DEPS)` picks up
 # header-change rebuild dependencies even for optional drivers
 # (bladerf, fobos, hackrf, hydrasdr, sdrplay, ...) whose targets
 # are gated by ENABLE_*.
-CFILES = airspy.c airspyhf.c aprs.c aprsfeed.c attr.c audio.c avahi.c avahi_browse.c ax25.c bandplan.c bladerf.c config.c control.c cwd.c decimate.c decode_status.c dump.c ezusb.c fcd.c fft-gen.c filter.c fm.c fobos.c funcube.c hackrf.c hid-libusb.c hydrasdr.c iir.c jt-decoded.c linear.c main.c makesine.c metadump.c misc.c modes.c monitor.c monitor-data.c monitor-display.c monitor-repeater.c morse.c multicast.c n0.c opusd.c opussend.c osc.c packetd.c p25.c pcmcat.c pcmrecord.c pcmsend.c pcmspawn.c pll.c rv.c ctcss.c powers.c radio.c radio_status.c rdsd.c rtcp.c rtlsdr.c rtp.c rx888.c rx888_boot.c sdrplay.c set_xcvr.c setfilt.c show-pkt.c show-sig.c si5351.c sig_gen.c sine.c spectrum.c status.c stereod.c sincospi.c sincospif.c tune.c wd-record.c wfm.c window.c dcs.c
+CFILES = airspy.c airspyhf.c aprs.c aprsfeed.c attr.c audio.c avahi.c avahi_browse.c ax25.c bandplan.c bladerf.c config.c control.c cwd.c decimate.c decode_status.c dump.c ezusb.c fcd.c fft-gen.c filter.c fm.c fobos.c funcube.c hackrf.c hid-libusb.c hydrasdr.c iir.c jt-decoded.c linear.c main.c makesine.c metadump.c misc.c modes.c monitor.c monitor-data.c monitor-display.c monitor-repeater.c morse.c multicast.c n0.c opusd.c opussend.c osc.c packetd.c dv.c pcmcat.c pcmrecord.c pcmsend.c pcmspawn.c pll.c rv.c ctcss.c powers.c radio.c radio_status.c rdsd.c rtcp.c rtlsdr.c rtp.c rx888.c rx888_boot.c sdrplay.c set_xcvr.c setfilt.c show-pkt.c show-sig.c si5351.c sig_gen.c sine.c spectrum.c status.c stereod.c sincospi.c sincospif.c tune.c wd-record.c wfm.c window.c dcs.c
 
 HFILES = attr.h ax25.h bandplan.h conf.h config.h decimate.h defaults.h dcs.h ezusb.h fcd.h fcdhidcmd.h filter.h hidapi.h iir.h misc.h monitor.h morse.h multicast.h nco.h osc.h pll.h radio.h rational.h rx888.h si5351.h status.h timing.h config_paths.h
 
@@ -220,7 +220,7 @@ endif
 
 clean:
 	rm -f *.o *.a *.d *.so config_paths.h sine.c makesine $(DAEMONS) $(EXECS) $(DYNAMIC_DRIVERS)
-	$(MAKE) -C ../contrib/p25-native clean
+	$(MAKE) -C ../contrib/digital-voice clean
 
 uninstall:
 	rm -f $(addprefix $(DESTDIR)$(sbindir)/,$(DAEMONS))
@@ -303,20 +303,20 @@ pcmsend: pcmsend.o libradio.a
 powers: powers.o dump.o libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-# Native P25 decoder (C++), see ../contrib/p25-native
-P25LIB = ../contrib/p25-native/build/libp25native.a
+# Digital voice decoders (C++), see ../contrib/digital-voice
+DVLIB = ../contrib/digital-voice/build/libdv.a
 
-radiod: $(RADIOD_OBJECTS) $(P25LIB)
+radiod: $(RADIOD_OBJECTS) $(DVLIB)
 	$(CXX) -rdynamic $(LDFLAGS) -o $@ $^ -lopus -lfftw3f_threads -lfftw3f -liniparser -lusb-1.0 -ldl $(LDLIBS)
 
 # Always ask the sub-make; it only rebuilds (and touches the archive) when sources change
-$(P25LIB): FORCE
-	$(MAKE) -C ../contrib/p25-native
+$(DVLIB): FORCE
+	$(MAKE) -C ../contrib/digital-voice
 
 .PHONY: FORCE
 FORCE:
 
-p25.o: CFLAGS += -I../contrib/p25-native
+dv.o: CFLAGS += -I../contrib/digital-voice
 
 rdsd: rdsd.o avahi.o libdsp.a libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lfftw3f_threads -lfftw3f $(LDLIBS)

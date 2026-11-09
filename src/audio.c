@@ -318,6 +318,7 @@ static int setup_opus(chan_t *chan){
       opus_bw_code = OPUS_BANDWIDTH_MEDIUMBAND;
     break;
   case P25_DEMOD:
+  case DMR_DEMOD:
     opus_bw_code = OPUS_BANDWIDTH_NARROWBAND;
     break;
   case LINEAR_DEMOD:
