@@ -20,9 +20,9 @@ ALGID, as OP25 does; encrypted voice is muted until the next TDU.
 DMR follows OP25: a timeslot plays while its latest sync is a voice sync.
 With `dmr-slot = 0` the decoder plays whichever slot starts a call first and
 stays with it until that call ends. Encrypted DMR is not detected yet, and
-color codes are not checked. AMBE+2 output level follows the talker and is
-low (OP25's synthesizer, as used here, peaks near -40 dBFS on ordinary
-speech), so the `[dmr]` preset adds 20 dB of gain.
+color codes are not checked. AMBE+2 output level follows the talker and
+varies a lot between transmissions; on live signals it averages about 8 dB
+louder than P25 IMBE, so the `[dmr]` preset sets -6 dB of gain to match.
 
 Example channels:
 
