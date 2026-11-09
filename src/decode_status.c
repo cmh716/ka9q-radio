@@ -271,6 +271,10 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
     case DCS_CODE:
       chan->fm.dcs_code = decode_int(cp,optlen);
       break;
+    case P25_NAC:
+      chan->p25.last_nac = (uint16_t)decode_int(cp,optlen);
+      chan->p25.have_nac = true;
+      break;
     case DCS_INVERTED:
       chan->fm.dcs_inverted = decode_bool(cp,optlen);
       break;

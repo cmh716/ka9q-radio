@@ -15,7 +15,7 @@ Each section configures one or more channels with the same mode,
 output multicast stream and sample rate, differing only in frequency. What follows
 is a list of parameter settings with their default values:
 
-### mode = pm | npm | fm | nfm | wfm | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
+### mode = pm | npm | fm | nfm | wfm | p25 | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
 
 No default. Required unless specified in [global].
 
@@ -55,10 +55,10 @@ Parameters in *presets.conf*
 The parameters that may be set in *presets.conf* and selectively overridden
 in each receiver channel group are:
 
-### demod = linear | fm | wfm
+### demod = linear | fm | wfm | p25
 
 Selects one of
-three demodulators built into *radiod*, distinct from the
+the demodulators built into *radiod*, distinct from the
 **mode** entries that select an entry in
 */usr/local/share/ka9q-radio/presets.conf*.  The "Linear" demodulator is
 for modes such as AM (envelope detected or coherent), SSB, CW, IQ and
@@ -71,6 +71,8 @@ daemon may be used to decode multiplexed stereo from the single
 channel composite baseband output of a regular FM demodulator with
 appropriate bandwidth and sample rates, but the one built into the WFM demodulator is
 more convenient.)
+"P25" decodes APCO Project 25 Phase 1 digital voice (C4FM or CQPSK) and
+always produces mono 8 kHz audio; encrypted calls are muted.
 
 ### samprate =
 
@@ -283,6 +285,15 @@ FM only. When non-zero, enable a tone squelch for the specified tone frequency (
 ### dcs = code
 
 FM only. Enable digital-coded squelch for a standard three-digit octal DCS code, for example `023`. Prefix the code with `I` for inverted polarity (`I023`); the default is normal polarity. `off` disables DCS squelch. DCS and CTCSS may both be specified; when both are set, both must match to open the audio. For frequency lists, use `dcs` with `freq`/`raster`, or `dcs0` through `dcs9` alongside the corresponding numbered frequency list. Because DCS words repeat without a separate frame sync, some code/polarity pairs are cyclic aliases; a decoder cannot distinguish those equivalent streams.
+
+### p25-demod = c4fm | cqpsk (default c4fm)
+
+P25 modulation: **c4fm** for conventional and most trunked systems,
+**cqpsk** for simulcast (LSM) systems.
+
+### p25-nac = 0
+
+P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accepts any NAC.
 
 ### pacing = on | off
 

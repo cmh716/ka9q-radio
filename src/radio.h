@@ -176,8 +176,10 @@ struct channel {
 
   enum demod_type demod_type;  // Index into demodulator table
   struct {
-    uint16_t nac;
+    uint16_t nac;                 // NAC filter, 0 = any
     enum p25_modulation modulation;
+    uint16_t last_nac;            // NAC of the last frame received
+    bool have_nac;                // last_nac is valid
   } p25;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate

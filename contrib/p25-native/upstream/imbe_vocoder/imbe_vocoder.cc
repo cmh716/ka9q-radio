@@ -9,27 +9,14 @@
 #include "imbe_vocoder.h"
 
 imbe_vocoder::imbe_vocoder (void) :
-	prev_pitch(0),
-	prev_prev_pitch(0),
-	prev_e_p(0),
-	prev_prev_e_p(0),
 	seed(1),
 	num_harms_prev1(0),
-	num_harms_prev2(0),
 	num_harms_prev3(0),
-	fund_freq_prev(0),
-	th_max(0),
-	dc_rmv_mem(0),
-	d_gain_adjust(0)
+	fund_freq_prev(0)
 {
 	memset(wr_array, 0, sizeof(wr_array));
 	memset(wi_array, 0, sizeof(wi_array));
-	memset(pitch_est_buf, 0, sizeof(pitch_est_buf));
-	memset(pitch_ref_buf, 0, sizeof(pitch_ref_buf));
-	memset(pe_lpf_mem, 0, sizeof(pe_lpf_mem));
-	memset(fft_buf, 0, sizeof(fft_buf));
 	memset(sa_prev1, 0, sizeof(sa_prev1));
-	memset(sa_prev2, 0, sizeof(sa_prev2));
 	memset(uv_mem, 0, sizeof(uv_mem));
 	memset(ph_mem, 0, sizeof(ph_mem));
 	memset(vu_dsn_prev, 0, sizeof(vu_dsn_prev));
@@ -39,5 +26,4 @@ imbe_vocoder::imbe_vocoder (void) :
 	memset(&my_imbe_param, 0, sizeof(IMBE_PARAM));
 
 	decode_init(&my_imbe_param);
-	encode_init();
 }

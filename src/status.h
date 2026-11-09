@@ -168,6 +168,7 @@ enum status_type {
   SWEEP_START,
   DCS_CODE,       // Configured DCS code in decimal-octal notation (FM only)
   DCS_INVERTED,   // Configured DCS polarity (FM only)
+  P25_NAC,        // NAC of the last P25 frame received (P25 only)
 };
 
 /**
@@ -181,7 +182,7 @@ enum demod_type {
   SPECT_DEMOD,          // Spectrum analysis pseudo-demod
   SPECT2_DEMOD,         // spectrum v2: 8-bit log bins, low-to-high order
   IDLE_DEMOD,           // placeholder that just processes commands
-  P25_DEMOD,             // Native P25 Phase 1 C4FM decoder
+  P25_DEMOD,            // P25 Phase 1 voice (C4FM or CQPSK)
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

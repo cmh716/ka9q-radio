@@ -12,7 +12,8 @@
 #ifndef INCLUDED_P25_FRAMER_H
 #define INCLUDED_P25_FRAMER_H
 
-#include "log_ts.h"
+#include <stdint.h>
+#include <vector>
 
 class p25_framer
 {
@@ -31,10 +32,9 @@ class p25_framer
         uint32_t d_expected_nac;
         int d_unexpected_nac;
         int d_behavior;
-        log_ts& logts;
 
     public:
-        p25_framer(log_ts& logger, int debug = 0, int msgq_id = 0);
+        p25_framer(int debug = 0, int msgq_id = 0);
         ~p25_framer ();	// destructor
         void reset();
         void set_nac(uint32_t nac) { d_expected_nac = nac; }

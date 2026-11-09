@@ -415,11 +415,14 @@ static void update_monitor_display(void){
     int session = First_session;
     int i = 0;
 
-    snprintf(scratch[i++],COLS,"tone/DCS");
+    snprintf(scratch[i++],COLS,"tone/DCS/NAC");
     for(;i < LINES && session < NSESSIONS; i++,session++){
       sess_t const *sp = Sess_ptr[session];
       if(!inuse(sp)) break;
-      if(sp->notch_enable && sp->current_tone != 0)
+      if(sp->chan.demod_type == P25_DEMOD){
+	if(sp->chan.p25.have_nac)
+	  snprintf(scratch[i],COLS,"N%03X",sp->chan.p25.last_nac);
+      } else if(sp->notch_enable && sp->current_tone != 0)
 	snprintf(scratch[i],COLS,"%.1f%c",sp->notch_tone,sp->current_tone == sp->notch_tone ? '*' : ' ');
       else if(sp->notch_enable && sp->current_dcs != 0)
 	snprintf(scratch[i],COLS,"%c%03d",sp->current_dcs_inverted ? 'I' : 'D',sp->current_dcs);

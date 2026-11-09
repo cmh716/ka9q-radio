@@ -284,6 +284,9 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
     case PEAK_DEVIATION:
       fprintf(fp,"peak FM dev %'lg Hz",decode_float(cp,optlen));
       break;
+    case P25_NAC:
+      fprintf(fp,"P25 NAC %03x",(unsigned)decode_int(cp,optlen));
+      break;
     case PL_TONE:
       fprintf(fp,"PL tone freq %'lg Hz",decode_float(cp,optlen));
       break;

@@ -206,7 +206,6 @@ ifeq ($(HAS_PIGPIO),1)
 endif
 
 .PHONY: clean all install uninstall dynamics purge
-.PHONY: p25-native
 all: $(DAEMONS) $(EXECS) $(DYNAMIC_DRIVERS)
 
 ## other targets
@@ -221,6 +220,7 @@ endif
 
 clean:
 	rm -f *.o *.a *.d *.so config_paths.h sine.c makesine $(DAEMONS) $(EXECS) $(DYNAMIC_DRIVERS)
+	$(MAKE) -C ../contrib/p25-native clean
 
 uninstall:
 	rm -f $(addprefix $(DESTDIR)$(sbindir)/,$(DAEMONS))
@@ -303,14 +303,20 @@ pcmsend: pcmsend.o libradio.a
 powers: powers.o dump.o libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-radiod: $(RADIOD_OBJECTS) p25-native
-	$(CXX) -rdynamic $(LDFLAGS) -o $@ $(RADIOD_OBJECTS) ../contrib/p25-native/build/libp25native.a -lopus -lfftw3f_threads -lfftw3f -liniparser -lusb-1.0 -ldl $(LDLIBS)
+# Native P25 decoder (C++), see ../contrib/p25-native
+P25LIB = ../contrib/p25-native/build/libp25native.a
 
-p25-native:
-	$(MAKE) -C ../contrib/p25-native all
+radiod: $(RADIOD_OBJECTS) $(P25LIB)
+	$(CXX) -rdynamic $(LDFLAGS) -o $@ $^ -lopus -lfftw3f_threads -lfftw3f -liniparser -lusb-1.0 -ldl $(LDLIBS)
+
+# Always ask the sub-make; it only rebuilds (and touches the archive) when sources change
+$(P25LIB): FORCE
+	$(MAKE) -C ../contrib/p25-native
+
+.PHONY: FORCE
+FORCE:
 
 p25.o: CFLAGS += -I../contrib/p25-native
-p25.o: ../contrib/p25-native/p25_native_api.h
 
 rdsd: rdsd.o avahi.o libdsp.a libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lfftw3f_threads -lfftw3f $(LDLIBS)

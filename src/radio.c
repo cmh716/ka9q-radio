@@ -1307,7 +1307,8 @@ int downconvert(chan_t * const chan){
       chan->sig.n0 += N0_alpha * (estimate_noise(chan,shift) - chan->sig.n0);
     }
     // set fine tuning frequency & phase
-    double const samptime = 1.0 / channel_input_samprate(chan);
+    // Use the rate actually coming out of the filter: it differs from the output (audio) rate in WFM and P25
+    double const samptime = Blocktime / olen;
     double const slope = chan->tune.sweep_rate * samptime * samptime; // turns/sample
     uint64_t const sweep_increment = set_nco(-slope);
     uint64_t increment = set_nco(-(remainder * samptime + 0.5 * slope));

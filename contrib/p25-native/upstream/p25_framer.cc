@@ -34,7 +34,7 @@ static const int max_frame_lengths[16] = {
 };
 
 // constructor
-p25_framer::p25_framer(log_ts& logger, int debug, int msgq_id) :
+p25_framer::p25_framer(int debug, int msgq_id) :
     nid_syms(0),
     next_bit(0),
     nid_accum(0),
@@ -44,7 +44,6 @@ p25_framer::p25_framer(log_ts& logger, int debug, int msgq_id) :
     d_expected_nac(0),
     d_unexpected_nac(0),
     d_behavior(0),
-    logts(logger),
     symbols_received(0),
     nac(0),
     duid(0),
@@ -126,8 +125,8 @@ bool p25_framer::nid_codeword(uint64_t acc) {
     // Validate NAC meets expectations. NAC values of 0, 0xf7e, 0xf7f pass all traffic
     if ((d_expected_nac != 0) && (d_expected_nac != 0xf7e) && (d_expected_nac != 0xf7f) && (nac != d_expected_nac)) {
         d_unexpected_nac++;
-        if (d_unexpected_nac >= 3) { // isolated occureence may be bit errors, repetitive is probably mis-configuration
-            fprintf(stderr, "%s p25_framer::nid_codeword: NAC check fail: received=%03x, expected=%03x\n", logts.get(d_msgq_id), nac, d_expected_nac);
+        if (d_debug >= 10 && d_unexpected_nac >= 3) { // isolated occureence may be bit errors, repetitive is probably mis-configuration
+            fprintf(stderr, "p25_framer::nid_codeword: NAC check fail: received=%03x, expected=%03x\n", nac, d_expected_nac);
         }
         return false;
     }
@@ -145,7 +144,7 @@ bool p25_framer::nid_codeword(uint64_t acc) {
     }
     else {
         if (d_debug >= 10) {
-            fprintf(stderr, "%s p25_framer::nid_codeword: duid/parity check fail: nid=%016lx, ec=%d\n", logts.get(d_msgq_id), nid_word, ec);
+            fprintf(stderr, "p25_framer::nid_codeword: duid/parity check fail: nid=%016lx, ec=%d\n", nid_word, ec);
         }
     }
     return false;
@@ -181,7 +180,7 @@ bool p25_framer::rx_sym(uint8_t dibit) {
                 frame_size_limit = P25_VOICE_FRAME_SIZE;
         } else {
             if (d_debug >= 10)
-                fprintf(stderr, "%s p25_framer::rx_sym() error check failed, frame discarded, nid=%012lx\n", logts.get(d_msgq_id), nid_accum);  
+                fprintf(stderr, "p25_framer::rx_sym() error check failed, frame discarded, nid=%012lx\n", nid_accum);  
             }
     }
     if (nid_syms > 0) // if nid accumulation in progress
@@ -236,7 +235,7 @@ uint32_t p25_framer::load_nid(const uint8_t *syms, int nsyms, const uint64_t) {
     bool bch_rc = nid_codeword(accum);
     if (!bch_rc) {
         if (d_debug >= 10)
-            fprintf(stderr, "%s p25_framer::load_nid() error check failed, frame discarded, nid=%012lx\n", logts.get(d_msgq_id), accum);  
+            fprintf(stderr, "p25_framer::load_nid() error check failed, frame discarded, nid=%012lx\n", accum);  
         return 0;
     }
 
