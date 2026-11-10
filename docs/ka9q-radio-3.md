@@ -252,7 +252,9 @@ loop filter bandwidth of the PLL in Hz.
 
 ### agc = on | off
 
-Linear demodulator only. Enables automatic gain control (AGC).
+Linear demodulator: enables automatic gain control (AGC).
+Digital voice modes (p25, dmr, m17, ysf, dstar, nxdn, digital): enables speech level control, which
+brings each talker to about -33 dBFS (the gain setting then applies on top). On by default.
 
 ### deemph-tc = 530.5
 

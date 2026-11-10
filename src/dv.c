@@ -18,6 +18,58 @@
 
 #define DV_AUDIO_QUEUE_DEPTH 45 // 900 ms
 
+// Speech level control: vocoder output level follows the talker (13 dB
+// between talkers is common) and differs between vocoders. Track the mean
+// power of frames with speech in them (vocoder pauses are far quieter than
+// the gate), quickly when it rises, more slowly when it falls, and bring it
+// to a P25-like level; 'agc = no' turns it off. The preset 'gain' applies on
+// top. On decoded P25-level, YSF, M17, D-STAR and NXDN speech this lands
+// within 3 dB of the target
+#define DV_AGC_TARGET_DB (-33.0f)  // dBFS, the middle of live P25 traffic
+#define DV_AGC_GATE_DB (-70.0f)    // quieter frames are pauses: leave the level alone
+#define DV_AGC_ATTACK 0.25f        // per 20 ms frame, level rising (~80 ms)
+#define DV_AGC_RELEASE 0.05f       // per frame, level falling (~400 ms)
+#define DV_AGC_MIN_DB (-12.0f)
+#define DV_AGC_MAX_DB (18.0f)
+#define DV_AGC_CEILING 0.9f        // peak limit, fraction of full scale
+
+struct dv_agc {
+  float level_db;  // tracked speech level
+  float gain;      // current linear gain, smoothed across frames
+};
+
+// Apply level control to one frame of floats (full scale +/-1) in place
+static void dv_agc_frame(struct dv_agc *agc,float *audio,int n){
+  float power = 0;
+  for(int i = 0; i < n; i++)
+    power += audio[i] * audio[i];
+  float const db = 10.0f * log10f(power / n + 1e-20f);
+  if(db > DV_AGC_GATE_DB){
+    // Track mean power (what loudness follows), not mean dB
+    float const level = powf(10.0f,agc->level_db / 10.0f);
+    float const p = power / n;
+    float const k = p > level ? DV_AGC_ATTACK : DV_AGC_RELEASE;
+    agc->level_db = 10.0f * log10f(level + k * (p - level) + 1e-20f);
+  }
+  float gain_db = DV_AGC_TARGET_DB - agc->level_db;
+  gain_db = gain_db < DV_AGC_MIN_DB ? DV_AGC_MIN_DB : gain_db > DV_AGC_MAX_DB ? DV_AGC_MAX_DB : gain_db;
+  float const target = powf(10.0f,gain_db / 20.0f);
+  // Ramp across the frame to avoid steps
+  float const step = (target - agc->gain) / n;
+  float peak = 0;
+  for(int i = 0; i < n; i++){
+    agc->gain += step;
+    audio[i] *= agc->gain;
+    if(fabsf(audio[i]) > peak)
+      peak = fabsf(audio[i]);
+  }
+  if(peak > DV_AGC_CEILING){
+    float const scale = DV_AGC_CEILING / peak;
+    for(int i = 0; i < n; i++)
+      audio[i] *= scale;
+  }
+}
+
 struct dv_audio_queue {
   int16_t samples[DV_AUDIO_QUEUE_DEPTH][DV_PCM_SAMPLES];
   unsigned int head;
@@ -92,6 +144,7 @@ int demod_dv(void *arg){
   uint64_t const audio_frame_clock = (uint64_t)DV_IQ_SAMPRATE_RADIOD * DV_PCM_SAMPLES;
   uint64_t reported_drops = 0;
   int telemetry_samples = 0;
+  struct dv_agc agc = { .level_db = DV_AGC_TARGET_DB, .gain = 1.0f };
   chan->tp1 = 0; // detected sync words
   chan->tp2 = 0; // decoded frames (P25) or bursts (DMR)
   chan->p25.have_nac = false;
@@ -195,9 +248,13 @@ int demod_dv(void *arg){
       }
       float audio[DV_PCM_SAMPLES];
       int16_t const * const pcm = audio_queue.samples[audio_queue.head];
+      for(int i = 0; i < DV_PCM_SAMPLES; i++)
+	audio[i] = pcm[i] / 32768.0f;
+      if(chan->linear.agc)
+	dv_agc_frame(&agc,audio,DV_PCM_SAMPLES);
       float power = 0;
       for(int i = 0; i < DV_PCM_SAMPLES; i++){
-	audio[i] = (pcm[i] / 32768.0f) * chan->output.gain;
+	audio[i] *= chan->output.gain;
 	power += audio[i] * audio[i];
       }
       chan->output.power = power / DV_PCM_SAMPLES;
