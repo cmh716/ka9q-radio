@@ -169,7 +169,7 @@ enum status_type {
   DCS_CODE,       // Configured DCS code in decimal-octal notation (FM only)
   DCS_INVERTED,   // Configured DCS polarity (FM only)
   P25_NAC,        // NAC of the last P25 frame received (P25 only)
-  SOURCE_CALLSIGN, // Source callsign of the current digital voice transmission (M17, YSF, D-STAR)
+  SOURCE_CALLSIGN, // Source callsign (M17, YSF, D-STAR) or unit ID (NXDN) of the current digital voice transmission
 };
 
 /**
@@ -188,6 +188,7 @@ enum demod_type {
   M17_DEMOD,            // M17 voice
   YSF_DEMOD,            // Yaesu System Fusion (C4FM) voice
   DSTAR_DEMOD,          // D-STAR voice
+  NXDN_DEMOD,           // NXDN voice (NXDN48 or NXDN96)
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

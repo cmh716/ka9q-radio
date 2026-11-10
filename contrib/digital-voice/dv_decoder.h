@@ -19,5 +19,6 @@ dv_decoder *dv_create_dmr(int slot, dv_pcm_callback callback, void *user_data);
 dv_decoder *dv_create_m17(int can, dv_pcm_callback callback, void *user_data); // can -1 = any
 dv_decoder *dv_create_ysf(dv_pcm_callback callback, void *user_data);
 dv_decoder *dv_create_dstar(dv_pcm_callback callback, void *user_data);
+dv_decoder *dv_create_nxdn(bool nxdn96, dv_pcm_callback callback, void *user_data);
 
 #endif

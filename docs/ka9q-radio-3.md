@@ -15,7 +15,7 @@ Each section configures one or more channels with the same mode,
 output multicast stream and sample rate, differing only in frequency. What follows
 is a list of parameter settings with their default values:
 
-### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | ysf | dstar | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
+### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn | nxdn96 | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
 
 No default. Required unless specified in [global].
 
@@ -55,7 +55,7 @@ Parameters in *presets.conf*
 The parameters that may be set in *presets.conf* and selectively overridden
 in each receiver channel group are:
 
-### demod = linear | fm | wfm | p25 | dmr | m17 | ysf | dstar
+### demod = linear | fm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn
 
 Selects one of
 the demodulators built into *radiod*, distinct from the
@@ -77,6 +77,7 @@ always produces mono 8 kHz audio; encrypted calls are muted.
 "M17" decodes M17 digital voice (Codec2) to mono 8 kHz audio; encrypted transmissions are muted.
 "YSF" decodes Yaesu System Fusion (C4FM) digital voice, DN and VW modes, to mono 8 kHz audio.
 "DSTAR" decodes D-STAR digital voice to mono 8 kHz audio.
+"NXDN" decodes NXDN conventional digital voice (NXDN48 or NXDN96, see **nxdn-rate**) to mono 8 kHz audio; encrypted calls are muted.
 
 ### samprate =
 
@@ -303,6 +304,11 @@ P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accep
 
 DMR timeslot to play: 1 or 2. 0 (default) plays whichever slot starts a call first and stays
 with it until that call ends. Encrypted DMR is not detected and will play as noise.
+
+### nxdn-rate = 48 | 96 (default 48)
+
+NXDN variant: **48** is NXDN48 (2400 baud, 6.25 kHz channels), **96** is NXDN96 (4800 baud, 12.5 kHz).
+The **nxdn** and **nxdn96** presets set it, with a channel filter to suit.
 
 ### m17-can = -1
 

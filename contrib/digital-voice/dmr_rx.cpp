@@ -12,10 +12,7 @@
 #include "upstream/check_frame_sync.h"
 #include "upstream/dmr_const.h"
 #include "upstream/frame_sync_magics.h"
-#include "upstream/mbelib.h"
-#include "upstream/ambe.h" // needs mbelib.h first
-#include "upstream/p25p2_vf.h"
-#include "upstream/software_imbe_decoder.h"
+#include "dv_ambe.h"
 
 namespace {
 
@@ -37,21 +34,6 @@ bool is_voice_sync(uint64_t sync)
   return sync == DMR_BS_VOICE_SYNC_MAGIC || sync == DMR_MS_VOICE_SYNC_MAGIC
       || sync == DMR_T1_VOICE_SYNC_MAGIC || sync == DMR_T2_VOICE_SYNC_MAGIC;
 }
-
-// Per-timeslot AMBE+2 decoder state (rx_sync.h)
-struct ambe_slot {
-  ambe_slot()
-  {
-    mbe_initMbeParms(&cur, &prev, &enh);
-    mbe_initErrParms(&errs);
-    mbe_initToneParms(&tone);
-  }
-  mbe_parms cur, prev, enh;
-  mbe_errs errs;
-  mbe_tone tone;
-  int err_cnt = 0;
-  software_imbe_decoder synth;
-};
 
 class dmr_decoder : public dv_decoder {
 public:
@@ -83,7 +65,7 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + fsk4_.fine_offset_hz();
     stats->active_slot = active_slot_ + 1;
     if (active_slot_ >= 0)
-      stats->error_rate = slots_[active_slot_].errs.ER;
+      stats->error_rate = slots_[active_slot_].error_rate();
   }
 
 private:
@@ -220,65 +202,14 @@ private:
     codeword(sym + 108, chan);
   }
 
-  // rx_sync::codeword(), CODEWORD_DMR case
+  // rx_sync::codeword(), CODEWORD_DMR case (dv_ambe2450)
   void codeword(uint8_t const *cw, int slot_id)
   {
-    ambe_slot& s = slots_[slot_id];
-    int b[9];
-    int U[4];
-    bool do_silence = false;
-    bool do_tone = false;
-
-    interleaver_.process_vcw(&s.errs, cw, b, U);
-    int rc = mbe_dequantizeAmbeTone(&s.tone, &s.errs, U);
-    if (rc >= 0) { // Tone frame
-      if (rc == 0) {
-        do_tone = true;
-        s.err_cnt = 0;
-      } else if ((++s.err_cnt < 4) && do_tone) {
-        mbe_useLastMbeParms(&s.cur, &s.prev);
-      } else {
-        do_tone = false;
-        do_silence = true;
-      }
-    } else {
-      rc = mbe_dequantizeAmbe2250Parms(&s.cur, &s.prev, &s.errs, b);
-      if (rc == 0) { // Voice frame
-        do_tone = false;
-        s.err_cnt = 0;
-      } else if ((++s.err_cnt < 4) && !do_tone) { // Erasure with frame repeat per TIA-102.BABA.5.6
-        mbe_useLastMbeParms(&s.cur, &s.prev);
-      } else {
-        do_tone = false; // Mute after 3 successive frame repeats
-        do_silence = true;
-      }
-    }
-    if (s.errs.ER > 0.096) { // Mute if error rate exceeds threshold
-      do_tone = false;
-      do_silence = true;
-    }
-
-    if (do_tone) {
-      s.synth.decode_tone(s.tone.ID, s.tone.AD, &s.tone.n);
-    } else {
-      mbe_moveMbeParms(&s.cur, &s.prev);
-      if (!do_silence)
-        s.synth.decode_tap(s.cur.L, 0, s.cur.w0, &s.cur.Vl[1], &s.cur.Ml[1]);
-    }
-    audio_samples *samples = s.synth.audio();
     int16_t pcm[DV_PCM_SAMPLES];
-    for (int i = 0; i < DV_PCM_SAMPLES; i++) {
-      float snd = 0;
-      if (!do_silence && !samples->empty()) {
-        snd = samples->front();
-        samples->pop_front();
-      }
-      pcm[i] = static_cast<int16_t>(std::clamp(snd, -32768.0f, 32767.0f));
-    }
-    if (do_silence)
-      voice_muted_++;
-    else
+    if (slots_[slot_id].decode(cw, pcm))
       voice_decoded_++;
+    else
+      voice_muted_++;
     if (callback_ != nullptr)
       callback_(user_data_, pcm);
   }
@@ -305,9 +236,8 @@ private:
   uint64_t unmute_until_[2]{};
   int active_slot_ = -1;
 
-  // Vocoder
-  p25p2_vf interleaver_;
-  ambe_slot slots_[2];
+  // Vocoder, one per timeslot
+  dv_ambe2450 slots_[2];
 
   uint64_t symbols_ = 0;
   uint64_t syncs_ = 0;

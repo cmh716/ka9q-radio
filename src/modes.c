@@ -162,6 +162,7 @@ char const *Channel_keys[] = {
   "p25-nac",
   "dmr-slot",
   "m17-can",
+  "nxdn-rate",
   "pl", // do these too (sigh)
   "pll-bw",
   "pll",
@@ -287,6 +288,15 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	fprintf(stderr,"%s: invalid m17-can '%s' (expected 0-15, or -1 for any), ignored\n",sname,cp);
       else
 	chan->m17.can = (int)can;
+    }
+    cp = config_getstring(table,sname,"nxdn-rate",NULL);
+    if(cp != NULL){
+      if(strcmp(cp,"48") == 0 || strcasecmp(cp,"nxdn48") == 0)
+	chan->nxdn.nxdn96 = false;
+      else if(strcmp(cp,"96") == 0 || strcasecmp(cp,"nxdn96") == 0)
+	chan->nxdn.nxdn96 = true;
+      else
+	fprintf(stderr,"%s: invalid nxdn-rate '%s' (expected 48 or 96), ignored\n",sname,cp);
     }
   }
   chan->use_dns = config_getboolean(table, sname, "dns", chan->use_dns);

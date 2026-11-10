@@ -43,7 +43,6 @@ dv_fsk4::taps const DV_RRC_05_TAPS = {
 
 namespace {
 
-constexpr float kFllSamplesPerSymbol = kDvSampleRate / kDvSymbolRate;
 constexpr float kFllRolloff = 0.2f;
 
 float sinc(float x)
@@ -65,11 +64,16 @@ uint8_t dv_slice(float symbol)
   return 3;
 }
 
-dv_band_edge_fll::dv_band_edge_fll(float bandwidth_divisor)
+dv_band_edge_fll::dv_band_edge_fll(float bandwidth_divisor, float symbol_rate)
+  : sps_(kDvSampleRate / symbol_rate),
+    filter_size_(2 * static_cast<size_t>(std::lrint(kDvSampleRate / symbol_rate)) + 1),
+    lower_taps_(filter_size_), upper_taps_(filter_size_), history_(filter_size_)
 {
+  size_t const kFilterSize = filter_size_;
+  float const kFllSamplesPerSymbol = sps_;
   float const bandwidth = 2.0f * kDvPi / kFllSamplesPerSymbol / bandwidth_divisor;
-  constexpr int half_filter = static_cast<int>((kFilterSize / kFllSamplesPerSymbol) + 0.5f);
-  std::array<float, kFilterSize> baseband_taps{};
+  int const half_filter = static_cast<int>((kFilterSize / kFllSamplesPerSymbol) + 0.5f);
+  std::vector<float> baseband_taps(kFilterSize);
   float power = 0.0f;
   for (size_t i = 0; i < kFilterSize; i++) {
     float const k = -half_filter + static_cast<float>(i) * 2.0f / kFllSamplesPerSymbol;
@@ -77,7 +81,7 @@ dv_band_edge_fll::dv_band_edge_fll(float bandwidth_divisor)
     baseband_taps[i] = tap;
     power += tap;
   }
-  constexpr int center = (kFilterSize - 1) / 2;
+  int const center = static_cast<int>(kFilterSize - 1) / 2;
   for (size_t i = 0; i < kFilterSize; i++) {
     float const tap = baseband_taps[i] / power;
     float const k = (static_cast<int>(i) - center) / (2.0f * kFllSamplesPerSymbol);
@@ -104,9 +108,9 @@ cfloat dv_band_edge_fll::process(cfloat sample)
     phase_ -= kDvTwoPi;
   else if (phase_ < -kDvTwoPi)
     phase_ += kDvTwoPi;
-  float const max_frequency = kDvTwoPi * 2.0f / kFllSamplesPerSymbol;
+  float const max_frequency = kDvTwoPi * 2.0f / sps_;
   frequency_ = std::clamp(frequency_, -max_frequency, max_frequency);
-  position_ = (position_ + 1) % kFilterSize;
+  position_ = (position_ + 1) % filter_size_;
   return corrected;
 }
 
@@ -141,11 +145,45 @@ bool dv_fsk4::process(cfloat sample, uint8_t& dibit)
   float const im = sample.imag() * previous_.real() - sample.real() * previous_.imag();
   previous_ = sample;
   history_[position_] = std::atan2(im, re) * quadrature_gain_;
-  float const shaped = dv_fir(rx_taps_, history_, position_);
-  position_ = (position_ + 1) % std::size(history_);
+  float const shaped = dv_fir(rx_taps_, history_.data(), position_);
+  position_ = (position_ + 1) % history_.size();
   float sym;
   if (fsk4_.process(&shaped, 1, &sym) == 0)
     return false;
   dibit = dv_slice(sym);
   return true;
+}
+
+std::vector<float> dv_rrc_taps(float symbol_rate, float alpha, int ntaps)
+{
+  // GNU Radio filter::firdes::root_raised_cosine(1.0, 24000, symbol_rate, alpha, ntaps)
+  double const spb = kDvSampleRate / symbol_rate;
+  std::vector<double> t(ntaps);
+  double scale = 0;
+  for (int i = 0; i < ntaps; i++) {
+    double const xindx = i - ntaps / 2;
+    double x1 = kDvPi * xindx / spb;
+    double x2 = 4 * alpha * xindx / spb;
+    double x3 = x2 * x2 - 1;
+    double num, den;
+    if (std::fabs(x3) >= 0.000001) {
+      if (i != ntaps / 2)
+        num = std::cos((1 + alpha) * x1) + std::sin((1 - alpha) * x1) / (4 * alpha * xindx / spb);
+      else
+        num = std::cos((1 + alpha) * x1) + (1 - alpha) * kDvPi / (4 * alpha);
+      den = x3 * kDvPi;
+    } else {
+      x3 = (1 - alpha) * x1;
+      x2 = (1 + alpha) * x1;
+      num = std::sin(x2) * (1 + alpha) * kDvPi - std::cos(x3) * ((1 - alpha) * kDvPi * spb) / (4 * alpha * xindx)
+          + std::sin(x3) * spb * spb / (4 * alpha * xindx * xindx);
+      den = -32 * kDvPi * alpha * alpha * xindx / spb;
+    }
+    t[i] = 4 * alpha * num / den;
+    scale += t[i];
+  }
+  std::vector<float> out(ntaps);
+  for (int i = 0; i < ntaps; i++)
+    out[i] = static_cast<float>(t[i] / scale);
+  return out;
 }

@@ -425,7 +425,7 @@ static void update_monitor_display(void){
       } else if(sp->chan.demod_type == DMR_DEMOD){
 	; // nothing to show yet
       } else if(sp->chan.demod_type == M17_DEMOD || sp->chan.demod_type == YSF_DEMOD
-		|| sp->chan.demod_type == DSTAR_DEMOD){
+		|| sp->chan.demod_type == DSTAR_DEMOD || sp->chan.demod_type == NXDN_DEMOD){
 	snprintf(scratch[i],COLS,"%s",sp->chan.dv.source);
       } else if(sp->notch_enable && sp->current_tone != 0)
 	snprintf(scratch[i],COLS,"%.1f%c",sp->notch_tone,sp->current_tone == sp->notch_tone ? '*' : ' ');

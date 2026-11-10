@@ -1,6 +1,6 @@
 # Digital voice decoders
 
-Static library linked into `radiod` for the `p25`, `dmr`, `m17`, `ysf` and `dstar` demodulators
+Static library linked into `radiod` for the `p25`, `dmr`, `m17`, `ysf`, `dstar` and `nxdn` demodulators
 (`src/dv.c`). It takes 48 kHz complex IQ from the radiod channel filter and
 returns 8 kHz speech; the public API is `dv.h`. `src/Makefile` builds it
 automatically.
@@ -14,6 +14,8 @@ automatically.
     m17_rx.cpp       M17: discriminator, RRC, sync-word timing, LSF/LICH, Codec2
     ysf_rx.cpp       YSF: frame sync, FICH, DN (AMBE+2) and VW (IMBE) voice, DN callsigns
     dstar_rx.cpp     D-STAR: GMSK (M&M timing), frame sync, slow-data header, AMBE voice
+    nxdn_rx.cpp      NXDN48/96: frame sync, descrambling, LICH, SACCH/FACCH1 (VCALL), AMBE+2 voice
+    dv_ambe.cpp      AMBE+2 voice decoding shared by DMR and NXDN
     dv_api.cpp       C API
     upstream/        code taken from OP25; upstream/libm17 from the M17 Foundation
 
@@ -68,6 +70,19 @@ relaying reflector traffic (two callers decoded, 7836 voice frames), and on
 that capture with added noise: about 2600 of 2700 voice frames down to
 6 dB SNR, nothing from noise.
 
+NXDN follows trunk-recorder-pro's NXDN module (frame sync, PN9
+descrambling, LICH, the SACCH/FACCH1 channel coding and the VCALL layer 3
+message), ported from Rust; its convolutional code is M17's, so libm17's
+Viterbi decoder does it. The front end runs at the NXDN rate (2400 or 4800
+baud) with an RRC (alpha 0.2) receive filter. Two additions: the LICH has no
+error correction, so within a call a failed one is replaced by the last
+good one when the frame sync was where it belonged (9 dB SNR: 344 -> 595 of
+664 voice codewords); and the `[nxdn]` preset narrows radiod's channel
+filter to +/-4 kHz for NXDN48 (6 dB SNR: nothing -> 87%). Calls with a
+non-zero cipher type in VCALL are muted. The source unit ID shows as the
+callsign. Tested on a 3-minute openSPOT 4 NXDN48 capture (unit 9998, every
+voice codeword decoded) and on it with added noise; NXDN96 is untested.
+
 Example channels:
 
 ```ini
@@ -104,6 +119,12 @@ mode = dstar
 data = dstar.local
 freq = "433m900"
 encoding = opus
+
+[NXDN]
+mode = nxdn              ; NXDN48; mode = nxdn96 for 12.5 kHz NXDN96
+data = nxdn.local
+freq = "433m900"
+encoding = opus
 ```
 
 `control` shows recognized sync words as TP1 and decoded frames (P25) or
@@ -130,6 +151,9 @@ original notices are kept in the imported files.
   configured by OP25; frame layout and slow-data header from OP25's
   dstar_tx_sb / dstar_header.h; the header CRC is reimplemented here (OP25's
   CCITTChecksumReverse is GPL-2.0-only, so it isn't included)
+- NXDN (`nxdn_rx.cpp`): framing, scrambler, LICH, channel coding and VCALL
+  parsing from trunk-recorder-pro (TrunkRecorder/trunk-recorder-pro,
+  `crates/trunk-core/src/nxdn`, GPL-3.0-or-later)
 - `upstream/libm17` (M17 frame encoding/decoding): libm17 1.4.1 by Wojciech
   Kaczmarski, SP5WWP, and the M17 Foundation,
   [M17-Project/libm17](https://github.com/M17-Project/libm17),

@@ -841,6 +841,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
   case M17_DEMOD:
   case YSF_DEMOD:
   case DSTAR_DEMOD:
+  case NXDN_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     encode_string(&bp,SOURCE_CALLSIGN,chan->dv.source,strlen(chan->dv.source));
     break;

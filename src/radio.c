@@ -990,6 +990,7 @@ static void *demod_thread(void *p){
     case M17_DEMOD:
     case YSF_DEMOD:
     case DSTAR_DEMOD:
+    case NXDN_DEMOD:
       status = demod_dv(p);
       break;
     case WFM_DEMOD:

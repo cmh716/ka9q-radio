@@ -1,4 +1,4 @@
-# Digital voice decoder library (P25 Phase 1, DMR, M17, YSF, D-STAR), linked into radiod
+# Digital voice decoder library (P25 Phase 1, DMR, M17, YSF, D-STAR, NXDN), linked into radiod
 CXX ?= c++
 CC ?= cc
 AR ?= ar
@@ -9,13 +9,13 @@ CFLAGS += -std=gnu11 -Wall -MMD -MP
 CPPFLAGS += -I. -Iupstream -Iupstream/imbe_vocoder -Iupstream/libm17
 
 BUILD_DIR := build
-SOURCES := dv_api.cpp dv_frontend.cpp fsk4.cpp \
+SOURCES := dv_api.cpp dv_frontend.cpp dv_ambe.cpp fsk4.cpp \
 	p25_rx.cpp p25_voice.cpp upstream/p25_framer.cc upstream/bch.cc \
 	$(wildcard upstream/imbe_vocoder/*.cc) \
 	dmr_rx.cpp upstream/p25p2_vf.cc upstream/rs.cc \
 	upstream/software_imbe_decoder.cc upstream/imbe_decoder.cc \
 	upstream/mbelib.c upstream/ambe.c \
-	m17_rx.cpp ysf_rx.cpp dstar_rx.cpp
+	m17_rx.cpp ysf_rx.cpp dstar_rx.cpp nxdn_rx.cpp
 # libm17 has files with the same name in different directories, so its
 # objects keep its directory layout
 LIBM17_SOURCES := $(wildcard upstream/libm17/*.c upstream/libm17/*/*.c)
