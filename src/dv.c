@@ -174,13 +174,20 @@ int demod_dv(void *arg){
       chan->sig.foffset = stats.freq_offset;
       if(has_callsign)
 	strlcpy(chan->dv.source,stats.src_call,sizeof chan->dv.source);
+      if(is_dmr){
+	if(stats.active_slot == 0)
+	  chan->dv.source[0] = '\0';
+	else
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"TS%d%s%s",stats.active_slot,
+		   stats.src_call[0] ? " " : "",stats.src_call);
+      }
       if(is_auto){
 	// Mode, then whatever identifies the transmission
 	if(stats.active_mode < 0)
 	  chan->dv.source[0] = '\0';
 	else if(stats.active_mode == DV_P25_C4FM && stats.frames != 0)
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"P25 N%03X",stats.last_nac);
-	else if(stats.active_mode == DV_DMR && stats.active_slot != 0)
+	else if(stats.active_mode == DV_DMR && !stats.src_call[0] && stats.active_slot != 0)
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"DMR TS%d",stats.active_slot);
 	else
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"%s%s%s",dv_mode_name(stats.active_mode),
@@ -217,10 +224,13 @@ int demod_dv(void *arg){
 	  fprintf(stderr,"%s DMR samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " bursts=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64
-		  " slot=%d errors=%.1f%% offset=%+.1f Hz\n",
+		  " slot=%d cc=%d src=%s dst=%s%s errors=%.1f%% offset=%+.1f Hz\n",
 		  chan->name,stats.samples,stats.symbols,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
-		  stats.active_slot,100.0f * stats.error_rate,stats.freq_offset);
+		  stats.active_slot,stats.dmr_cc,
+		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
+		  stats.m17_encrypted ? " encrypted" : "",
+		  100.0f * stats.error_rate,stats.freq_offset);
 	else
 	  fprintf(stderr,"%s P25 samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " frames=%" PRIu64

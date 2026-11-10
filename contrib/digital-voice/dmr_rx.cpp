@@ -4,7 +4,9 @@
 // and dmr_cai.cc; see README.md for attribution
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "dv_decoder.h"
 #include "dv_frontend.h"
@@ -13,6 +15,9 @@
 #include "upstream/dmr_const.h"
 #include "upstream/frame_sync_magics.h"
 #include "dv_ambe.h"
+#include "upstream/bptc19696.h"
+#include "upstream/ezpwd/rs"
+#include "upstream/golay2087.h"
 
 namespace {
 
@@ -28,6 +33,11 @@ constexpr uint64_t kSyncs[] = {
   DMR_T1_DATA_SYNC_MAGIC, DMR_T2_VOICE_SYNC_MAGIC, DMR_T2_DATA_SYNC_MAGIC,
 };
 constexpr unsigned slot_ids[] = {0, 1, 0, 0, 1, 1, 0, 1}; // dmr_cai.h
+
+// dmr_slot.h: burst field positions (bits from the start of the slot, after the CACH)
+constexpr int kSlotTypeL = 98, kSlotTypeR = 156, kSyncEmb = 108;
+constexpr uint8_t kVoiceLcHeaderMask[24] = {1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0}; // 0x969696
+constexpr uint8_t kDataTypePiHeader = 0, kDataTypeVoiceLc = 1, kDataTypeTerminator = 2;
 
 bool is_voice_sync(uint64_t sync)
 {
@@ -64,8 +74,16 @@ public:
     stats->voice_muted = voice_muted_;
     stats->freq_offset = frontend_.frequency_offset_hz() + fsk4_.fine_offset_hz();
     stats->active_slot = active_slot_ + 1;
-    if (active_slot_ >= 0)
+    stats->dmr_cc = cc_;
+    if (active_slot_ >= 0) {
       stats->error_rate = slots_[active_slot_].error_rate();
+      call const& c = calls_[active_slot_];
+      if (c.have_ids) {
+        std::snprintf(stats->src_call, sizeof stats->src_call, "%u", c.source);
+        std::snprintf(stats->dst_call, sizeof stats->dst_call, "%s%u", c.group ? "TG " : "", c.destination);
+      }
+      stats->m17_encrypted = c.encrypted;
+    }
   }
 
 private:
@@ -166,6 +184,8 @@ private:
         break;
       }
       slot_type_[chan_] = sl_sync; // dmr_slot::load_slot: voice/data decision follows the latest sync
+      if (sl_sync == DMR_BS_DATA_SYNC_MAGIC || sl_sync == DMR_MS_DATA_SYNC_MAGIC)
+        data_burst(bits + 24, chan_);
     } else {
       shift_reg_ = (shift_reg_ << 1) + ((chan_ + 1) % 2);
       chan_ = slot_ids[shift_reg_ & 7];
@@ -202,14 +222,66 @@ private:
     codeword(sym + 108, chan);
   }
 
+  // dmr_slot::decode_slot_type() and the headers we need for voice: the
+  // color code, who is calling whom, encryption, and the end of a call
+  void data_burst(uint8_t const *slot, int chan)
+  {
+    bit_vector st;
+    for (int i = kSlotTypeL; i < kSyncEmb; i++)
+      st.push_back(slot[i]);
+    for (int i = kSlotTypeR; i < kSlotTypeR + 10; i++)
+      st.push_back(slot[i]);
+    if (CGolay2087::decode(st) > 2)
+      return; // golay(20,8) reliably corrects at most 2 bit errors
+    int const cc = (st[0] << 3) | (st[1] << 2) | (st[2] << 1) | st[3];
+    int const type = (st[4] << 3) | (st[5] << 2) | (st[6] << 1) | st[7];
+    cc_ = cc;
+    call& c = calls_[chan];
+    uint8_t info[96];
+    switch (type) {
+    case kDataTypePiHeader: // only sent on encrypted calls
+      if (bptc_.decode(slot, info))
+        c.encrypted = true;
+      break;
+    case kDataTypeVoiceLc: { // dmr_slot::decode_vlch(), decode_lc()
+      if (!bptc_.decode(slot, info))
+        break;
+      for (int i = 0; i < 24; i++)
+        info[72 + i] ^= kVoiceLcHeaderMask[i];
+      std::vector<uint8_t> lc(12, 0);
+      for (int i = 0; i < 96; i++)
+        lc[i / 8] = static_cast<uint8_t>((lc[i / 8] << 1) | info[i]);
+      if (rs12_.decode(lc) < 0)
+        break;
+      int const flco = lc[0] & 0x3f;
+      c.group = flco == 0;                  // group voice call (3 = unit to unit)
+      c.encrypted = (lc[2] & 0x40) != 0;    // service options: privacy
+      c.destination = (lc[3] << 16) | (lc[4] << 8) | lc[5];
+      c.source = (lc[6] << 16) | (lc[7] << 8) | lc[8];
+      c.have_ids = true;
+      break;
+    }
+    case kDataTypeTerminator:
+      c = call{};
+      break;
+    default:
+      break;
+    }
+  }
+
   // rx_sync::codeword(), CODEWORD_DMR case (dv_ambe2450)
   void codeword(uint8_t const *cw, int slot_id)
   {
     int16_t pcm[DV_PCM_SAMPLES];
-    if (slots_[slot_id].decode(cw, pcm))
-      voice_decoded_++;
-    else
+    bool const ok = slots_[slot_id].decode(cw, pcm);
+    if (calls_[slot_id].encrypted) {
+      std::memset(pcm, 0, sizeof pcm);
       voice_muted_++;
+    } else if (ok) {
+      voice_decoded_++;
+    } else {
+      voice_muted_++;
+    }
     if (callback_ != nullptr)
       callback_(user_data_, pcm);
   }
@@ -238,6 +310,18 @@ private:
 
   // Vocoder, one per timeslot
   dv_ambe2450 slots_[2];
+
+  // Per-timeslot call information from the voice LC header / PI header
+  struct call {
+    bool have_ids = false;
+    bool group = true;
+    bool encrypted = false;
+    unsigned source = 0, destination = 0;
+  };
+  call calls_[2];
+  int cc_ = -1;                 // color code, -1 until a slot type decodes
+  CBPTC19696 bptc_;
+  ezpwd::RS<255, 252> rs12_;    // Reed-Solomon(12,9), shortened
 
   uint64_t symbols_ = 0;
   uint64_t syncs_ = 0;

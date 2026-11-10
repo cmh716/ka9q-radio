@@ -25,8 +25,14 @@ ALGID, as OP25 does; encrypted voice is muted until the next TDU.
 
 DMR follows OP25: a timeslot plays while its latest sync is a voice sync.
 With `dmr-slot = 0` the decoder plays whichever slot starts a call first and
-stays with it until that call ends. Encrypted DMR is not detected yet, and
-color codes are not checked. AMBE+2 output level follows the talker and
+stays with it until that call ends. Data bursts give the color code (slot
+type, Golay 20,8) and, from the voice LC header (BPTC 196,96 and RS 12,9,
+OP25's dmr_slot.cc), the source radio ID, the talkgroup and the privacy
+bit; a PI header also marks a call encrypted, and encrypted calls are
+muted. A call joined after its header has no IDs and isn't checked for
+encryption (the embedded LC in the voice bursts would cover that). Tested on
+the trunk-recorder-pro DMR capture (CC 13, 4477055 to TG 44772); the
+encryption path hasn't met an encrypted call yet. AMBE+2 output level follows the talker and
 varies a lot between transmissions; the `[dmr]` preset leaves the gain at
 0 dB, which sounds about as loud as P25 on live signals.
 
@@ -150,6 +156,9 @@ original notices are kept in the imported files.
 - P25 frame synchronizer and BCH: KA1RBI (2010-2013), Graham J. Norbury (2020)
 - DMR framing and timeslot logic (`dmr_rx.cpp`, from `rx_sync.cc`/`dmr_cai.cc`):
   KA1RBI, Graham J. Norbury (2019-2022)
+- DMR slot type, BPTC(196,96) and Hamming codes (`bptc19696`, `golay2087`,
+  `hamming`): Ian Wraith, Jonathan Naylor G4KLX, Graham J. Norbury,
+  GPL-2.0-or-later, unmodified
 - Fixed-point IMBE vocoder: Pavel Yazev (2009)
 - AMBE+2 parameter decoding: mbelib (2010, ISC license) as carried in OP25;
   `p25p2_vf.cc` (AMBE codeword error correction): Max H. Parke, KA1RBI;

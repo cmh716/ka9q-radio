@@ -13,6 +13,7 @@ SOURCES := dv_api.cpp dv_auto.cpp dv_frontend.cpp dv_ambe.cpp fsk4.cpp \
 	p25_rx.cpp p25_voice.cpp upstream/p25_framer.cc upstream/bch.cc \
 	$(wildcard upstream/imbe_vocoder/*.cc) \
 	dmr_rx.cpp upstream/p25p2_vf.cc upstream/rs.cc \
+	upstream/bptc19696.cc upstream/hamming.cc upstream/golay2087.cc \
 	upstream/software_imbe_decoder.cc upstream/imbe_decoder.cc \
 	upstream/mbelib.c upstream/ambe.c \
 	m17_rx.cpp ysf_rx.cpp dstar_rx.cpp nxdn_rx.cpp

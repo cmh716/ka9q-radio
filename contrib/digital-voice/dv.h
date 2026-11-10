@@ -52,13 +52,14 @@ typedef struct {
   uint32_t last_bch_errors;
   // DMR
   int active_slot;           // slot being played, 1 or 2; 0 = none
+  int dmr_cc;                // color code, -1 if not yet known
   float error_rate;          // DMR: AMBE bit error rate estimate of the active slot; M17: Viterbi
   // M17, YSF and D-STAR callsigns, NXDN unit IDs, of the current transmission; "" if not yet known
   char src_call[12];
   char dst_call[12];
   // M17, from the current transmission's link setup frame
   int m17_can;               // Channel Access Number, -1 if not yet known
-  bool m17_encrypted;
+  bool m17_encrypted;        // M17, and DMR (privacy bit or PI header)
   // DV_AUTO: the mode whose call is being played, -1 if none (the other
   // fields are then that decoder's)
   int active_mode;
