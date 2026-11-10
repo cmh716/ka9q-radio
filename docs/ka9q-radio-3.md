@@ -336,6 +336,29 @@ last voice frame. For example:
 
 With **-v**, radiod logs each call it follows and leaves.
 
+A following channel plays one call at a time. To hear simultaneous calls,
+define several following channels on the same control channel, each with
+its own output stream and its own talkgroups; radiod gives them distinct
+SSRCs. Keep their talkgroup lists disjoint, or they will all follow the
+same call. Each decodes the control channel itself, which costs about as
+much as any other P25 channel. For example:
+
+    [Fire]
+    mode = p25
+    p25-demod = cqpsk
+    p25-follow = yes
+    p25-talkgroups = "10003"
+    freq = "851m4625"
+    data = trunk-fire.local
+
+    [Police]
+    mode = p25
+    p25-demod = cqpsk
+    p25-follow = yes
+    p25-talkgroups = "10157 10158"
+    freq = "851m4625"
+    data = trunk-police.local
+
 ### p25-wacn, p25-sysid, p25-slot
 
 P25 Phase 2 (**p25-demod = phase2**) voice channels are scrambled with a
