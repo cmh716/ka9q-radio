@@ -189,6 +189,7 @@ enum demod_type {
   YSF_DEMOD,            // Yaesu System Fusion (C4FM) voice
   DSTAR_DEMOD,          // D-STAR voice
   NXDN_DEMOD,           // NXDN voice (NXDN48 or NXDN96)
+  DIGITAL_DEMOD,        // any of the digital voice modes, detected automatically
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

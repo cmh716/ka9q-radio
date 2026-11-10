@@ -15,7 +15,7 @@ Each section configures one or more channels with the same mode,
 output multicast stream and sample rate, differing only in frequency. What follows
 is a list of parameter settings with their default values:
 
-### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn | nxdn96 | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
+### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn | nxdn96 | digital | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
 
 No default. Required unless specified in [global].
 
@@ -55,7 +55,7 @@ Parameters in *presets.conf*
 The parameters that may be set in *presets.conf* and selectively overridden
 in each receiver channel group are:
 
-### demod = linear | fm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn
+### demod = linear | fm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn | digital
 
 Selects one of
 the demodulators built into *radiod*, distinct from the
@@ -77,6 +77,8 @@ always produces mono 8 kHz audio; encrypted calls are muted.
 "M17" decodes M17 digital voice (Codec2) to mono 8 kHz audio; encrypted transmissions are muted.
 "YSF" decodes Yaesu System Fusion (C4FM) digital voice, DN and VW modes, to mono 8 kHz audio.
 "DSTAR" decodes D-STAR digital voice to mono 8 kHz audio.
+"DIGITAL" runs all the digital voice receivers (but P25 CQPSK) on one channel and plays whichever
+decodes voice first, until that transmission ends; monitor shows the mode and its callsign or ID.
 "NXDN" decodes NXDN conventional digital voice (NXDN48 or NXDN96, see **nxdn-rate**) to mono 8 kHz audio; encrypted calls are muted.
 
 ### samprate =

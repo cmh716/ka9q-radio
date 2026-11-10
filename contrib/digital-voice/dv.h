@@ -25,6 +25,7 @@ typedef enum {
   DV_DSTAR = 5,      // D-STAR (GMSK) voice
   DV_NXDN48 = 6,     // NXDN, 2400 baud (6.25 kHz)
   DV_NXDN96 = 7,     // NXDN, 4800 baud (12.5 kHz)
+  DV_AUTO = 8,       // all of the above but P25 CQPSK, whichever is on the air
 } dv_mode;
 
 typedef struct {
@@ -58,6 +59,9 @@ typedef struct {
   // M17, from the current transmission's link setup frame
   int m17_can;               // Channel Access Number, -1 if not yet known
   bool m17_encrypted;
+  // DV_AUTO: the mode whose call is being played, -1 if none (the other
+  // fields are then that decoder's)
+  int active_mode;
 } dv_stats;
 
 typedef struct dv_decoder dv_decoder;
@@ -71,6 +75,8 @@ void dv_destroy(dv_decoder *decoder);
 // (a C 'float complex' array may be passed directly)
 void dv_process(dv_decoder *decoder, float const *iq, size_t count);
 void dv_get_stats(dv_decoder const *decoder, dv_stats *stats);
+// Short display name of a mode ("P25", "DMR", "M17", "YSF", "DSTAR", "NXDN"), "" if none
+char const *dv_mode_name(int mode);
 
 #ifdef __cplusplus
 }

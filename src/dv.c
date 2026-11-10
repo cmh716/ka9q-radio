@@ -1,4 +1,5 @@
-// Digital voice demodulator for radiod: P25 Phase 1, DMR, M17, YSF, D-STAR and NXDN
+// Digital voice demodulator for radiod: P25 Phase 1, DMR, M17, YSF, D-STAR, NXDN,
+// or whichever of them is on the air ("digital")
 // The decoder library (contrib/digital-voice) takes 48 kHz complex IQ and
 // emits 8 kHz speech in bursts (P25: 9 frames per LDU; DMR: 3 per burst;
 // M17: 2 per frame; YSF: 5 per frame; D-STAR: 1 per frame; NXDN: 4 per frame);
@@ -48,9 +49,10 @@ int demod_dv(void *arg){
   bool const is_ysf = chan->demod_type == YSF_DEMOD;
   bool const is_dstar = chan->demod_type == DSTAR_DEMOD;
   bool const is_nxdn = chan->demod_type == NXDN_DEMOD;
+  bool const is_auto = chan->demod_type == DIGITAL_DEMOD;
   bool const has_callsign = is_m17 || is_ysf || is_dstar || is_nxdn;
   char const * const label = is_dmr ? "DMR" : is_m17 ? "M17" : is_ysf ? "YSF" : is_dstar ? "D-STAR"
-    : is_nxdn ? (chan->nxdn.nxdn96 ? "NXDN96" : "NXDN48") : "P25";
+    : is_nxdn ? (chan->nxdn.nxdn96 ? "NXDN96" : "NXDN48") : is_auto ? "DIGITAL" : "P25";
 
   // Like WFM, the output rate is fixed by the mode, whatever was set before
   chan->output.samprate = DV_AUDIO_SAMPRATE;
@@ -75,7 +77,7 @@ int demod_dv(void *arg){
     .m17_can_filter = chan->m17.can >= 0,
     .m17_can = chan->m17.can,
   };
-  dv_mode const mode = is_dmr ? DV_DMR : is_m17 ? DV_M17 : is_ysf ? DV_YSF : is_dstar ? DV_DSTAR
+  dv_mode const mode = is_auto ? DV_AUTO : is_dmr ? DV_DMR : is_m17 ? DV_M17 : is_ysf ? DV_YSF : is_dstar ? DV_DSTAR
     : is_nxdn ? (chan->nxdn.nxdn96 ? DV_NXDN96 : DV_NXDN48)
     : chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK : DV_P25_C4FM;
   dv_decoder * const decoder = dv_create(mode,&config,queue_pcm,&audio_queue);
@@ -119,12 +121,30 @@ int demod_dv(void *arg){
       chan->sig.foffset = stats.freq_offset;
       if(has_callsign)
 	strlcpy(chan->dv.source,stats.src_call,sizeof chan->dv.source);
-      if(!is_dmr && !has_callsign && stats.frames != 0){
+      if(is_auto){
+	// Mode, then whatever identifies the transmission
+	if(stats.active_mode < 0)
+	  chan->dv.source[0] = '\0';
+	else if(stats.active_mode == DV_P25_C4FM && stats.frames != 0)
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"P25 N%03X",stats.last_nac);
+	else if(stats.active_mode == DV_DMR && stats.active_slot != 0)
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"DMR TS%d",stats.active_slot);
+	else
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"%s%s%s",dv_mode_name(stats.active_mode),
+		   stats.src_call[0] ? " " : "",stats.src_call);
+      }
+      if(!is_dmr && !has_callsign && !is_auto && stats.frames != 0){
 	chan->p25.last_nac = stats.last_nac;
 	chan->p25.have_nac = true;
       }
       if(Verbose > 0){
-	if(is_ysf || is_dstar || is_nxdn)
+	if(is_auto)
+	  fprintf(stderr,"%s DIGITAL samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
+		  " voice=%" PRIu64 " muted=%" PRIu64 " active=%s offset=%+.1f Hz\n",
+		  chan->name,stats.samples,stats.syncs,stats.frames,
+		  stats.voice_decoded,stats.voice_muted,
+		  chan->dv.source[0] ? chan->dv.source : "-",stats.freq_offset);
+	else if(is_ysf || is_dstar || is_nxdn)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s offset=%+.1f Hz\n",
 		  chan->name,label,stats.samples,stats.syncs,stats.frames,

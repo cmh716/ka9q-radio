@@ -1,6 +1,6 @@
 # Digital voice decoders
 
-Static library linked into `radiod` for the `p25`, `dmr`, `m17`, `ysf`, `dstar` and `nxdn` demodulators
+Static library linked into `radiod` for the `p25`, `dmr`, `m17`, `ysf`, `dstar`, `nxdn` and `digital` demodulators
 (`src/dv.c`). It takes 48 kHz complex IQ from the radiod channel filter and
 returns 8 kHz speech; the public API is `dv.h`. `src/Makefile` builds it
 automatically.
@@ -16,6 +16,7 @@ automatically.
     dstar_rx.cpp     D-STAR: GMSK (M&M timing), frame sync, slow-data header, AMBE voice
     nxdn_rx.cpp      NXDN48/96: frame sync, descrambling, LICH, SACCH/FACCH1 (VCALL), AMBE+2 voice
     dv_ambe.cpp      AMBE+2 voice decoding shared by DMR and NXDN
+    dv_auto.cpp      "digital": every receiver on the same IQ, the first to decode voice wins
     dv_api.cpp       C API
     upstream/        code taken from OP25; upstream/libm17 from the M17 Foundation
 
@@ -82,6 +83,15 @@ filter to +/-4 kHz for NXDN48 (6 dB SNR: nothing -> 87%). Calls with a
 non-zero cipher type in VCALL are muted. The source unit ID shows as the
 callsign. Tested on a 3-minute openSPOT 4 NXDN48 capture (unit 9998, every
 voice codeword decoded) and on it with added noise; NXDN96 is untested.
+
+`digital` (DV_AUTO) runs P25 C4FM, DMR, YSF, D-STAR, NXDN48, NXDN96 and M17
+receivers side by side. The first to decode voice owns the audio; it lets go
+500 ms after its last frame, and the next to decode voice takes over. On a
+test stream of all six modes separated by noise (real P25, DMR, D-STAR and
+NXDN captures, synthesized YSF and M17) each was detected with its
+callsign/ID within half a second, and noise never claimed the audio. It
+costs about 8% of an N150 core per channel, against ~1% for one mode; six
+of the receivers could share one front end if that matters.
 
 Example channels:
 

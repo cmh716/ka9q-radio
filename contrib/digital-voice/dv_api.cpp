@@ -30,6 +30,8 @@ extern "C" dv_decoder *dv_create(dv_mode mode, dv_config const *config,
     case DV_NXDN48:
     case DV_NXDN96:
       return dv_create_nxdn(mode == DV_NXDN96, callback, user_data);
+    case DV_AUTO:
+      return dv_create_auto(*config, callback, user_data);
     }
   } catch (...) {
   }
@@ -50,4 +52,20 @@ extern "C" void dv_process(dv_decoder *decoder, float const *iq, size_t count)
 extern "C" void dv_get_stats(dv_decoder const *decoder, dv_stats *stats)
 {
   decoder->get_stats(stats);
+}
+
+extern "C" char const *dv_mode_name(int mode)
+{
+  switch (mode) {
+  case DV_P25_C4FM: return "P25";
+  case DV_P25_CQPSK: return "P25";
+  case DV_DMR: return "DMR";
+  case DV_M17: return "M17";
+  case DV_YSF: return "YSF";
+  case DV_DSTAR: return "DSTAR";
+  case DV_NXDN48: return "NXDN";
+  case DV_NXDN96: return "NXDN";
+  case DV_AUTO: return "AUTO";
+  default: return "";
+  }
 }
