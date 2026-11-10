@@ -50,6 +50,22 @@ frame.
 .B "\-s, \-\-subdirs, \-\-subdirectories"
 Create SSRC/year/month/day subdirectories. Superseded by --jt and pipe modes.
 .TP
+.B "\-\-by\-talkgroup"
+For digital voice streams: write one file per call and file it by the call's
+talkgroup (or target unit, or destination callsign) as
+.IR talkgroup / year / month / day / yyyymmdd Thhmmss Z_ MHz _ source .wav
+(or .ogg). A change of talkgroup or talker starts a new file, as does an idle
+gap (see --timeout; 2 seconds suits trunked systems). A call whose IDs never
+arrive is filed under
+.IR unknown .
+The talkgroup, source and mode are also written as file attributes.
+Supersedes --subdirs; superseded by --jt and pipe modes.
+.TP
+.B "\-\-call\-log file"
+With --by-talkgroup, append one CSV line per recorded call: start time,
+seconds, talkgroup, source, mode, frequency, SSRC and file name. A relative
+name is relative to the current directory, not --directory.
+.TP
 .B "\-p, \-\-prefix\-source"
 Prefix recording names with the sender socket identity.
 .TP
@@ -123,6 +139,11 @@ pcmrecord \-d recordings hf\-pcm.local
 pcmrecord \-\-stdout \-\-raw \-\-ssrc 10000000 hf\-pcm.local > samples.f32
 pcmrecord \-\-exec 'decoder \-\-rate $r \-\-channels $c \-' hf\-pcm.local
 .fi
+Record a trunked P25 system by talkgroup, with a call log:
+.PP
+.RS
+pcmrecord --by-talkgroup -t 2 -m 1 --call-log calls.csv -d /srv/recordings trunk.local
+.RE
 .SH SEE ALSO
 radiod(8), monitor(1), wd-record(1), jt-decoded(1)
 .PP

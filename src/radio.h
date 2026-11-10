@@ -200,6 +200,10 @@ struct channel {
   struct {
     bool analog;                  // "digital" also plays analog FM when no digital mode is on the air
     char source[20];              // digital voice (M17, YSF, D-STAR; NXDN unit ID; with the mode in front for "digital"): source of the current transmission, "" if none
+    // The current call, for recorders ("" if none or not yet known)
+    char call_dest[24];           // talkgroup, target unit or destination callsign
+    char call_src[24];            // source unit ID or callsign
+    char call_mode[8];            // "P25", "DMR", ...
   } dv;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate

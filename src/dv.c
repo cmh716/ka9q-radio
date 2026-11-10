@@ -206,6 +206,40 @@ static void log_event(void *user_data,dv_event const *event){
   dv_follow_event(ev->follow,event);
 }
 
+// The current call's destination, source and mode, as recorders want them
+struct dv_call {
+  char dest[sizeof ((chan_t *)0)->dv.call_dest];
+  char src[sizeof ((chan_t *)0)->dv.call_src];
+  char mode[sizeof ((chan_t *)0)->dv.call_mode];
+};
+static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *follow,struct dv_call *call){
+  memset(call,0,sizeof *call);
+  if(follow != NULL){
+    if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src))
+      strlcpy(call->mode,"P25",sizeof call->mode);
+    return;
+  }
+  int const m = mode == DV_AUTO ? st->active_mode : (int)mode;
+  if(m < 0)
+    return; // DV_AUTO, nothing playing
+  if((m == DV_DMR || m == DV_P25P2) && st->active_slot == 0)
+    return; // no call on the slot we play
+  if(st->dst_call[0] == '\0' && st->src_call[0] == '\0')
+    return;
+  strlcpy(call->dest,st->dst_call,sizeof call->dest);
+  strlcpy(call->src,st->src_call,sizeof call->src);
+  strlcpy(call->mode,dv_mode_name(m),sizeof call->mode);
+}
+
+// Send status on the output stream now, so a recorder learns of a new call
+// before (or as) its audio arrives
+static void push_status(chan_t *chan){
+  pthread_mutex_lock(&chan->status.lock);
+  send_radio_status((struct sockaddr *)&chan->status.dest_socket,chan->frontend,chan);
+  chan->status.output_timer = chan->status.output_interval;
+  pthread_mutex_unlock(&chan->status.lock);
+}
+
 static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   struct dv_audio_queue * const queue = user_data;
   if(queue->count == DV_AUDIO_QUEUE_DEPTH){
@@ -304,6 +338,7 @@ int demod_dv(void *arg){
   chan->tp2 = 0; // decoded frames (P25) or bursts (DMR)
   chan->p25.have_nac = false;
   chan->dv.source[0] = '\0';
+  chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = '\0';
   bool restart_needed = false;
   realtime(chan->prio);
 
@@ -319,10 +354,20 @@ int demod_dv(void *arg){
     // float complex is layout-compatible with interleaved I/Q floats
     dv_process(decoder,(float const *)chan->baseband,(size_t)count);
     sample_count += (uint64_t)count;
-    if(events.follow != NULL){
-      dv_stats cc;
-      dv_get_stats(decoder,&cc);
-      dv_follow_block(events.follow,&cc,count);
+    {
+      dv_stats st;
+      dv_get_stats(decoder,&st);
+      if(events.follow != NULL)
+	dv_follow_block(events.follow,&st,count);
+      struct dv_call call;
+      call_ids(&st,mode,events.follow,&call);
+      if(strcmp(call.dest,chan->dv.call_dest) != 0 || strcmp(call.src,chan->dv.call_src) != 0
+	 || strcmp(call.mode,chan->dv.call_mode) != 0){
+	strlcpy(chan->dv.call_dest,call.dest,sizeof chan->dv.call_dest);
+	strlcpy(chan->dv.call_src,call.src,sizeof chan->dv.call_src);
+	strlcpy(chan->dv.call_mode,call.mode,sizeof chan->dv.call_mode);
+	push_status(chan);
+      }
     }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);

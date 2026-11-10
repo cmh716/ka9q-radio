@@ -14,9 +14,13 @@ Capacity Max (going encrypted).
 
 ## Trunking and scanning (local systems)
 
-- [ ] **Call recording with metadata**: one file per call, tagged with
-      talkgroup, source radio, frequency, mode and time. Applies to every
-      digital mode and to followed calls.
+- [x] **Call recording with metadata**: `pcmrecord --by-talkgroup`, with
+      `--call-log`; radiod sends CALL_DEST/CALL_SOURCE/CALL_MODE status.
+      Needs a live test with p25-follow.
+- [ ] Recording: talkgroup names from a list (e.g. a RadioReference CSV) for
+      the folder names.
+- [ ] P25 Phase 2: about 0.4 s of an encrypted call can play before the ESS
+      says it is encrypted, when the MAC_PTT is missed.
 - [ ] **LTR Standard**: decode the 300 bps sub-audible data on each repeater's
       FM channel (area, go-to repeater, home repeater, group ID, free
       repeater); play the repeaters carrying chosen IDs. No control channel:

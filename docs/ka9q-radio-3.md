@@ -336,6 +336,10 @@ last voice frame. For example:
 
 With **-v**, radiod logs each call it follows and leaves.
 
+To record the calls by talkgroup, use pcmrecord's **--by-talkgroup** option
+(see pcmrecord(1)): radiod sends each call's talkgroup, source and mode in the
+stream's status as the call starts, for every digital voice mode.
+
 A following channel plays one call at a time. To hear simultaneous calls,
 define several following channels on the same control channel, each with
 its own output stream and its own talkgroups; radiod gives them distinct

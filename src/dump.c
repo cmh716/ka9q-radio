@@ -295,6 +295,15 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
 	FREE(p);
       }
       break;
+    case CALL_DEST:
+    case CALL_SOURCE:
+    case CALL_MODE:
+      {
+	char *p = decode_string(cp,optlen);
+	fprintf(fp,"call %s %s",type == CALL_DEST ? "dest" : type == CALL_SOURCE ? "source" : "mode",p != NULL ? p : "");
+	FREE(p);
+      }
+      break;
     case P25_NAC:
       fprintf(fp,"P25 NAC %03x",(unsigned)decode_int(cp,optlen));
       break;

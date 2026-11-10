@@ -170,6 +170,9 @@ enum status_type {
   DCS_INVERTED,   // Configured DCS polarity (FM only)
   P25_NAC,        // NAC of the last P25 frame received (P25 only)
   SOURCE_CALLSIGN, // Source callsign (M17, YSF, D-STAR) or unit ID (NXDN) of the current digital voice transmission
+  CALL_DEST,      // Digital voice: talkgroup, target unit or destination callsign of the current call
+  CALL_SOURCE,    // Digital voice: source unit ID or callsign of the current call
+  CALL_MODE,      // Digital voice: mode of the current call ("P25", "DMR", ...)
 };
 
 /**

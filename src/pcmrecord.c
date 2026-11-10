@@ -34,6 +34,9 @@ Command-line options:
  --max_length|-x|--lengthlimit|--limit|-L <seconds>: maximum file duration, seconds. When --pad is set, pad first file to duration boundary
  --ssrc <ssrc>: Select one SSRC (recommended for --stdout)
  --version|-V: display command version
+ --by-talkgroup: one file per digital voice call, filed by talkgroup (or destination callsign) as
+        talkgroup/year/month/day/yyyymmddThhmmssZ_<MHz>_<source>.wav; a new talkgroup or talker starts a new file
+ --call-log <file>: with --by-talkgroup, append a CSV line for each call recorded
 @endverbatim
  */
 
@@ -176,6 +179,11 @@ struct session {
   uint64_t samples_remaining;   // Samples remaining before file is closed; 0 means indefinite
   int64_t file_time;
   bool complete;
+
+  // --by-talkgroup: the call this file holds (first known values)
+  char file_dest[sizeof ((chan_t *)0)->dv.call_dest];
+  char file_src[sizeof ((chan_t *)0)->dv.call_src];
+  char file_mode[sizeof ((chan_t *)0)->dv.call_mode];
 };
 
 #define SIZE_LIMIT 1
@@ -202,6 +210,9 @@ static struct sockaddr_storage *Source_socket; // Remains NULL if Source == NULL
 static bool Prefix_source; // Prepend 192.168.42.4:1234_ to file name
 static bool Padding = false;
 static bool Reset_time = false;
+static bool By_talkgroup = false; // File digital voice calls by talkgroup
+static char const *Call_log_name; // CSV log of calls recorded, with By_talkgroup
+static FILE *Call_log;
 
 const char *App_path;
 static int Input_fd,Status_fd;
@@ -217,6 +228,8 @@ static void cleanup(void);
 static int session_file_init(struct session *sp,struct sockaddr const *sender,int64_t timestamp);
 static int close_session(struct session **spp);
 static int close_file(struct session *sp,char const *reason);
+static void call_adopt(struct session *sp);
+static void call_file(struct session *sp,char const *tempfile);
 static uint8_t *encodeTagString(uint8_t *out,size_t size,const char *string);
 static int start_ogg_opus_stream(struct session *sp);
 static int emit_ogg_opus_tags(struct session *sp);
@@ -232,6 +245,8 @@ static void sanitize_string(char *cp);
 
 enum {
   OPT_REACQUIRE = 256,
+  OPT_BY_TALKGROUP,
+  OPT_CALL_LOG,
 };
 
 static struct option Options[] = {
@@ -252,6 +267,8 @@ static struct option Options[] = {
   {"reset", no_argument, NULL, 'R'},  // Detect clock skew and reset
   {"raw", no_argument, NULL, 'r' },
   {"reacquire", no_argument, NULL, OPT_REACQUIRE},
+  {"by-talkgroup", no_argument, NULL, OPT_BY_TALKGROUP},
+  {"call-log", required_argument, NULL, OPT_CALL_LOG},
   {"subdirectories", no_argument, NULL, 's'},
   {"subdirs", no_argument, NULL, 's'},
   {"timeout", required_argument, NULL, 't'},
@@ -333,6 +350,12 @@ int main(int argc,char *argv[]){
     case OPT_REACQUIRE:
       Reacquire = true;
       break;
+    case OPT_BY_TALKGROUP:
+      By_talkgroup = true;
+      break;
+    case OPT_CALL_LOG:
+      Call_log_name = optarg;
+      break;
     case 'S':
       if(optarg){
 	char *ptr = NULL;
@@ -400,6 +423,18 @@ int main(int argc,char *argv[]){
     fprintf(stderr,"--jtmode supersedes --subdirs\n");
     Subdirs = false;
   }
+  if(By_talkgroup && (Catmode || Command != NULL || Jtmode)){
+    fprintf(stderr,"--stdout, --exec and --jtmode supersede --by-talkgroup\n");
+    By_talkgroup = false;
+  }
+  if(By_talkgroup && Subdirs){
+    fprintf(stderr,"--by-talkgroup supersedes --subdirs\n");
+    Subdirs = false;
+  }
+  if(Call_log_name != NULL && !By_talkgroup){
+    fprintf(stderr,"--call-log requires --by-talkgroup\n");
+    Call_log_name = NULL;
+  }
   if(Source != NULL){
     Source_socket = calloc(1,sizeof(struct sockaddr_storage));
     assert(Source_socket != NULL);
@@ -429,6 +464,17 @@ int main(int argc,char *argv[]){
   signal(SIGTERM,closedown);
 
   atexit(cleanup);
+  if(Call_log_name != NULL){
+    // Opened before the chdir, so a relative name is relative to where we started
+    Call_log = fopen(Call_log_name,"a");
+    if(Call_log == NULL){
+      fprintf(stderr,"Can't open call log %s: %s\n",Call_log_name,strerror(errno));
+      exit(EX_CANTCREAT);
+    }
+    setlinebuf(Call_log);
+    if(ftell(Call_log) == 0)
+      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,ssrc,file\n");
+  }
   if(strlen(Recordings) > 0 && chdir(Recordings) != 0){
     fprintf(stderr,"Can't change to directory %s: %s\n",Recordings,strerror(errno));
     exit(EX_CANTCREAT);
@@ -572,6 +618,16 @@ static void process_status(int fd){
   sp->sender = sender;
   sp->chan = chan;
   sp->frontend = frontend;
+  if(By_talkgroup && sp->fp != NULL){
+    // A different talkgroup, or another talker, is a new call: start a new file
+    char const *dest = chan.dv.call_dest;
+    char const *src = chan.dv.call_src;
+    if((sp->file_dest[0] != '\0' && dest[0] != '\0' && strcmp(dest,sp->file_dest) != 0)
+       || (sp->file_src[0] != '\0' && src[0] != '\0' && strcmp(src,sp->file_src) != 0))
+      close_file(sp,"new call"); // the next data packet opens the next file
+    else
+      call_adopt(sp);
+  }
   // Ogg (containing opus) can concatenate streams with new metadata, so restart when it changes
   // WAV files don't even have this metadata, so ignore changes
   if((sp->encoding == OPUS || sp->encoding == OPUS_VOIP)
@@ -1463,6 +1519,9 @@ static int session_file_init(struct session *sp,struct sockaddr const *sender,in
     return -1;
   }
   sp->can_seek = true; // Ordinary file
+  sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = '\0';
+  if(By_talkgroup)
+    call_adopt(sp);
   // We byte swap S16BE to S16LE, so change the tag
   if(Verbose){
     fprintf(stderr,"%s creating '%s' %d s/s %s %s %'.3lf Hz %s",
@@ -1593,8 +1652,12 @@ static int close_file(struct session *sp,char const *reason){
 	int fd = fileno(sp->fp);
 	attrprintf(fd,"samples written","%lld",sp->samples_written);
 	attrprintf(fd,"total samples","%lld",sp->total_file_samples);
-	fclose(sp->fp);
-	rename(tempfile,sp->filename);    // Atomic rename, after everything else
+	if(By_talkgroup){
+	  call_file(sp,tempfile); // writes the call's attributes, closes and files it
+	} else {
+	  fclose(sp->fp);
+	  rename(tempfile,sp->filename);    // Atomic rename, after everything else
+	}
       } else {
 	// File is too short to keep, delete
 	fclose(sp->fp);
@@ -1610,11 +1673,113 @@ static int close_file(struct session *sp,char const *reason){
   sp->fp = NULL;
   //  FREE(sp->iobuffer);
   sp->filename[0] = '\0';
+  sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = '\0';
   sp->samples_written = 0;
   sp->total_file_samples = 0;
   sp->current_segment_samples = 0;
   sp->file_time = 0;
   return 0;
+}
+
+// --by-talkgroup: take the current call's IDs for this file where it has none yet
+static void call_adopt(struct session *sp){
+  if(sp->file_dest[0] == '\0')
+    strlcpy(sp->file_dest,sp->chan.dv.call_dest,sizeof sp->file_dest);
+  if(sp->file_src[0] == '\0')
+    strlcpy(sp->file_src,sp->chan.dv.call_src,sizeof sp->file_src);
+  if(sp->file_mode[0] == '\0')
+    strlcpy(sp->file_mode,sp->chan.dv.call_mode,sizeof sp->file_mode);
+}
+
+// An ID made safe as one path component: letters, digits, '-', '_' and '.'
+static void path_safe(char *out,size_t len,char const *in,char const *empty){
+  size_t n = 0;
+  for(char const *p = in; *p != '\0' && n + 1 < len; p++){
+    char const c = *p;
+    if(isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')
+      out[n++] = c;
+    else if(c == ' ' && n > 0 && out[n-1] != '_')
+      out[n++] = '_';
+  }
+  while(n > 0 && out[n-1] == '_')
+    n--; // trailing padding
+  out[n] = '\0';
+  if(n == 0 || strcmp(out,".") == 0 || strcmp(out,"..") == 0)
+    strlcpy(out,empty,len);
+}
+
+static int mkdirs(char const *path){
+  char tmp[PATH_MAX];
+  strlcpy(tmp,path,sizeof tmp);
+  for(char *p = tmp + 1; *p != '\0'; p++){
+    if(*p != '/')
+      continue;
+    *p = '\0';
+    if(mkdir(tmp,0777) == -1 && errno != EEXIST)
+      return -1;
+    *p = '/';
+  }
+  if(mkdir(tmp,0777) == -1 && errno != EEXIST)
+    return -1;
+  return 0;
+}
+
+// --by-talkgroup: label the finished file with its call, move it to
+// talkgroup/yyyy/mm/dd/yyyymmddThhmmssZ_<MHz>_<source><suffix> and log it
+static void call_file(struct session *sp,char const *tempfile){
+  int const fd = fileno(sp->fp);
+  if(sp->file_dest[0] != '\0')
+    attrprintf(fd,"talkgroup","%s",sp->file_dest);
+  if(sp->file_src[0] != '\0')
+    attrprintf(fd,"call source","%s",sp->file_src);
+  if(sp->file_mode[0] != '\0')
+    attrprintf(fd,"call mode","%s",sp->file_mode);
+  fclose(sp->fp);
+
+  char dest[64],src[64];
+  path_safe(dest,sizeof dest,sp->file_dest,"unknown");
+  path_safe(src,sizeof src,sp->file_src,"unknown");
+  time_t const seconds = sp->file_time / BILLION;
+  struct tm tm;
+  gmtime_r(&seconds,&tm);
+  char dir[128];
+  snprintf(dir,sizeof dir,"%s/%d/%02d/%02d",dest,tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday);
+  char suffix[16] = "";
+  {
+    char const *dot = strrchr(sp->filename,'.');
+    if(dot != NULL && strchr(dot,'/') == NULL)
+      strlcpy(suffix,dot,sizeof suffix);
+  }
+  if(mkdirs(dir) != 0){
+    fprintf(stderr,"can't create directory %s: %s\n",dir,strerror(errno));
+    rename(tempfile,sp->filename); // leave it where it was written
+    return;
+  }
+  char final[512];
+  for(int tries = 0; tries < 100; tries++){
+    char unique[8] = "";
+    if(tries > 0)
+      snprintf(unique,sizeof unique,"-%d",tries);
+    snprintf(final,sizeof final,"%s/%4d%02d%02dT%02d%02d%02dZ_%.4lf_%s%s%s",dir,
+	     tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,
+	     sp->chan.tune.freq * 1e-6,src,unique,suffix);
+    if(access(final,F_OK) != 0)
+      break;
+  }
+  if(rename(tempfile,final) != 0){
+    fprintf(stderr,"can't rename %s to %s: %s\n",tempfile,final,strerror(errno));
+    rename(tempfile,sp->filename);
+    return;
+  }
+  if(Verbose)
+    fprintf(stderr,"filed '%s'\n",final);
+  if(Call_log != NULL){
+    imaxdiv_t const r = imaxdiv(sp->file_time,BILLION);
+    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%u,%s/%s\n",
+	    tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,(int)(r.rem / 100000000),
+	    sp->samprate != 0 ? (float)sp->samples_written / sp->samprate : 0.0f,
+	    sp->file_dest,sp->file_src,sp->file_mode,sp->chan.tune.freq,sp->ssrc,Recordings,final);
+  }
 }
 
 static int start_ogg_opus_stream(struct session *sp){

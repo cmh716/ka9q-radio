@@ -314,3 +314,18 @@ void dv_follow_print(struct dv_follow const *f){
 	  st.syncs,st.frames,st.voice_decoded,st.voice_muted,st.m17_encrypted ? " encrypted" : "",
 	  100.0f * st.error_rate,st.freq_offset);
 }
+
+bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen){
+  if(f == NULL || f->voice == NULL)
+    return false;
+  dv_stats st;
+  dv_get_stats(f->voice,&st);
+  snprintf(dest,dlen,"%" PRIu32,f->cur.group);
+  if(st.src_call[0] != '\0')
+    strlcpy(src,st.src_call,slen);
+  else if(f->cur.source != 0)
+    snprintf(src,slen,"%" PRIu32,f->cur.source);
+  else
+    src[0] = '\0';
+  return true;
+}

@@ -4,6 +4,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "p25_voice.h"
 
+#include <cstdio>
+#include <cstring>
 #include <vector>
 
 #include "ezpwd/rs"
@@ -53,6 +55,7 @@ struct p25_voice::impl {
   std::unique_ptr<imbe_vocoder> vocoder;
   ezpwd::RS<63, 55> rs_ess;   // RS(24,16,9) shortened
   ezpwd::RS<63, 47> rs_hdu;   // RS(36,20,17) shortened
+  ezpwd::RS<63, 51> rs_lc;    // RS(24,12,13) shortened
   dv_pcm_callback callback;
   void *user_data;
   dv_stats stats{};
@@ -78,7 +81,9 @@ struct p25_voice::impl {
     set_algid(static_cast<uint8_t>(((hb[40] & 0x0f) << 4) | (hb[41] >> 2)));
   }
 
-  void read_ess(bit_vector const& frame)
+  // The 24 Hamming(10,6,3) protected hexbits an LDU carries (LC or ESS),
+  // placed at hb[39..62] for the shortened RS decoders
+  std::vector<uint8_t> ldu_hexbits(bit_vector const& frame)
   {
     std::vector<uint8_t> hb(63, 0);
     size_t index = 0;
@@ -88,11 +93,42 @@ struct p25_voice::impl {
         cw = (cw << 1) + frame[imbe_ldu_ls_data_bits[index++]];
       hb[39 + block] = hmg1063Dec(cw >> 4, cw & 0x0f);
     }
+    return hb;
+  }
+
+  void read_ess(bit_vector const& frame)
+  {
+    std::vector<uint8_t> hb = ldu_hexbits(frame);
     int const errors = rs_ess.decode(hb);
     if (errors < 0 || errors > 4)
       return;
     // MI is hexbits 39-50; ALGID follows
     set_algid(static_cast<uint8_t>((hb[51] << 2) + (hb[52] >> 4)));
+  }
+
+  // LDU1 link control: the talkgroup (or target unit) and source of the call
+  void read_lc(bit_vector const& frame)
+  {
+    std::vector<uint8_t> hb = ldu_hexbits(frame);
+    int const errors = rs_lc.decode(hb);
+    if (errors < 0 || errors > 6)
+      return;
+    uint8_t lc[9];
+    for (int i = 0, j = 0; i < 9; j += 4) {
+      lc[i++] = static_cast<uint8_t>((hb[j + 39] << 2) + (hb[j + 40] >> 4));
+      lc[i++] = static_cast<uint8_t>(((hb[j + 40] & 0x0f) << 4) + (hb[j + 41] >> 2));
+      lc[i++] = static_cast<uint8_t>(((hb[j + 41] & 0x03) << 6) + hb[j + 42]);
+    }
+    uint8_t const lco = lc[0] & 0x3f;
+    bool const standard = (lc[0] & 0x40) == 0 && (lc[1] == 0x00 || lc[1] == 0x01 || lc[1] == 0x90);
+    if (!standard || (lco != 0x00 && lco != 0x03))
+      return; // only group and unit-to-unit voice name the call
+    uint32_t const dest = lco == 0x00 ? static_cast<uint32_t>(lc[4] << 8 | lc[5])
+                                      : static_cast<uint32_t>(lc[3] << 16 | lc[4] << 8 | lc[5]);
+    uint32_t const src = static_cast<uint32_t>(lc[6] << 16 | lc[7] << 8 | lc[8]);
+    snprintf(stats.dst_call, sizeof stats.dst_call, "%u", dest);
+    if (src != 0)
+      snprintf(stats.src_call, sizeof stats.src_call, "%u", src);
   }
 
   void decode_voice(bit_vector const& frame)
@@ -134,9 +170,11 @@ struct p25_voice::impl {
     case DUID_TDU:
     case DUID_TDULC:
       encrypted = false; // end of call
+      stats.src_call[0] = stats.dst_call[0] = '\0';
       break;
     case DUID_LDU1:
       stats.ldu1++;
+      read_lc(frame);
       decode_voice(frame);
       break;
     case DUID_LDU2:
@@ -181,6 +219,8 @@ void p25_voice::get_stats(dv_stats *stats) const
   stats->voice_muted = impl_->stats.voice_muted;
   stats->last_nac = impl_->stats.last_nac;
   stats->last_bch_errors = impl_->stats.last_bch_errors;
+  memcpy(stats->src_call, impl_->stats.src_call, sizeof stats->src_call);
+  memcpy(stats->dst_call, impl_->stats.dst_call, sizeof stats->dst_call);
   impl_->trunk.get_stats(stats);
 }
 

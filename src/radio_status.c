@@ -838,6 +838,9 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
   case DMR_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     encode_string(&bp,SOURCE_CALLSIGN,chan->dv.source,strlen(chan->dv.source));
+    encode_string(&bp,CALL_DEST,chan->dv.call_dest,strlen(chan->dv.call_dest));
+    encode_string(&bp,CALL_SOURCE,chan->dv.call_src,strlen(chan->dv.call_src));
+    encode_string(&bp,CALL_MODE,chan->dv.call_mode,strlen(chan->dv.call_mode));
     break;
   case M17_DEMOD:
   case YSF_DEMOD:
@@ -846,11 +849,18 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
   case DIGITAL_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     encode_string(&bp,SOURCE_CALLSIGN,chan->dv.source,strlen(chan->dv.source));
+    encode_string(&bp,CALL_DEST,chan->dv.call_dest,strlen(chan->dv.call_dest));
+    encode_string(&bp,CALL_SOURCE,chan->dv.call_src,strlen(chan->dv.call_src));
+    encode_string(&bp,CALL_MODE,chan->dv.call_mode,strlen(chan->dv.call_mode));
     break;
   case P25_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     if(chan->p25.have_nac)
       encode_int(&bp,P25_NAC,chan->p25.last_nac);
+    encode_string(&bp,SOURCE_CALLSIGN,chan->dv.source,strlen(chan->dv.source));
+    encode_string(&bp,CALL_DEST,chan->dv.call_dest,strlen(chan->dv.call_dest));
+    encode_string(&bp,CALL_SOURCE,chan->dv.call_src,strlen(chan->dv.call_src));
+    encode_string(&bp,CALL_MODE,chan->dv.call_mode,strlen(chan->dv.call_mode));
     break;
   case SPECT_DEMOD:
   case SPECT2_DEMOD:

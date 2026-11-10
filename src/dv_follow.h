@@ -19,6 +19,8 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e);
 void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count);
 // "TG<group> <source>" of the call being followed; false if none
 bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len);
+// The followed call's talkgroup (or unit) and source as decimal strings; false if none
+bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen);
 void dv_follow_print(struct dv_follow const *f);
 
 #endif
