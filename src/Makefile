@@ -128,7 +128,7 @@ LIBDSP = kernels.o filter.o iir.o window.o osc.o pll.o sine.o sincospi.o sincosp
 LIBSTATUS = status.o decode_status.o
 
 # radiod uses a lot of unique objects. It should probably move to its own directory
-RADIOD_OBJECTS = main.o audio.o avahi.o modes.o fm.o dv.o wfm.o linear.o spectrum.o radio.o n0.o radio_status.o rtcp.o libdsp.a libstatus.a libradio.a
+RADIOD_OBJECTS = main.o audio.o avahi.o modes.o fm.o dv.o dv_follow.o wfm.o linear.o spectrum.o radio.o n0.o radio_status.o rtcp.o libdsp.a libstatus.a libradio.a
 
 ## source files for dependency generation (see DEPS=)
 # List every .c file in the tree so `-include $(DEPS)` picks up
@@ -316,7 +316,7 @@ $(DVLIB): FORCE
 .PHONY: FORCE
 FORCE:
 
-dv.o: CFLAGS += -I../contrib/digital-voice
+dv.o dv_follow.o: CFLAGS += -I../contrib/digital-voice
 
 rdsd: rdsd.o avahi.o libdsp.a libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lfftw3f_threads -lfftw3f $(LDLIBS)

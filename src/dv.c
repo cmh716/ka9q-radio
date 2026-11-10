@@ -17,6 +17,7 @@
 #include "radio.h"
 #include "sched.h"
 #include "dv.h"
+#include "dv_follow.h"
 
 #define DV_AUDIO_QUEUE_DEPTH 45 // 900 ms
 
@@ -193,10 +194,16 @@ struct dv_audio_queue {
 };
 
 // P25 control channel events (site, band plan, voice grants), logged with -v
+// and passed to the grant follower, if any
+struct dv_events {
+  struct channel const *chan;
+  struct dv_follow *follow;
+};
 static void log_event(void *user_data,dv_event const *event){
-  struct channel const *chan = user_data;
-  if(Verbose > 0)
-    fprintf(stderr,"%s P25 %s\n",chan->name,event->text);
+  struct dv_events const *ev = user_data;
+  if(Verbose > 0 && event->text[0] != '\0')
+    fprintf(stderr,"%s P25 %s\n",ev->chan->name,event->text);
+  dv_follow_event(ev->follow,event);
 }
 
 static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
@@ -265,7 +272,14 @@ int demod_dv(void *arg){
     chan->demod_type = INVALID_DEMOD;
     return -1;
   }
-  dv_set_event_callback(decoder,log_event,chan);
+  // A P25 Phase 1 control channel can follow its voice grants
+  struct dv_events events = { .chan = chan };
+  if(chan->p25.follow && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK)){
+    events.follow = dv_follow_create(chan,queue_pcm,&audio_queue);
+    if(events.follow == NULL)
+      fprintf(stderr,"%s: couldn't create the P25 voice channel follower\n",chan->name);
+  }
+  dv_set_event_callback(decoder,log_event,&events);
 
   // Emit one 20 ms audio frame per 20 ms of IQ, in integer arithmetic
   uint64_t output_clock = 0;
@@ -305,6 +319,11 @@ int demod_dv(void *arg){
     // float complex is layout-compatible with interleaved I/Q floats
     dv_process(decoder,(float const *)chan->baseband,(size_t)count);
     sample_count += (uint64_t)count;
+    if(events.follow != NULL){
+      dv_stats cc;
+      dv_get_stats(decoder,&cc);
+      dv_follow_block(events.follow,&cc,count);
+    }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);
       // Any receiver in a call, or any sync word, means digital: keep FM quiet
@@ -352,6 +371,8 @@ int demod_dv(void *arg){
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"%s%s%s",dv_mode_name(stats.active_mode),
 		   stats.src_call[0] ? " " : "",stats.src_call);
       }
+      if(events.follow != NULL && !dv_follow_source(events.follow,chan->dv.source,sizeof chan->dv.source))
+	chan->dv.source[0] = '\0';
       if(!is_dmr && !has_callsign && !is_auto && stats.frames != 0){
 	chan->p25.last_nac = stats.last_nac;
 	chan->p25.have_nac = true;
@@ -408,6 +429,7 @@ int demod_dv(void *arg){
 		  stats.ldu1,stats.ldu2,stats.voice_decoded,stats.voice_muted,
 		  stats.last_nac,stats.last_bch_errors,
 		  stats.tsbks,stats.tsbks + stats.tsbk_errors,stats.freq_offset);
+	dv_follow_print(events.follow);
       }
     }
     if(audio_queue.dropped != reported_drops){
@@ -468,5 +490,6 @@ int demod_dv(void *arg){
   if(fm != NULL && fm != &fm_zero)
     free(fm);
   dv_destroy(decoder);
+  dv_follow_destroy(events.follow);
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;
 }

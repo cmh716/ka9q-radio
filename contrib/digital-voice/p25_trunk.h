@@ -42,6 +42,7 @@ private:
     uint32_t group = 0;
     uint32_t source = 0;
     uint64_t seen = 0;
+    uint8_t opts = 0;         // service options of the grant (updates carry none)
   };
 
   void tsbk(uint8_t const t[12], uint16_t nac);

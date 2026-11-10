@@ -163,6 +163,8 @@ char const *Channel_keys[] = {
   "p25-wacn",
   "p25-sysid",
   "p25-slot",
+  "p25-follow",
+  "p25-talkgroups",
   "dmr-slot",
   "m17-can",
   "nxdn-rate",
@@ -298,6 +300,27 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	fprintf(stderr,"%s: invalid p25-nac '%s' (expected 0..0xfff), ignored\n",sname,cp);
       else
 	chan->p25.nac = (uint16_t)nac;
+    }
+    chan->p25.follow = config_getboolean(table,sname,"p25-follow",chan->p25.follow);
+    cp = config_getstring(table,sname,"p25-talkgroups",NULL);
+    if(cp != NULL){
+      // Talkgroups in priority order, separated by spaces or commas
+      chan->p25.ntalkgroups = 0;
+      char const *p = cp;
+      while(*p != '\0' && chan->p25.ntalkgroups < (int)(sizeof chan->p25.talkgroups / sizeof chan->p25.talkgroups[0])){
+	while(*p == ' ' || *p == ',' || *p == '\t')
+	  p++;
+	if(*p == '\0')
+	  break;
+	char *end;
+	unsigned long const tg = strtoul(p,&end,10);
+	if(end == p || tg > 0xffffff){
+	  fprintf(stderr,"%s: invalid p25-talkgroups '%s'\n",sname,cp);
+	  break;
+	}
+	chan->p25.talkgroups[chan->p25.ntalkgroups++] = (uint32_t)tg;
+	p = end;
+      }
     }
     cp = config_getstring(table,sname,"dmr-slot",NULL);
     if(cp != NULL){

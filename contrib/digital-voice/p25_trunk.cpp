@@ -162,24 +162,32 @@ void p25_trunk::grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts
       ++it;
   }
   auto it = calls_.find(ch);
-  if (it != calls_.end() && it->second.group == group) {
+  bool const known = it != calls_.end() && it->second.group == group;
+  if (known) {
     it->second.seen = now_;
-    if (source != 0 && it->second.source != source)
-      it->second.source = source; // a new talker; not worth an event
-    return;
+    if (source != 0)
+      it->second.source = source; // perhaps a new talker; not worth a GRANT
+    if (opts != 0)
+      it->second.opts = opts;
+  } else {
+    calls_[ch] = call{group, source, now_, opts};
+    grants_++;
   }
-  calls_[ch] = call{group, source, now_};
-  grants_++;
 
   dv_event e{};
-  e.type = DV_EVENT_GRANT;
+  e.type = known ? DV_EVENT_UPDATE : DV_EVENT_GRANT;
   e.channel = ch;
   e.freq_hz = channel_hz(ch, &e.slot);
   e.group = group;
-  e.source = source;
+  e.source = known ? calls_[ch].source : source;
   e.unit = unit;
-  e.encrypted = opts & 0x40;
-  e.emergency = opts & 0x80;
+  uint8_t const o = calls_[ch].opts;
+  e.encrypted = o & 0x40;
+  e.emergency = o & 0x80;
+  if (known) {
+    emit(e);
+    return;
+  }
   char where[40];
   if (e.freq_hz == 0)
     snprintf(where, sizeof where, "ch %X-%u", ch >> 12, ch & 0xfff);

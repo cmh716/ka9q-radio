@@ -182,6 +182,9 @@ struct channel {
     uint32_t wacn;                // Phase 2: WACN and system ID, for descrambling
     uint16_t sysid;
     int slot;                     // Phase 2: TDMA slot, 0 or 1
+    bool follow;                  // control channel: play the calls it grants
+    int ntalkgroups;              // follow only these, in priority order (0: all)
+    uint32_t talkgroups[32];
     uint16_t last_nac;            // NAC of the last frame received
     bool have_nac;                // last_nac is valid
   } p25;

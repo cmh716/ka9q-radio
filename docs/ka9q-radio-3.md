@@ -311,6 +311,31 @@ P25 modulation: **c4fm** for conventional and most trunked systems,
 
 P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accepts any NAC.
 
+### p25-follow = no, p25-talkgroups
+
+On a P25 Phase 1 control channel, **p25-follow = yes** makes the channel
+play the calls the control channel grants: a second downconverter in the
+same channel tunes to each granted voice channel (Phase 1 FDMA, or Phase 2
+TDMA with the slot and the scrambling parameters the control channel
+broadcasts) and its speech becomes the channel's audio. The voice channel
+must lie within the front end's coverage.
+
+**p25-talkgroups** limits it to the listed talkgroups, in priority order,
+separated by spaces or commas: a call on an earlier one preempts a later
+one. Without it, any clear group or unit call is followed, first come first
+served. Encrypted calls are skipped. A call is left 2 seconds after its
+last voice frame. For example:
+
+    [Trunked]
+    mode = p25
+    p25-demod = cqpsk
+    p25-follow = yes
+    p25-talkgroups = "10003 10157"
+    freq = "851m4625"
+    data = trunk.local
+
+With **-v**, radiod logs each call it follows and leaves.
+
 ### p25-wacn, p25-sysid, p25-slot
 
 P25 Phase 2 (**p25-demod = phase2**) voice channels are scrambled with a
