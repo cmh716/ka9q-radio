@@ -26,10 +26,14 @@ typedef enum {
   DV_NXDN48 = 6,     // NXDN, 2400 baud (6.25 kHz)
   DV_NXDN96 = 7,     // NXDN, 4800 baud (12.5 kHz)
   DV_AUTO = 8,       // all of the above but P25 CQPSK, whichever is on the air
+  DV_P25P2 = 9,      // P25 Phase 2 (TDMA) voice channel; needs p25_wacn, p25_sysid, p25_nac
 } dv_mode;
 
 typedef struct {
-  uint16_t p25_nac;  // P25: NAC to accept, 0 = any
+  uint16_t p25_nac;  // P25: NAC to accept, 0 = any; Phase 2: the system's NAC (for descrambling)
+  uint32_t p25_wacn; // P25 Phase 2: WACN and system ID (for descrambling)
+  uint16_t p25_sysid;
+  int p25_slot;      // P25 Phase 2: TDMA slot 0 or 1
   int dmr_slot;      // DMR: timeslot 1 or 2; 0 = whichever starts a call first
   bool m17_can_filter; // M17: play only transmissions with this CAN
   int m17_can;       // M17: Channel Access Number 0-15, if m17_can_filter

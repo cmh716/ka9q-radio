@@ -110,7 +110,7 @@ struct frontend {
   double spurs[NSPURS]; // List of frequency spurs to notch, in Hertz (testing)
 };
 
-enum p25_modulation { P25_C4FM = 0, P25_CQPSK };
+enum p25_modulation { P25_C4FM = 0, P25_CQPSK, P25_PHASE2 };
 
 /**
 @brief  radiod channel state block
@@ -177,8 +177,11 @@ struct channel {
 
   enum demod_type demod_type;  // Index into demodulator table
   struct {
-    uint16_t nac;                 // NAC filter, 0 = any
+    uint16_t nac;                 // NAC filter, 0 = any; Phase 2: the system's NAC
     enum p25_modulation modulation;
+    uint32_t wacn;                // Phase 2: WACN and system ID, for descrambling
+    uint16_t sysid;
+    int slot;                     // Phase 2: TDMA slot, 0 or 1
     uint16_t last_nac;            // NAC of the last frame received
     bool have_nac;                // last_nac is valid
   } p25;

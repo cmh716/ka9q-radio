@@ -11,6 +11,8 @@ automatically.
     p25_rx.cpp       P25: C4FM or CQPSK (Gardner, differential, Costas) to dibits
     p25_voice.cpp    P25: NID framing, HDU/LDU2 encryption detection, IMBE decoding
     p25_trunk.cpp    P25: control channel TSBKs (band plan, site, voice grants)
+    p25p2_rx.cpp     P25 Phase 2: H-DQPSK, TDMA bursts, descrambling, MAC PTT, AMBE+2
+    cqpsk.h          P25 CQPSK / H-DQPSK demodulator (4 or 5 samples per symbol)
     dmr_rx.cpp       DMR: burst framing, timeslot tracking, AMBE+2 decoding
     m17_rx.cpp       M17: discriminator, RRC, sync-word timing, LSF/LICH, Codec2
     ysf_rx.cpp       YSF: frame sync, FICH, DN (AMBE+2) and VW (IMBE) voice, DN callsigns
@@ -29,6 +31,15 @@ trellis code and CRC follow OP25's p25p1_fdma.cc, but the rate-1/2 trellis
 is decoded with a Viterbi search rather than OP25's greedy one. Grants and
 grant updates are reported once per call (a channel's talkgroup changing),
 through dv_set_event_callback(); a channel unmentioned for 3 s is idle again.
+
+P25 Phase 2 follows OP25's p25p2_framer, p25p2_sync and p25p2_tdma: a
+frame sync starts a 180-dibit burst and up to 10 more follow; the ISCH
+places each in the 12-burst superframe; the burst is descrambled with
+the WACN/system/NAC sequence (OP25 apps/tdma/lfsr.py, rewritten in C++);
+4V/2V bursts carry AMBE+2 frames and the ESS, SACCH/FACCH the MAC PDUs
+(RS(63,35), CRC-12). The ISCH and DUID code tables are OP25's
+(upstream/p25p2_tables.h). Calls whose MAC_PTT or ESS give a non-clear
+ALGID are muted.
 
 DMR follows OP25: a timeslot plays while its latest sync is a voice sync.
 With `dmr-slot = 0` the decoder plays whichever slot starts a call first and

@@ -26,6 +26,7 @@ dv_decoder *dv_create_m17(int can, dv_pcm_callback callback, void *user_data); /
 dv_decoder *dv_create_ysf(dv_pcm_callback callback, void *user_data);
 dv_decoder *dv_create_dstar(dv_pcm_callback callback, void *user_data);
 dv_decoder *dv_create_nxdn(bool nxdn96, dv_pcm_callback callback, void *user_data);
+dv_decoder *dv_create_p25p2(dv_config const& config, dv_pcm_callback callback, void *user_data);
 dv_decoder *dv_create_auto(dv_config const& config, dv_pcm_callback callback, void *user_data);
 
 #endif

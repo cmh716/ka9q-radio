@@ -32,6 +32,11 @@ extern "C" dv_decoder *dv_create(dv_mode mode, dv_config const *config,
       return dv_create_nxdn(mode == DV_NXDN96, callback, user_data);
     case DV_AUTO:
       return dv_create_auto(*config, callback, user_data);
+    case DV_P25P2:
+      if (config->p25_slot < 0 || config->p25_slot > 1 || config->p25_nac > 0xfff
+          || config->p25_sysid > 0xfff || config->p25_wacn > 0xfffff)
+        return nullptr;
+      return dv_create_p25p2(*config, callback, user_data);
     }
   } catch (...) {
   }
@@ -71,6 +76,7 @@ extern "C" char const *dv_mode_name(int mode)
   case DV_NXDN48: return "NXDN";
   case DV_NXDN96: return "NXDN";
   case DV_AUTO: return "AUTO";
+  case DV_P25P2: return "P25";
   default: return "";
   }
 }

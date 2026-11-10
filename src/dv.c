@@ -247,13 +247,18 @@ int demod_dv(void *arg){
   struct dv_audio_queue audio_queue = {0};
   dv_config const config = {
     .p25_nac = chan->p25.nac,
+    .p25_wacn = chan->p25.wacn,
+    .p25_sysid = chan->p25.sysid,
+    .p25_slot = chan->p25.slot,
     .dmr_slot = chan->dmr.slot,
     .m17_can_filter = chan->m17.can >= 0,
     .m17_can = chan->m17.can,
   };
   dv_mode const mode = is_auto ? DV_AUTO : is_dmr ? DV_DMR : is_m17 ? DV_M17 : is_ysf ? DV_YSF : is_dstar ? DV_DSTAR
     : is_nxdn ? (chan->nxdn.nxdn96 ? DV_NXDN96 : DV_NXDN48)
-    : chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK : DV_P25_C4FM;
+    : chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK
+    : chan->p25.modulation == P25_PHASE2 ? DV_P25P2 : DV_P25_C4FM;
+  bool const is_p25p2 = mode == DV_P25P2;
   dv_decoder * const decoder = dv_create(mode,&config,queue_pcm,&audio_queue);
   if(decoder == NULL){
     fprintf(stderr,"%s: couldn't create %s decoder\n",chan->name,label);
@@ -320,6 +325,14 @@ int demod_dv(void *arg){
       chan->sig.foffset = stats.freq_offset;
       if(has_callsign)
 	strlcpy(chan->dv.source,stats.src_call,sizeof chan->dv.source);
+      if(is_p25p2){
+	if(stats.active_slot == 0)
+	  chan->dv.source[0] = '\0';
+	else
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"TG%s%.6s%s%.8s",
+		   stats.dst_call[0] ? " " : "",stats.dst_call,
+		   stats.src_call[0] ? " " : "",stats.src_call);
+      }
       if(is_dmr){
 	if(stats.active_slot == 0)
 	  chan->dv.source[0] = '\0';
@@ -365,6 +378,14 @@ int demod_dv(void *arg){
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
 		  stats.m17_can,stats.m17_encrypted ? " encrypted" : "",
+		  100.0f * stats.error_rate,stats.freq_offset);
+	else if(is_p25p2)
+	  fprintf(stderr,"%s P25P2 samples=%" PRIu64 " syncs=%" PRIu64 " bursts=%" PRIu64
+		  " voice=%" PRIu64 " muted=%" PRIu64 " slot=%d tg=%s src=%s%s errors=%.1f%% offset=%+.1f Hz\n",
+		  chan->name,stats.samples,stats.syncs,stats.frames,
+		  stats.voice_decoded,stats.voice_muted,config.p25_slot,
+		  stats.dst_call[0] ? stats.dst_call : "-",stats.src_call[0] ? stats.src_call : "-",
+		  stats.m17_encrypted ? " encrypted" : "",
 		  100.0f * stats.error_rate,stats.freq_offset);
 	else if(is_dmr)
 	  fprintf(stderr,"%s DMR samples=%" PRIu64 " symbols=%" PRIu64

@@ -160,6 +160,9 @@ char const *Channel_keys[] = {
   "pacing",
   "p25-demod",
   "p25-nac",
+  "p25-wacn",
+  "p25-sysid",
+  "p25-slot",
   "dmr-slot",
   "m17-can",
   "nxdn-rate",
@@ -259,8 +262,32 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	chan->p25.modulation = P25_C4FM;
       else if(strcasecmp(cp,"cqpsk") == 0)
 	chan->p25.modulation = P25_CQPSK;
+      else if(strcasecmp(cp,"phase2") == 0)
+	chan->p25.modulation = P25_PHASE2;
       else
-	fprintf(stderr,"%s: unknown p25-demod '%s' (expected c4fm or cqpsk), ignored\n",sname,cp);
+	fprintf(stderr,"%s: unknown p25-demod '%s' (expected c4fm, cqpsk or phase2), ignored\n",sname,cp);
+    }
+    // Phase 2 scrambling parameters, as the control channel announces them (hex)
+    static struct { char const *key; unsigned long max; } const p2keys[] = {
+      {"p25-wacn",0xfffff}, {"p25-sysid",0xfff}, {"p25-slot",1},
+    };
+    for(size_t i = 0; i < sizeof p2keys / sizeof p2keys[0]; i++){
+      cp = config_getstring(table,sname,p2keys[i].key,NULL);
+      if(cp == NULL)
+	continue;
+      char *end;
+      errno = 0;
+      unsigned long const v = strtoul(cp,&end,i < 2 ? 16 : 10);
+      if(errno != 0 || end == cp || *end != '\0' || v > p2keys[i].max){
+	fprintf(stderr,"%s: invalid %s '%s', ignored\n",sname,p2keys[i].key,cp);
+	continue;
+      }
+      if(i == 0)
+	chan->p25.wacn = (uint32_t)v;
+      else if(i == 1)
+	chan->p25.sysid = (uint16_t)v;
+      else
+	chan->p25.slot = (int)v;
     }
     cp = config_getstring(table,sname,"p25-nac",NULL);
     if(cp != NULL){

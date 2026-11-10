@@ -302,7 +302,7 @@ FM only. When non-zero, enable a tone squelch for the specified tone frequency (
 
 FM only. Enable digital-coded squelch for a standard three-digit octal DCS code, for example `023`. Prefix the code with `I` for inverted polarity (`I023`); the default is normal polarity. `off` disables DCS squelch. DCS and CTCSS may both be specified; when both are set, both must match to open the audio. For frequency lists, use `dcs` with `freq`/`raster`, or `dcs0` through `dcs9` alongside the corresponding numbered frequency list. Because DCS words repeat without a separate frame sync, some code/polarity pairs are cyclic aliases; a decoder cannot distinguish those equivalent streams.
 
-### p25-demod = c4fm | cqpsk (default c4fm)
+### p25-demod = c4fm | cqpsk | phase2 (default c4fm)
 
 P25 modulation: **c4fm** for conventional and most trunked systems,
 **cqpsk** for simulcast (LSM) systems.
@@ -310,6 +310,24 @@ P25 modulation: **c4fm** for conventional and most trunked systems,
 ### p25-nac = 0
 
 P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accepts any NAC.
+
+### p25-wacn, p25-sysid, p25-slot
+
+P25 Phase 2 (**p25-demod = phase2**) voice channels are scrambled with a
+sequence made from the system's WACN, system ID and NAC, so all three must be
+given: **p25-wacn** and **p25-sysid** in hex and **p25-nac**, as a control
+channel announces them (radiod -v logs them as "network: WACN 458AD system
+229"). **p25-slot** (0 or 1) is the TDMA slot to play, as a grant gives it.
+For example:
+
+    [TG10003]
+    mode = p25
+    p25-demod = phase2
+    p25-wacn = 458AD
+    p25-sysid = 229
+    p25-nac = 0x469
+    p25-slot = 0
+    freq = "851m9125"
 
 ### dmr-slot = 0
 
