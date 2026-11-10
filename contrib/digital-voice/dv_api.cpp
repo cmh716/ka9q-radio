@@ -25,6 +25,8 @@ extern "C" dv_decoder *dv_create(dv_mode mode, dv_config const *config,
       return dv_create_m17(config->m17_can_filter ? config->m17_can : -1, callback, user_data);
     case DV_YSF:
       return dv_create_ysf(callback, user_data);
+    case DV_DSTAR:
+      return dv_create_dstar(callback, user_data);
     }
   } catch (...) {
   }

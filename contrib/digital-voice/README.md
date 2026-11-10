@@ -1,6 +1,6 @@
 # Digital voice decoders
 
-Static library linked into `radiod` for the `p25`, `dmr`, `m17` and `ysf` demodulators
+Static library linked into `radiod` for the `p25`, `dmr`, `m17`, `ysf` and `dstar` demodulators
 (`src/dv.c`). It takes 48 kHz complex IQ from the radiod channel filter and
 returns 8 kHz speech; the public API is `dv.h`. `src/Makefile` builds it
 automatically.
@@ -13,6 +13,7 @@ automatically.
     dmr_rx.cpp       DMR: burst framing, timeslot tracking, AMBE+2 decoding
     m17_rx.cpp       M17: discriminator, RRC, sync-word timing, LSF/LICH, Codec2
     ysf_rx.cpp       YSF: frame sync, FICH, DN (AMBE+2) and VW (IMBE) voice, DN callsigns
+    dstar_rx.cpp     D-STAR: GMSK (M&M timing), frame sync, slow-data header, AMBE voice
     dv_api.cpp       C API
     upstream/        code taken from OP25; upstream/libm17 from the M17 Foundation
 
@@ -52,6 +53,21 @@ signals (OP25's YSF transmitter code with its AMBE and IMBE encoders, FM
 modulated): every frame down to 9 dB SNR, about 70% at 6 dB, nothing from
 noise.
 
+D-STAR uses the shared front end, then an FM discriminator, a root raised
+cosine filter (alpha 0.2), Mueller & Muller timing as in OP25's GMSK path,
+decision-directed DC/level tracking and a bit slicer. The framing is new
+code: OP25's rx_sync passes D-STAR's one-bit symbols through
+dibits_to_bits() before decode_dstar(), which doesn't look right. A
+transmission is found by its preamble and header sync, or late, by the
+frame sync in the slow data of every 21st frame; the MY and UR callsigns come
+from the slow-data copy of the header (CRC checked). Voice is decoded with
+OP25's decode_dstar() and mbelib's AMBE 2400 tables; OP25's synthesizer
+renders it ~14 dB hotter than P25 and clips, so the spectral magnitudes are
+scaled down 12 dB first. Tested on a 3-minute capture of an openSPOT 4
+relaying reflector traffic (two callers decoded, 7836 voice frames), and on
+that capture with added noise: about 2600 of 2700 voice frames down to
+6 dB SNR, nothing from noise.
+
 Example channels:
 
 ```ini
@@ -82,6 +98,12 @@ mode = ysf
 data = ysf.local
 freq = "444m000"
 encoding = opus
+
+[DSTAR]
+mode = dstar
+data = dstar.local
+freq = "433m900"
+encoding = opus
 ```
 
 `control` shows recognized sync words as TP1 and decoded frames (P25) or
@@ -104,6 +126,10 @@ original notices are kept in the imported files.
 - FSK4 MMSE timing: Frank (Radio Rausch) (2006-2007), Steve Glass (2011)
 - YSF receive (`ysf_rx.cpp`, from `rx_sync.cc`) and `ysf_const.h`, `crc16.h`:
   Max H. Parke KA1RBI, Graham J. Norbury
+- D-STAR timing (`dstar_rx.cpp`) follows GNU Radio's clock_recovery_mm_ff as
+  configured by OP25; frame layout and slow-data header from OP25's
+  dstar_tx_sb / dstar_header.h; the header CRC is reimplemented here (OP25's
+  CCITTChecksumReverse is GPL-2.0-only, so it isn't included)
 - `upstream/libm17` (M17 frame encoding/decoding): libm17 1.4.1 by Wojciech
   Kaczmarski, SP5WWP, and the M17 Foundation,
   [M17-Project/libm17](https://github.com/M17-Project/libm17),

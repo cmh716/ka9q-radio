@@ -1,7 +1,7 @@
-// Digital voice demodulator for radiod: P25 Phase 1, DMR, M17 and YSF
+// Digital voice demodulator for radiod: P25 Phase 1, DMR, M17, YSF and D-STAR
 // The decoder library (contrib/digital-voice) takes 48 kHz complex IQ and
 // emits 8 kHz speech in bursts (P25: 9 frames per LDU; DMR: 3 per burst;
-// M17: 2 per frame; YSF: 5 per frame);
+// M17: 2 per frame; YSF: 5 per frame; D-STAR: 1 per frame);
 // a small queue paces that out at real time
 #include <assert.h>
 #include <inttypes.h>
@@ -46,7 +46,9 @@ int demod_dv(void *arg){
   bool const is_dmr = chan->demod_type == DMR_DEMOD;
   bool const is_m17 = chan->demod_type == M17_DEMOD;
   bool const is_ysf = chan->demod_type == YSF_DEMOD;
-  char const * const label = is_dmr ? "DMR" : is_m17 ? "M17" : is_ysf ? "YSF" : "P25";
+  bool const is_dstar = chan->demod_type == DSTAR_DEMOD;
+  bool const has_callsign = is_m17 || is_ysf || is_dstar;
+  char const * const label = is_dmr ? "DMR" : is_m17 ? "M17" : is_ysf ? "YSF" : is_dstar ? "D-STAR" : "P25";
 
   // Like WFM, the output rate is fixed by the mode, whatever was set before
   chan->output.samprate = DV_AUDIO_SAMPRATE;
@@ -71,7 +73,7 @@ int demod_dv(void *arg){
     .m17_can_filter = chan->m17.can >= 0,
     .m17_can = chan->m17.can,
   };
-  dv_mode const mode = is_dmr ? DV_DMR : is_m17 ? DV_M17 : is_ysf ? DV_YSF
+  dv_mode const mode = is_dmr ? DV_DMR : is_m17 ? DV_M17 : is_ysf ? DV_YSF : is_dstar ? DV_DSTAR
     : chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK : DV_P25_C4FM;
   dv_decoder * const decoder = dv_create(mode,&config,queue_pcm,&audio_queue);
   if(decoder == NULL){
@@ -112,17 +114,17 @@ int demod_dv(void *arg){
       chan->tp1 = (double)stats.syncs;
       chan->tp2 = (double)stats.frames;
       chan->sig.foffset = stats.freq_offset;
-      if(is_m17 || is_ysf)
+      if(has_callsign)
 	strlcpy(chan->dv.source,stats.src_call,sizeof chan->dv.source);
-      if(!is_dmr && !is_m17 && !is_ysf && stats.frames != 0){
+      if(!is_dmr && !has_callsign && stats.frames != 0){
 	chan->p25.last_nac = stats.last_nac;
 	chan->p25.have_nac = true;
       }
       if(Verbose > 0){
-	if(is_ysf)
-	  fprintf(stderr,"%s YSF samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
+	if(is_ysf || is_dstar)
+	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s offset=%+.1f Hz\n",
-		  chan->name,stats.samples,stats.syncs,stats.frames,
+		  chan->name,label,stats.samples,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
 		  stats.freq_offset);
