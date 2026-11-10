@@ -163,6 +163,7 @@ char const *Channel_keys[] = {
   "dmr-slot",
   "m17-can",
   "nxdn-rate",
+  "analog",
   "pl", // do these too (sigh)
   "pll-bw",
   "pll",
@@ -299,6 +300,7 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	fprintf(stderr,"%s: invalid nxdn-rate '%s' (expected 48 or 96), ignored\n",sname,cp);
     }
   }
+  chan->dv.analog = config_getboolean(table,sname,"analog",chan->dv.analog);
   chan->use_dns = config_getboolean(table, sname, "dns", chan->use_dns);
   chan->advertise = config_getboolean(table,sname,"advertise",chan->advertise);
   double lifetime = config_getdouble(table,sname,"lifetime",chan->lifetime * Blocktime);

@@ -79,6 +79,8 @@ always produces mono 8 kHz audio; encrypted calls are muted.
 "DSTAR" decodes D-STAR digital voice to mono 8 kHz audio.
 "DIGITAL" runs all the digital voice receivers (but P25 CQPSK) on one channel and plays whichever
 decodes voice first, until that transmission ends; monitor shows the mode and its callsign or ID.
+With **analog = yes** (the **mixed** preset) it also plays analog FM, with the channel's de-emphasis and
+squelch, whenever no digital mode is on the air; FM audio is delayed 240 ms so digital is recognized first.
 "NXDN" decodes NXDN conventional digital voice (NXDN48 or NXDN96, see **nxdn-rate**) to mono 8 kHz audio; encrypted calls are muted.
 
 ### samprate =

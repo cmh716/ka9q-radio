@@ -192,6 +192,7 @@ struct channel {
     bool nxdn96;                  // NXDN96 (4800 baud) rather than NXDN48 (2400)
   } nxdn;
   struct {
+    bool analog;                  // "digital" also plays analog FM when no digital mode is on the air
     char source[20];              // digital voice (M17, YSF, D-STAR; NXDN unit ID; with the mode in front for "digital"): source of the current transmission, "" if none
   } dv;
   char preset[32];             // name of last mode preset -- DEPRECATED

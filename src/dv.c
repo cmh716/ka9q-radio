@@ -5,10 +5,12 @@
 // M17: 2 per frame; YSF: 5 per frame; D-STAR: 1 per frame; NXDN: 4 per frame);
 // a small queue paces that out at real time
 #include <assert.h>
+#include <complex.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "misc.h"
@@ -32,6 +34,119 @@
 #define DV_AGC_MIN_DB (-12.0f)
 #define DV_AGC_MAX_DB (18.0f)
 #define DV_AGC_CEILING 0.9f        // peak limit, fraction of full scale
+
+// Analog FM alongside "digital" (analog = yes): discriminator, low pass and
+// 6:1 decimation to 8 kHz, a 300 Hz high pass (subaudible tones), the
+// channel's de-emphasis, and a squelch on the channel's SNR. Its audio is
+// delayed DV_FM_DELAY frames so that a digital transmission is recognized
+// (any receiver's sync) before any of it can be heard as FM
+#define DV_FM_TAPS 63
+#define DV_FM_DECIM 6               // 48 kHz -> 8 kHz
+#define DV_FM_DEVIATION 5000.0f     // Hz at full scale
+#define DV_FM_DELAY 12              // frames (240 ms)
+#define DV_FM_CLOSE_FRAMES 3        // below the close threshold this long to close
+#define DV_DIGITAL_HOLD (DV_IQ_SAMPRATE_RADIOD / 2) // FM stays muted 500 ms after digital activity
+
+struct dv_fm {
+  float complex prev;
+  float taps[DV_FM_TAPS];
+  float hist[DV_FM_TAPS];
+  int pos, phase;
+  float hp_x1, hp_x2, hp_y1, hp_y2;  // 2nd order high pass state
+  float hp_b0, hp_b1, hp_b2, hp_a1, hp_a2;
+  float deemph;
+  bool open;
+  int below;                          // frames below the close threshold
+  float frame[DV_PCM_SAMPLES];        // 8 kHz audio being collected
+  int frame_len;
+  float delay[DV_FM_DELAY + 1][DV_PCM_SAMPLES]; // delay line of finished frames
+  bool delay_open[DV_FM_DELAY + 1];
+  int delay_count;
+};
+
+static void dv_fm_init(struct dv_fm *fm){
+  memset(fm,0,sizeof *fm);
+  // Low pass: windowed sinc, 3.4 kHz at 48 kHz
+  float sum = 0;
+  for(int i = 0; i < DV_FM_TAPS; i++){
+    float const x = i - (DV_FM_TAPS - 1) / 2.0f;
+    float const fc = 3400.0f / DV_IQ_SAMPRATE_RADIOD;
+    float const sinc = x == 0 ? 2 * fc : sinf(2 * M_PIf * fc * x) / (M_PIf * x);
+    float const w = 0.42f - 0.5f * cosf(2 * M_PIf * i / (DV_FM_TAPS - 1)) + 0.08f * cosf(4 * M_PIf * i / (DV_FM_TAPS - 1));
+    fm->taps[i] = sinc * w;
+    sum += fm->taps[i];
+  }
+  for(int i = 0; i < DV_FM_TAPS; i++)
+    fm->taps[i] /= sum;
+  // High pass: 2nd order Butterworth at 300 Hz, 8 kHz (RBJ cookbook)
+  float const w0 = 2 * M_PIf * 300.0f / DV_AUDIO_SAMPRATE;
+  float const alpha = sinf(w0) / (2 * 0.70710678f);
+  float const a0 = 1 + alpha;
+  fm->hp_b0 = (1 + cosf(w0)) / 2 / a0;
+  fm->hp_b1 = -(1 + cosf(w0)) / a0;
+  fm->hp_b2 = (1 + cosf(w0)) / 2 / a0;
+  fm->hp_a1 = -2 * cosf(w0) / a0;
+  fm->hp_a2 = (1 - alpha) / a0;
+}
+
+// One block of 48 kHz baseband through the FM chain; finished 8 kHz frames
+// go into the delay line, tagged with the squelch state
+static void dv_fm_block(struct dv_fm *fm,chan_t const *chan,float complex const *in,int n){
+  // Squelch on the channel's SNR (as fm.c's simple estimator)
+  float const noise = chan->sig.n0 * fabsf(chan->filter.max_IF - chan->filter.min_IF);
+  float const snr = noise <= 0 ? 0 : chan->sig.bb_power / noise - 1;
+  float const open_at = (isfinite(chan->squelch.open) && chan->squelch.open > 0) ? chan->squelch.open : 6.3f;
+  float const close_at = (isfinite(chan->squelch.close) && chan->squelch.close > 0) ? chan->squelch.close : 4.0f;
+  if(snr >= open_at){
+    fm->open = true;
+    fm->below = 0;
+  } else if(fm->open && snr < close_at && ++fm->below > DV_FM_CLOSE_FRAMES + chan->squelch.tail){
+    fm->open = false;
+  }
+  for(int i = 0; i < n; i++){
+    float const f = cargf(in[i] * conjf(fm->prev)) * (DV_IQ_SAMPRATE_RADIOD / (2 * M_PIf)) / DV_FM_DEVIATION;
+    fm->prev = in[i];
+    fm->hist[fm->pos] = f;
+    fm->pos = (fm->pos + 1) % DV_FM_TAPS;
+    if(++fm->phase < DV_FM_DECIM)
+      continue;
+    fm->phase = 0;
+    float y = 0;
+    for(int k = 0; k < DV_FM_TAPS; k++)
+      y += fm->taps[k] * fm->hist[(fm->pos + k) % DV_FM_TAPS];
+    // High pass
+    float const h = fm->hp_b0 * y + fm->hp_b1 * fm->hp_x1 + fm->hp_b2 * fm->hp_x2 - fm->hp_a1 * fm->hp_y1 - fm->hp_a2 * fm->hp_y2;
+    fm->hp_x2 = fm->hp_x1; fm->hp_x1 = y;
+    fm->hp_y2 = fm->hp_y1; fm->hp_y1 = h;
+    // De-emphasis (deemph-tc, deemph-gain), or flat
+    float out = h;
+    if(chan->fm.rate != 1){
+      fm->deemph += chan->fm.rate * (h - fm->deemph);
+      out = fm->deemph * chan->fm.gain;
+    }
+    fm->frame[fm->frame_len++] = out;
+    if(fm->frame_len == DV_PCM_SAMPLES){
+      fm->frame_len = 0;
+      if(fm->delay_count <= DV_FM_DELAY){
+        memcpy(fm->delay[fm->delay_count],fm->frame,sizeof fm->frame);
+        fm->delay_open[fm->delay_count] = fm->open;
+        fm->delay_count++;
+      }
+    }
+  }
+}
+
+// Take the oldest frame once the delay line is full; false if none is due
+static bool dv_fm_take(struct dv_fm *fm,float out[DV_PCM_SAMPLES],bool *open){
+  if(fm->delay_count <= DV_FM_DELAY)
+    return false;
+  memcpy(out,fm->delay[0],sizeof fm->delay[0]);
+  *open = fm->delay_open[0];
+  memmove(fm->delay[0],fm->delay[1],(size_t)(fm->delay_count - 1) * sizeof fm->delay[0]);
+  memmove(fm->delay_open,fm->delay_open + 1,(size_t)(fm->delay_count - 1) * sizeof fm->delay_open[0]);
+  fm->delay_count--;
+  return true;
+}
 
 struct dv_agc {
   float level_db;  // tracked speech level
@@ -145,6 +260,19 @@ int demod_dv(void *arg){
   uint64_t reported_drops = 0;
   int telemetry_samples = 0;
   struct dv_agc agc = { .level_db = DV_AGC_TARGET_DB, .gain = 1.0f };
+  bool const analog = is_auto && chan->dv.analog;
+  static struct dv_fm fm_zero; // large: not on the stack
+  struct dv_fm *fm = NULL;
+  if(analog){
+    fm = malloc(sizeof *fm);
+    if(fm == NULL)
+      fm = &fm_zero;
+    dv_fm_init(fm);
+  }
+  uint64_t digital_seen = 0;    // sample count of the last digital activity
+  uint64_t sample_count = 0;
+  uint64_t last_syncs = 0;
+  bool fm_playing = false;
   chan->tp1 = 0; // detected sync words
   chan->tp2 = 0; // decoded frames (P25) or bursts (DMR)
   chan->p25.have_nac = false;
@@ -163,6 +291,16 @@ int demod_dv(void *arg){
     int const count = chan->sampcount;
     // float complex is layout-compatible with interleaved I/Q floats
     dv_process(decoder,(float const *)chan->baseband,(size_t)count);
+    sample_count += (uint64_t)count;
+    if(analog){
+      dv_fm_block(fm,chan,chan->baseband,count);
+      // Any receiver in a call, or any sync word, means digital: keep FM quiet
+      dv_stats st;
+      dv_get_stats(decoder,&st);
+      if(st.active_mode >= 0 || st.syncs != last_syncs || audio_queue.count != 0)
+	digital_seen = sample_count;
+      last_syncs = st.syncs;
+    }
 
     telemetry_samples += count;
     if(telemetry_samples >= DV_IQ_SAMPRATE_RADIOD){
@@ -184,7 +322,7 @@ int demod_dv(void *arg){
       if(is_auto){
 	// Mode, then whatever identifies the transmission
 	if(stats.active_mode < 0)
-	  chan->dv.source[0] = '\0';
+	  strlcpy(chan->dv.source,fm_playing ? "FM" : "",sizeof chan->dv.source);
 	else if(stats.active_mode == DV_P25_C4FM && stats.frames != 0)
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"P25 N%03X",stats.last_nac);
 	else if(stats.active_mode == DV_DMR && !stats.src_call[0] && stats.active_slot != 0)
@@ -251,15 +389,37 @@ int demod_dv(void *arg){
     output_clock += (uint64_t)count * DV_AUDIO_SAMPRATE;
     while(output_clock >= audio_frame_clock){
       output_clock -= audio_frame_clock;
-      if(audio_queue.count == 0){
+      float audio[DV_PCM_SAMPLES];
+      if(analog){
+	// FM's delay line advances in step with the output clock
+	bool fm_open = false;
+	bool const have_fm = dv_fm_take(fm,audio,&fm_open);
+	bool const digital = digital_seen != 0 && sample_count - digital_seen < DV_DIGITAL_HOLD;
+	fm_playing = false;
+	if(audio_queue.count == 0){
+	  if(have_fm && fm_open && !digital){
+	    fm_playing = true;
+	    if(chan->dv.source[0] == '\0')
+	      strlcpy(chan->dv.source,"FM",sizeof chan->dv.source);
+	    goto play;
+	  }
+	  chan->output.power = 0;
+	  send_output(chan,NULL,DV_PCM_SAMPLES,true); // keep RTP timestamps moving
+	  continue;
+	}
+      } else if(audio_queue.count == 0){
 	chan->output.power = 0;
 	send_output(chan,NULL,DV_PCM_SAMPLES,true); // keep RTP timestamps moving
 	continue;
       }
-      float audio[DV_PCM_SAMPLES];
-      int16_t const * const pcm = audio_queue.samples[audio_queue.head];
-      for(int i = 0; i < DV_PCM_SAMPLES; i++)
-	audio[i] = pcm[i] / 32768.0f;
+      {
+	int16_t const * const pcm = audio_queue.samples[audio_queue.head];
+	for(int i = 0; i < DV_PCM_SAMPLES; i++)
+	  audio[i] = pcm[i] / 32768.0f;
+	audio_queue.head = (audio_queue.head + 1) % DV_AUDIO_QUEUE_DEPTH;
+	audio_queue.count--;
+      }
+    play:;
       if(chan->linear.agc)
 	dv_agc_frame(&agc,audio,DV_PCM_SAMPLES);
       float power = 0;
@@ -268,8 +428,6 @@ int demod_dv(void *arg){
 	power += audio[i] * audio[i];
       }
       chan->output.power = power / DV_PCM_SAMPLES;
-      audio_queue.head = (audio_queue.head + 1) % DV_AUDIO_QUEUE_DEPTH;
-      audio_queue.count--;
       if(send_output(chan,audio,DV_PCM_SAMPLES,false) < 0){
 	restart_needed = true;
 	break;
@@ -277,6 +435,8 @@ int demod_dv(void *arg){
     }
   }
   response(chan); // in case one is pending as we're restarting
+  if(fm != NULL && fm != &fm_zero)
+    free(fm);
   dv_destroy(decoder);
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;
 }
