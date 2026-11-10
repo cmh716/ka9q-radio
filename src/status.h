@@ -169,6 +169,7 @@ enum status_type {
   DCS_CODE,       // Configured DCS code in decimal-octal notation (FM only)
   DCS_INVERTED,   // Configured DCS polarity (FM only)
   P25_NAC,        // NAC of the last P25 frame received (P25 only)
+  M17_SOURCE,     // Source callsign of the current M17 transmission (M17 only)
 };
 
 /**
@@ -184,6 +185,7 @@ enum demod_type {
   IDLE_DEMOD,           // placeholder that just processes commands
   P25_DEMOD,            // P25 Phase 1 voice (C4FM or CQPSK)
   DMR_DEMOD,            // DMR voice
+  M17_DEMOD,            // M17 voice
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

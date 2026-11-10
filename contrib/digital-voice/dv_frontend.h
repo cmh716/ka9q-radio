@@ -92,5 +92,6 @@ private:
 // Receive filters for dv_fsk4
 extern dv_fsk4::taps const DV_P25_C4FM_RX_TAPS;  // P25 C4FM (OP25 transfer_function_rx)
 extern dv_fsk4::taps const DV_RRC_TAPS;          // root raised cosine, alpha 0.2 (DMR)
+extern dv_fsk4::taps const DV_RRC_05_TAPS;       // root raised cosine, alpha 0.5 (M17)
 
 #endif

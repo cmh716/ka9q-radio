@@ -15,7 +15,7 @@ Each section configures one or more channels with the same mode,
 output multicast stream and sample rate, differing only in frequency. What follows
 is a list of parameter settings with their default values:
 
-### mode = pm | npm | fm | nfm | wfm | p25 | dmr | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
+### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
 
 No default. Required unless specified in [global].
 
@@ -55,7 +55,7 @@ Parameters in *presets.conf*
 The parameters that may be set in *presets.conf* and selectively overridden
 in each receiver channel group are:
 
-### demod = linear | fm | wfm | p25 | dmr
+### demod = linear | fm | wfm | p25 | dmr | m17
 
 Selects one of
 the demodulators built into *radiod*, distinct from the
@@ -74,6 +74,7 @@ more convenient.)
 "P25" decodes APCO Project 25 Phase 1 digital voice (C4FM or CQPSK) and
 always produces mono 8 kHz audio; encrypted calls are muted.
 "DMR" decodes DMR (Tier I/II) digital voice, also to mono 8 kHz audio.
+"M17" decodes M17 digital voice (Codec2) to mono 8 kHz audio; encrypted transmissions are muted.
 
 ### samprate =
 
@@ -300,6 +301,10 @@ P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accep
 
 DMR timeslot to play: 1 or 2. 0 (default) plays whichever slot starts a call first and stays
 with it until that call ends. Encrypted DMR is not detected and will play as noise.
+
+### m17-can = -1
+
+M17 Channel Access Number to play, 0-15. -1 (default) plays any CAN.
 
 ### pacing = on | off
 

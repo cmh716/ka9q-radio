@@ -41,6 +41,7 @@ chan_t Template = {
   .output.encoding = S16BE,
   .output.channels = 1,
   .linear.env = false,
+  .m17.can = -1, // any
   .linear.agc = true,
   .linear.hangtime = DEFAULT_HANGTIME,
   .opus.signal = DEFAULT_OPUS_SIGNAL,
@@ -160,6 +161,7 @@ char const *Channel_keys[] = {
   "p25-demod",
   "p25-nac",
   "dmr-slot",
+  "m17-can",
   "pl", // do these too (sigh)
   "pll-bw",
   "pll",
@@ -276,6 +278,15 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	fprintf(stderr,"%s: invalid dmr-slot '%s' (expected 1, 2 or 0 for either), ignored\n",sname,cp);
       else
 	chan->dmr.slot = (int)slot;
+    }
+    cp = config_getstring(table,sname,"m17-can",NULL);
+    if(cp != NULL){
+      char *end;
+      long const can = strtol(cp,&end,10);
+      if(end == cp || *end != '\0' || can < -1 || can > 15)
+	fprintf(stderr,"%s: invalid m17-can '%s' (expected 0-15, or -1 for any), ignored\n",sname,cp);
+      else
+	chan->m17.can = (int)can;
     }
   }
   chan->use_dns = config_getboolean(table, sname, "dns", chan->use_dns);

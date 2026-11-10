@@ -271,6 +271,14 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
     case DCS_CODE:
       chan->fm.dcs_code = decode_int(cp,optlen);
       break;
+    case M17_SOURCE:
+      {
+	char *p = decode_string(cp,optlen);
+	if(p != NULL)
+	  strlcpy(chan->m17.source,p,sizeof chan->m17.source);
+	FREE(p);
+      }
+      break;
     case P25_NAC:
       chan->p25.last_nac = (uint16_t)decode_int(cp,optlen);
       chan->p25.have_nac = true;

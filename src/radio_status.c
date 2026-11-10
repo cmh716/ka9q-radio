@@ -838,6 +838,10 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
   case DMR_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     break;
+  case M17_DEMOD:
+    encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
+    encode_string(&bp,M17_SOURCE,chan->m17.source,strlen(chan->m17.source));
+    break;
   case P25_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     if(chan->p25.have_nac)

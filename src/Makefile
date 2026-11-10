@@ -307,7 +307,7 @@ powers: powers.o dump.o libstatus.a libradio.a
 DVLIB = ../contrib/digital-voice/build/libdv.a
 
 radiod: $(RADIOD_OBJECTS) $(DVLIB)
-	$(CXX) -rdynamic $(LDFLAGS) -o $@ $^ -lopus -lfftw3f_threads -lfftw3f -liniparser -lusb-1.0 -ldl $(LDLIBS)
+	$(CXX) -rdynamic $(LDFLAGS) -o $@ $^ -lopus -lcodec2 -lfftw3f_threads -lfftw3f -liniparser -lusb-1.0 -ldl $(LDLIBS)
 
 # Always ask the sub-make; it only rebuilds (and touches the archive) when sources change
 $(DVLIB): FORCE

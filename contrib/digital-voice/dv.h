@@ -1,9 +1,10 @@
-// Digital voice receivers (P25 Phase 1, DMR): 48 kHz complex IQ in, 8 kHz speech out
+// Digital voice receivers (P25 Phase 1, DMR, M17): 48 kHz complex IQ in, 8 kHz speech out
 // Adapted from OP25; see README.md for attribution
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifndef KA9Q_DV_H
 #define KA9Q_DV_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -19,11 +20,14 @@ typedef enum {
   DV_P25_C4FM = 0,
   DV_P25_CQPSK = 1,  // P25 simulcast (LSM/CQPSK)
   DV_DMR = 2,
+  DV_M17 = 3,
 } dv_mode;
 
 typedef struct {
   uint16_t p25_nac;  // P25: NAC to accept, 0 = any
   int dmr_slot;      // DMR: timeslot 1 or 2; 0 = whichever starts a call first
+  bool m17_can_filter; // M17: play only transmissions with this CAN
+  int m17_can;       // M17: Channel Access Number 0-15, if m17_can_filter
 } dv_config;
 
 // Called synchronously from dv_process() for each 20 ms frame of speech
@@ -43,7 +47,12 @@ typedef struct {
   uint32_t last_bch_errors;
   // DMR
   int active_slot;           // slot being played, 1 or 2; 0 = none
-  float error_rate;          // AMBE bit error rate estimate of the active slot
+  float error_rate;          // DMR: AMBE bit error rate estimate of the active slot; M17: Viterbi
+  // M17, from the current transmission's link setup frame
+  char m17_src[12];          // source callsign, "" if not yet known
+  char m17_dst[12];          // destination callsign
+  int m17_can;               // Channel Access Number, -1 if not yet known
+  bool m17_encrypted;
 } dv_stats;
 
 typedef struct dv_decoder dv_decoder;

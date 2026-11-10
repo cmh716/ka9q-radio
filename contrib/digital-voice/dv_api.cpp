@@ -19,6 +19,10 @@ extern "C" dv_decoder *dv_create(dv_mode mode, dv_config const *config,
       if (config->dmr_slot < 0 || config->dmr_slot > 2)
         return nullptr;
       return dv_create_dmr(config->dmr_slot, callback, user_data);
+    case DV_M17:
+      if (config->m17_can_filter && (config->m17_can < 0 || config->m17_can > 15))
+        return nullptr;
+      return dv_create_m17(config->m17_can_filter ? config->m17_can : -1, callback, user_data);
     }
   } catch (...) {
   }
