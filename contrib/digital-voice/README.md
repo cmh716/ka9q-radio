@@ -29,10 +29,13 @@ stays with it until that call ends. Data bursts give the color code (slot
 type, Golay 20,8) and, from the voice LC header (BPTC 196,96 and RS 12,9,
 OP25's dmr_slot.cc), the source radio ID, the talkgroup and the privacy
 bit; a PI header also marks a call encrypted, and encrypted calls are
-muted. A call joined after its header has no IDs and isn't checked for
-encryption (the embedded LC in the voice bursts would cover that). Tested on
-the trunk-recorder-pro DMR capture (CC 13, 4477055 to TG 44772); the
-encryption path hasn't met an encrypted call yet. AMBE+2 output level follows the talker and
+muted. A call joined after its header gets the same from the voice bursts:
+the EMB's PI bit (privacy) and the embedded LC in bursts B-E (Hamming
+16,11, parity, 5-bit checksum). Fragments are placed by burst position
+rather than OP25's LCSS, so an EMB that fails its QR(16,7) check doesn't
+lose the LC. Tested on the trunk-recorder-pro DMR capture (CC 13, 4477055
+to TG 44772, also when joined after the header); the encryption path
+hasn't met an encrypted call yet. AMBE+2 output level follows the talker and
 varies a lot between transmissions; the `[dmr]` preset leaves the gain at
 0 dB, which sounds about as loud as P25 on live signals.
 

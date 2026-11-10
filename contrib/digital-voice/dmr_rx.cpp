@@ -18,6 +18,7 @@
 #include "upstream/bptc19696.h"
 #include "upstream/ezpwd/rs"
 #include "upstream/golay2087.h"
+#include "upstream/hamming.h"
 
 namespace {
 
@@ -46,6 +47,7 @@ bool is_voice_sync(uint64_t sync)
 }
 
 class dmr_decoder : public dv_decoder {
+  struct call; // per-timeslot call information, below
 public:
   dmr_decoder(int slot, dv_pcm_callback callback, void *user_data)
     : wanted_slot_(slot - 1), callback_(callback), user_data_(user_data),
@@ -196,11 +198,17 @@ private:
         break;
       }
       slot_type_[chan_] = sl_sync; // dmr_slot::load_slot: voice/data decision follows the latest sync
+      if (is_voice_sync(sl_sync))
+        voice_burst_[chan_] = 0; // burst A of a voice superframe
       if (sl_sync == DMR_BS_DATA_SYNC_MAGIC || sl_sync == DMR_MS_DATA_SYNC_MAGIC)
         data_burst(bits + 24, chan_);
     } else {
       shift_reg_ = (shift_reg_ << 1) + ((chan_ + 1) % 2);
       chan_ = slot_ids[shift_reg_ & 7];
+      // Voice bursts B-F carry the EMB (and pieces of the embedded LC) where
+      // the sync would be: they identify a call joined after its header
+      if (is_voice_sync(slot_type_[chan_]) && voice_burst_[chan_] < 5)
+        emb_burst(bits + 24, chan_, ++voice_burst_[chan_]);
     }
     if (sync_rxd)
       expires_ = symbol_count_ + kExpiration;
@@ -281,6 +289,91 @@ private:
     }
   }
 
+  // dmr_slot::decode_emb() and decode_embedded_lc(): the EMB's PI bit marks
+  // an encrypted call, and bursts B-E of a voice superframe carry the four
+  // fragments of the embedded LC (who is calling whom, and the privacy bit).
+  // OP25 places fragments by the EMB's LCSS; here they go by burst position
+  // (B first ... E last, as the LCSS would say), so an EMB that fails its
+  // QR(16,7) check doesn't lose the LC, which has its own Hamming, parity
+  // and checksum
+  void emb_burst(uint8_t const *slot, int chan, int burst)
+  {
+    call& c = calls_[chan];
+    bit_vector emb;
+    for (int i = kSyncEmb; i < kSyncEmb + 8; i++)
+      emb.push_back(slot[i]);
+    for (int i = kSlotTypeR - 8; i < kSlotTypeR; i++)
+      emb.push_back(slot[i]);
+    if (CQR1676::decode(emb) <= 2) { // QR(16,7) reliably corrects 2 bit errors
+      int const cc = (emb[0] << 3) | (emb[1] << 2) | (emb[2] << 1) | emb[3];
+      if (cc_ < 0 || cc == cc_) { // FEC can pass garbage: the color code must match
+        cc_ = cc;
+        if (emb[4])
+          c.encrypted = true; // PI: privacy
+      }
+    }
+    if (burst < 1 || burst > 4)
+      return; // burst F: no LC
+    std::vector<uint8_t>& frag = emb_lc_[chan];
+    if (burst == 1)
+      frag.clear();
+    if (frag.size() != static_cast<size_t>(32 * (burst - 1)))
+      return; // missed a fragment of this LC
+    for (int i = 0; i < 32; i++)
+      frag.push_back(slot[kSyncEmb + 8 + i]);
+    if (burst == 4)
+      embedded_lc(frag, c);
+  }
+
+  static void embedded_lc(std::vector<uint8_t> const& frag, call& c)
+  {
+    bool data[128] = {};
+    for (unsigned a = 0, b = 0; a < 128; a++) { // unpacked downwards in columns
+      data[b] = frag[a];
+      b += 16;
+      if (b > 127)
+        b -= 127;
+    }
+    for (unsigned a = 0; a < 112; a += 16)
+      if (!CHamming::decode16114(data + a))
+        return;
+    for (unsigned a = 0; a < 16; a++) {
+      bool p = false;
+      for (unsigned r = 0; r < 128; r += 16)
+        p ^= data[a + r];
+      if (p)
+        return;
+    }
+    uint8_t bits[72];
+    int n = 0;
+    for (unsigned a = 0; a < 11; a++) bits[n++] = data[a];
+    for (unsigned a = 16; a < 27; a++) bits[n++] = data[a];
+    for (unsigned row = 32; row < 112; row += 16)
+      for (unsigned a = row; a < row + 10; a++) bits[n++] = data[a];
+    uint8_t lc[9];
+    for (int i = 0; i < 9; i++) {
+      lc[i] = 0;
+      for (int b = 0; b < 8; b++)
+        lc[i] = static_cast<uint8_t>((lc[i] << 1) | bits[8 * i + b]);
+    }
+    // 5-bit checksum (OP25 leaves it switched off; it makes a false LC much less likely)
+    unsigned const rx = (data[42] << 4) | (data[58] << 3) | (data[74] << 2) | (data[90] << 1) | data[106];
+    unsigned sum = 0;
+    for (int i = 0; i < 9; i++)
+      sum += lc[i];
+    if (rx != sum % 31)
+      return;
+    int const flco = lc[0] & 0x3f;
+    if (flco != 0 && flco != 3)
+      return; // not a voice call LC (group or unit to unit)
+    c.group = flco == 0;
+    if (lc[2] & 0x40)
+      c.encrypted = true;
+    c.destination = (lc[3] << 16) | (lc[4] << 8) | lc[5];
+    c.source = (lc[6] << 16) | (lc[7] << 8) | lc[8];
+    c.have_ids = true;
+  }
+
   // rx_sync::codeword(), CODEWORD_DMR case (dv_ambe2450)
   void codeword(uint8_t const *cw, int slot_id)
   {
@@ -331,6 +424,8 @@ private:
     unsigned source = 0, destination = 0;
   };
   call calls_[2];
+  std::vector<uint8_t> emb_lc_[2]; // embedded LC fragments being collected
+  int voice_burst_[2] = {5, 5};     // bursts since the last voice sync (A = 0)
   int cc_ = -1;                 // color code, -1 until a slot type decodes
   CBPTC19696 bptc_;
   ezpwd::RS<255, 252> rs12_;    // Reed-Solomon(12,9), shortened

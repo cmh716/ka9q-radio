@@ -310,7 +310,7 @@ P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accep
 
 DMR timeslot to play: 1 or 2. 0 (default) plays whichever slot starts a call first and stays
 with it until that call ends. Calls whose voice header sets the privacy bit, or that send a PI header,
-are muted; a call joined after its header isn't checked. monitor shows the slot and the caller's
+are muted, as are calls joined later whose voice bursts carry the privacy indicator. monitor shows the slot and the caller's
 radio ID; the color code and talkgroup are in radiod's -v log.
 
 ### nxdn-rate = 48 | 96 (default 48)
