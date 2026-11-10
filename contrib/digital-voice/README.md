@@ -67,9 +67,13 @@ cosine filter (alpha 0.2), Mueller & Muller timing as in OP25's GMSK path,
 decision-directed DC/level tracking and a bit slicer. The framing is new
 code: OP25's rx_sync passes D-STAR's one-bit symbols through
 dibits_to_bits() before decode_dstar(), which doesn't look right. A
-transmission is found by its preamble and header sync, or late, by the
-frame sync in the slow data of every 21st frame; the MY and UR callsigns come
-from the slow-data copy of the header (CRC checked). Voice is decoded with
+transmission is found by its header sync, or late, by the frame sync in
+the slow data of every 21st frame. The MY and UR callsigns come from the
+radio header at the start (descrambled, de-interleaved and Viterbi decoded,
+K=3; CRC checked; verified on the live capture with no bit errors), or
+otherwise from the slow-data copy of the header. The header is tried after
+every header sync while unlocked, since an openSPOT 4 sometimes sends zeros
+rather than the 1010 preamble before it. Voice is decoded with
 OP25's decode_dstar() and mbelib's AMBE 2400 tables; OP25's synthesizer
 renders it ~14 dB hotter than P25 and clips, so the spectral magnitudes are
 scaled down 12 dB first. Tested on a 3-minute capture of an openSPOT 4

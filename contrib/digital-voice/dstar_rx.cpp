@@ -64,6 +64,12 @@ uint64_t pattern(uint8_t const *bits, int n)
   return r;
 }
 
+// The radio header at the start of a transmission (JARL): 41 bytes + 2 tail
+// bits, K=3 R=1/2 convolutional code (G1 7, G2 5), 24-way interleave, x^7 +
+// x^4 + 1 scrambler. Verified on a live capture (CRC passes, no bit errors).
+// Returns false if the CRC fails
+bool decode_radio_header(uint8_t const in[kHeaderBits], uint8_t out[41]);
+
 // D-STAR header CRC: CRC-CCITT, reflected (0x8408), init 0xffff, inverted
 uint16_t dstar_crc(uint8_t const *data, int len)
 {
@@ -74,6 +80,62 @@ uint16_t dstar_crc(uint8_t const *data, int len)
       crc = (crc & 1) ? (crc >> 1) ^ 0x8408 : crc >> 1;
   }
   return static_cast<uint16_t>(~crc);
+}
+
+bool decode_radio_header(uint8_t const in[kHeaderBits], uint8_t out[41])
+{
+  // Descramble
+  uint8_t s[kHeaderBits];
+  unsigned reg = 0x7f;
+  for (int i = 0; i < kHeaderBits; i++) {
+    unsigned const fb = ((reg >> 3) ^ (reg >> 6)) & 1;
+    s[i] = in[i] ^ fb;
+    reg = ((reg << 1) | fb) & 0x7f;
+  }
+  // De-interleave
+  uint8_t d[kHeaderBits];
+  for (int i = 0, k = 0; i < kHeaderBits; i++) {
+    d[k] = s[i];
+    k += 24;
+    if (k >= 672)
+      k -= 671;
+    else if (k >= 660)
+      k -= 647;
+  }
+  // Viterbi, K=3, hard decisions, from state 0
+  constexpr int kSteps = kHeaderBits / 2; // 330: 328 header bits + 2 tail
+  int metric[4] = {0, 1 << 20, 1 << 20, 1 << 20};
+  uint8_t from[kSteps][4];
+  for (int t = 0; t < kSteps; t++) {
+    int next[4] = {1 << 30, 1 << 30, 1 << 30, 1 << 30};
+    for (int st = 0; st < 4; st++) {
+      for (int b = 0; b < 2; b++) {
+        int const r = (b << 2) | st;                       // newest bit on top
+        int const o1 = __builtin_popcount(r & 7) & 1;
+        int const o2 = __builtin_popcount(r & 5) & 1;
+        int const m = metric[st] + (o1 != d[2 * t]) + (o2 != d[2 * t + 1]);
+        int const ns = r >> 1;
+        if (m < next[ns]) {
+          next[ns] = m;
+          from[t][ns] = static_cast<uint8_t>(st);
+        }
+      }
+    }
+    std::copy(next, next + 4, metric);
+  }
+  int st = 0; // the tail bits bring it back to state 0
+  uint8_t bits[kSteps];
+  for (int t = kSteps - 1; t >= 0; t--) {
+    bits[t] = static_cast<uint8_t>(st >> 1); // the input bit is the new state's top bit
+    st = from[t][st];
+  }
+  for (int i = 0; i < 41; i++) {
+    out[i] = 0;
+    for (int j = 0; j < 8; j++)
+      out[i] |= bits[8 * i + j] << j; // LSB first
+  }
+  uint16_t const crc = dstar_crc(out, 39);
+  return (crc & 0xff) == out[39] && (crc >> 8) == out[40];
 }
 
 class dstar_decoder : public dv_decoder {
@@ -167,6 +229,20 @@ private:
 
   void rx_bit(uint8_t raw)
   {
+    // Collecting the radio header after its sync?
+    if (header_left_ > 0) {
+      radio_header_[kHeaderBits - header_left_] = raw ^ (header_invert_ ? 1 : 0);
+      if (--header_left_ == 0) {
+        uint8_t h[41];
+        if (!locked_ && decode_radio_header(radio_header_, h)) {
+          set_call(dst_, h + 19);   // UR
+          set_call(src_, h + 27);   // MY
+          header_valid_ = true;
+          invert_ = header_invert_;
+          expect_sync_ = bits_ + 1 + kFrameBits; // the end of voice frame 0
+        }
+      }
+    }
     bits_++;
     reg_ = (reg_ << 1) | raw;
     std::memmove(buf_, buf_ + 1, sizeof buf_ - 1);
@@ -179,14 +255,16 @@ private:
       return;
     }
 
-    // Start of transmission: preamble then header frame sync. The header
-    // follows; voice frame 0 (with its slow-data sync) comes right after it
-    if (!locked_) {
+    // Start of transmission: header frame sync (usually after a 1010
+    // preamble, but an openSPOT 4 also starts some transmissions after
+    // zeros), then the radio header. Decode a header after every such sync
+    // while unlocked; its CRC rejects false matches. Voice frame 0 (with its
+    // slow-data sync) comes right after the header
+    if (!locked_ && header_left_ == 0) {
       uint64_t const r15 = reg_ & 0x7fff;
-      bool const hs = r15 == hs_ || r15 == (~hs_ & 0x7fff);
-      if (hs && preamble_before()) {
-        invert_ = r15 != hs_;
-        expect_sync_ = bits_ + kHeaderBits + kFrameBits;
+      if (r15 == hs_ || r15 == (~hs_ & 0x7fff)) {
+        header_invert_ = r15 != hs_;
+        header_left_ = kHeaderBits;
       }
     }
 
@@ -221,22 +299,13 @@ private:
       frame();
   }
 
-  bool preamble_before() const
-  {
-    // At least 16 alternating bits before the 15-bit header sync
-    uint8_t const *p = buf_ + sizeof buf_ - 15 - 16;
-    for (int i = 1; i < 16; i++)
-      if (p[i] == p[i - 1])
-        return false;
-    return true;
-  }
-
   void sync(uint64_t at)
   {
     syncs_++;
     if (!locked_) {
       header_.clear();
-      src_[0] = dst_[0] = '\0';
+      if (!header_valid_)
+        src_[0] = dst_[0] = '\0';
     }
     locked_ = true;
     missed_ = 0;
@@ -342,6 +411,8 @@ private:
 
   void end_call()
   {
+    header_valid_ = false;
+    header_left_ = 0;
     locked_ = false;
     expect_sync_ = 0;
     missed_ = 0;
@@ -378,6 +449,12 @@ private:
   uint64_t next_frame_ = 0;
   int frame_index_ = 0;
   int missed_ = 0;
+
+  // Radio header
+  uint8_t radio_header_[kHeaderBits]{};
+  int header_left_ = 0;
+  bool header_invert_ = false;
+  bool header_valid_ = false;
 
   // Slow data
   uint8_t block_[6]{};
