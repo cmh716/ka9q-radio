@@ -18,6 +18,8 @@ public:
   void rx_dibit(uint8_t dibit);
   // Fills the frame-layer fields of stats
   void get_stats(dv_stats *stats) const;
+  // Control channel events (P25 trunking)
+  void set_event_callback(dv_event_callback callback, void *user_data);
 
 private:
   struct impl;

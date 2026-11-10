@@ -12,10 +12,11 @@
 #include "op25_hamming.h"
 #include "op25_imbe_frame.h"
 #include "p25_framer.h"
+#include "p25_trunk.h"
 
 namespace {
 
-enum : uint32_t { DUID_HDU = 0, DUID_TDU = 3, DUID_LDU1 = 5, DUID_LDU2 = 10, DUID_TDULC = 15 };
+enum : uint32_t { DUID_HDU = 0, DUID_TDU = 3, DUID_LDU1 = 5, DUID_LDU2 = 10, DUID_TSDU = 7, DUID_TDULC = 15 };
 constexpr uint8_t ALGID_CLEAR = 0x80;
 
 // Shortened Golay(18,6,8): only 64 codewords, so nearest-codeword search is cheap
@@ -46,6 +47,8 @@ private:
 
 struct p25_voice::impl {
   p25_framer framer;
+  p25_trunk trunk;
+  uint64_t symbols = 0;
   BasicOpContext arithmetic{0, 0};
   std::unique_ptr<imbe_vocoder> vocoder;
   ezpwd::RS<63, 55> rs_ess;   // RS(24,16,9) shortened
@@ -141,6 +144,9 @@ struct p25_voice::impl {
       read_ess(frame);
       decode_voice(frame);
       break;
+    case DUID_TSDU:
+      trunk.tsdu(frame, framer.frame_size, static_cast<uint16_t>(framer.nac));
+      break;
     default:
       break;
     }
@@ -161,6 +167,7 @@ p25_voice::~p25_voice() = default;
 
 void p25_voice::rx_dibit(uint8_t dibit)
 {
+  impl_->trunk.tick(++impl_->symbols);
   if (impl_->framer.rx_sym(dibit))
     impl_->process_frame();
 }
@@ -174,4 +181,10 @@ void p25_voice::get_stats(dv_stats *stats) const
   stats->voice_muted = impl_->stats.voice_muted;
   stats->last_nac = impl_->stats.last_nac;
   stats->last_bch_errors = impl_->stats.last_bch_errors;
+  impl_->trunk.get_stats(stats);
+}
+
+void p25_voice::set_event_callback(dv_event_callback callback, void *user_data)
+{
+  impl_->trunk.set_callback(callback, user_data);
 }

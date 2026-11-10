@@ -73,6 +73,11 @@ appropriate bandwidth and sample rates, but the one built into the WFM demodulat
 more convenient.)
 "P25" decodes APCO Project 25 Phase 1 digital voice (C4FM or CQPSK) and
 always produces mono 8 kHz audio; encrypted calls are muted.
+Tuned to a trunked system's control channel, it also decodes the trunking
+signalling: with **-v**, radiod logs the network, site and band plan as the
+control channel announces them, and each new voice channel grant (talkgroup,
+source unit, frequency, and the TDMA slot on a Phase 2 system). It does not
+yet follow the grants.
 "DMR" decodes DMR (Tier I/II) digital voice, also to mono 8 kHz audio.
 "M17" decodes M17 digital voice (Codec2) to mono 8 kHz audio; encrypted transmissions are muted.
 "YSF" decodes Yaesu System Fusion (C4FM) digital voice, DN and VW modes, to mono 8 kHz audio.

@@ -192,6 +192,13 @@ struct dv_audio_queue {
   uint64_t dropped;
 };
 
+// P25 control channel events (site, band plan, voice grants), logged with -v
+static void log_event(void *user_data,dv_event const *event){
+  struct channel const *chan = user_data;
+  if(Verbose > 0)
+    fprintf(stderr,"%s P25 %s\n",chan->name,event->text);
+}
+
 static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   struct dv_audio_queue * const queue = user_data;
   if(queue->count == DV_AUDIO_QUEUE_DEPTH){
@@ -253,6 +260,7 @@ int demod_dv(void *arg){
     chan->demod_type = INVALID_DEMOD;
     return -1;
   }
+  dv_set_event_callback(decoder,log_event,chan);
 
   // Emit one 20 ms audio frame per 20 ms of IQ, in integer arithmetic
   uint64_t output_clock = 0;
@@ -374,10 +382,11 @@ int demod_dv(void *arg){
 		  " syncs=%" PRIu64 " frames=%" PRIu64
 		  " LDU1=%" PRIu64 " LDU2=%" PRIu64
 		  " voice=%" PRIu64 " encrypted=%" PRIu64
-		  " NAC=%03x BCH=%" PRIu32 " offset=%+.1f Hz\n",
+		  " NAC=%03x BCH=%" PRIu32 " TSBK=%" PRIu64 "/%" PRIu64 " offset=%+.1f Hz\n",
 		  chan->name,stats.samples,stats.symbols,stats.syncs,stats.frames,
 		  stats.ldu1,stats.ldu2,stats.voice_decoded,stats.voice_muted,
-		  stats.last_nac,stats.last_bch_errors,stats.freq_offset);
+		  stats.last_nac,stats.last_bch_errors,
+		  stats.tsbks,stats.tsbks + stats.tsbk_errors,stats.freq_offset);
       }
     }
     if(audio_queue.dropped != reported_drops){

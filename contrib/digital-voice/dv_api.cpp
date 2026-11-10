@@ -54,6 +54,11 @@ extern "C" void dv_get_stats(dv_decoder const *decoder, dv_stats *stats)
   decoder->get_stats(stats);
 }
 
+extern "C" void dv_set_event_callback(dv_decoder *decoder, dv_event_callback callback, void *user_data)
+{
+  decoder->set_event_callback(callback, user_data);
+}
+
 extern "C" char const *dv_mode_name(int mode)
 {
   switch (mode) {

@@ -63,7 +63,34 @@ typedef struct {
   // DV_AUTO: the mode whose call is being played, -1 if none (the other
   // fields are then that decoder's)
   int active_mode;
+  // P25 control channel (TSDU): trunking blocks that passed / failed their CRC,
+  // and the site, once broadcast (wacn 0 = not yet known)
+  uint64_t tsbks, tsbk_errors;
+  uint32_t wacn;
+  uint16_t sysid;
+  uint8_t rfss, site;
 } dv_stats;
+
+// P25 control channel events
+typedef enum {
+  DV_EVENT_GRANT = 0,   // a new call on a voice channel (or a new talkgroup on it)
+  DV_EVENT_SITE = 1,    // site identity or band plan changed
+} dv_event_type;
+
+typedef struct {
+  dv_event_type type;
+  uint64_t freq_hz;     // GRANT: voice channel downlink, 0 if its band plan isn't known yet
+  int slot;             // GRANT: TDMA slot 0 or 1 (Phase 2), -1 for FDMA (Phase 1)
+  uint16_t channel;     // GRANT: identifier (4 bits) and channel number (12 bits)
+  uint32_t group;       // GRANT: talkgroup, or target unit for a unit-to-unit call
+  uint32_t source;      // GRANT: source unit, 0 if not given
+  bool unit;            // GRANT: unit-to-unit call
+  bool encrypted;       // GRANT: service options say protected
+  bool emergency;
+  char text[128];       // readable summary for logging
+} dv_event;
+
+typedef void (*dv_event_callback)(void *user_data, dv_event const *event);
 
 typedef struct dv_decoder dv_decoder;
 
@@ -76,6 +103,8 @@ void dv_destroy(dv_decoder *decoder);
 // (a C 'float complex' array may be passed directly)
 void dv_process(dv_decoder *decoder, float const *iq, size_t count);
 void dv_get_stats(dv_decoder const *decoder, dv_stats *stats);
+// P25: called synchronously from dv_process() for control channel events
+void dv_set_event_callback(dv_decoder *decoder, dv_event_callback callback, void *user_data);
 // Short display name of a mode ("P25", "DMR", "M17", "YSF", "DSTAR", "NXDN"), "" if none
 char const *dv_mode_name(int mode);
 

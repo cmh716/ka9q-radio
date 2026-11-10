@@ -10,6 +10,7 @@ automatically.
                      or root raised cosine), FSK4 timing (fsk4.cpp), slicer
     p25_rx.cpp       P25: C4FM or CQPSK (Gardner, differential, Costas) to dibits
     p25_voice.cpp    P25: NID framing, HDU/LDU2 encryption detection, IMBE decoding
+    p25_trunk.cpp    P25: control channel TSBKs (band plan, site, voice grants)
     dmr_rx.cpp       DMR: burst framing, timeslot tracking, AMBE+2 decoding
     m17_rx.cpp       M17: discriminator, RRC, sync-word timing, LSF/LICH, Codec2
     ysf_rx.cpp       YSF: frame sync, FICH, DN (AMBE+2) and VW (IMBE) voice, DN callsigns
@@ -22,6 +23,12 @@ automatically.
 
 P25 audio is assumed clear until the HDU or an LDU2 ESS carries a non-clear
 ALGID, as OP25 does; encrypted voice is muted until the next TDU.
+
+P25 control channel TSDUs carry up to three TSBKs. Their block interleave,
+trellis code and CRC follow OP25's p25p1_fdma.cc, but the rate-1/2 trellis
+is decoded with a Viterbi search rather than OP25's greedy one. Grants and
+grant updates are reported once per call (a channel's talkgroup changing),
+through dv_set_event_callback(); a channel unmentioned for 3 s is idle again.
 
 DMR follows OP25: a timeslot plays while its latest sync is a voice sync.
 With `dmr-slot = 0` the decoder plays whichever slot starts a call first and

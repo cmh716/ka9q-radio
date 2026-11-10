@@ -17,6 +17,7 @@ struct dv_decoder {
   // no FLL offset)
   virtual void process_leveled(std::complex<float> const *samples, size_t count) = 0;
   virtual void get_stats(dv_stats *stats) const = 0;
+  virtual void set_event_callback(dv_event_callback, void *) {}
 };
 
 dv_decoder *dv_create_p25(bool cqpsk, uint16_t nac, dv_pcm_callback callback, void *user_data);

@@ -193,6 +193,11 @@ public:
     }
   }
 
+  void set_event_callback(dv_event_callback callback, void *user_data) override
+  {
+    voice_.set_event_callback(callback, user_data);
+  }
+
   void get_stats(dv_stats *stats) const override
   {
     *stats = {};

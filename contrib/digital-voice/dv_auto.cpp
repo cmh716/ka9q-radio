@@ -97,6 +97,12 @@ public:
 
   void process_leveled(std::complex<float> const *, size_t) override {} // auto is never shared
 
+  void set_event_callback(dv_event_callback callback, void *user_data) override
+  {
+    for (auto& d : sub_)
+      d->set_event_callback(callback, user_data);
+  }
+
   void get_stats(dv_stats *stats) const override
   {
     if (owner_ >= 0) {
