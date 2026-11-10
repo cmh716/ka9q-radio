@@ -165,21 +165,31 @@ public:
 
   void process(cfloat const *samples, size_t count) override
   {
+    for (size_t i = 0; i < count; i++) {
+      cfloat lev;
+      if (frontend_.process(samples[i], lev))
+        leveled(lev);
+    }
+  }
+
+  void process_leveled(cfloat const *samples, size_t count) override
+  {
+    for (size_t i = 0; i < count; i++)
+      leveled(samples[i]);
+  }
+
+  void leveled(cfloat lev)
+  {
     auto emit = [this](uint8_t raw) {
       symbols_++;
       voice_.rx_dibit(mapper_.process(raw));
     };
-    for (size_t i = 0; i < count; i++) {
-      cfloat leveled;
-      if (!frontend_.process(samples[i], leveled))
-        continue;
-      if (cqpsk_) {
-        cqpsk_demod_.process(leveled, emit);
-      } else {
-        uint8_t raw;
-        if (fsk4_.process(leveled, raw))
-          emit(raw);
-      }
+    if (cqpsk_) {
+      cqpsk_demod_.process(lev, emit);
+    } else {
+      uint8_t raw;
+      if (fsk4_.process(lev, raw))
+        emit(raw);
     }
   }
 

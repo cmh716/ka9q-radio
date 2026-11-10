@@ -137,11 +137,23 @@ public:
   void process(cfloat const *samples, size_t count) override
   {
     for (size_t i = 0; i < count; i++) {
-      cfloat leveled;
-      uint8_t dibit;
-      if (frontend_.process(samples[i], leveled) && fsk4_.process(leveled, dibit))
-        rx_dibit(dibit);
+      cfloat lev;
+      if (frontend_.process(samples[i], lev))
+        leveled(lev);
     }
+  }
+
+  void process_leveled(cfloat const *samples, size_t count) override
+  {
+    for (size_t i = 0; i < count; i++)
+      leveled(samples[i]);
+  }
+
+  void leveled(cfloat lev)
+  {
+    uint8_t dibit;
+    if (fsk4_.process(lev, dibit))
+      rx_dibit(dibit);
   }
 
   void get_stats(dv_stats *stats) const override

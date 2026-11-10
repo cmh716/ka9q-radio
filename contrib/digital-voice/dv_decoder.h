@@ -10,7 +10,12 @@
 
 struct dv_decoder {
   virtual ~dv_decoder() = default;
+  // 48 kHz IQ through the decoder's own front end
   virtual void process(std::complex<float> const *samples, size_t count) = 0;
+  // Or 24 kHz samples from a dv_frontend shared with other decoders (DV_AUTO);
+  // the decoder's own front end then sits idle (its stats show 0 samples and
+  // no FLL offset)
+  virtual void process_leveled(std::complex<float> const *samples, size_t count) = 0;
   virtual void get_stats(dv_stats *stats) const = 0;
 };
 

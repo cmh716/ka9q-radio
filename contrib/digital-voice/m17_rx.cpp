@@ -96,11 +96,19 @@ public:
   void process(cfloat const *samples, size_t count) override
   {
     for (size_t i = 0; i < count; i++) {
-      cfloat leveled;
-      if (frontend_.process(samples[i], leveled))
-        rx_sample(discriminate(leveled));
+      cfloat lev;
+      if (frontend_.process(samples[i], lev))
+        leveled(lev);
     }
   }
+
+  void process_leveled(cfloat const *samples, size_t count) override
+  {
+    for (size_t i = 0; i < count; i++)
+      leveled(samples[i]);
+  }
+
+  void leveled(cfloat lev) { rx_sample(discriminate(lev)); }
 
   void get_stats(dv_stats *stats) const override
   {

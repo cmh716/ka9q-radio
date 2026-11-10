@@ -99,9 +99,9 @@ receivers side by side. The first to decode voice owns the audio; it lets go
 500 ms after its last frame, and the next to decode voice takes over. On a
 test stream of all six modes separated by noise (real P25, DMR, D-STAR and
 NXDN captures, synthesized YSF and M17) each was detected with its
-callsign/ID within half a second, and noise never claimed the audio. It
-costs about 8% of an N150 core per channel, against ~1% for one mode; six
-of the receivers could share one front end if that matters.
+callsign/ID within half a second, and noise never claimed the audio. The six
+4800 Bd receivers share one front end (NXDN48 has its own), so it costs
+about 5% of an N150 core per channel, against ~1% for one mode.
 
 Example channels:
 
