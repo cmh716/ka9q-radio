@@ -43,7 +43,6 @@ dv_fsk4::taps const DV_RRC_05_TAPS = {
 
 namespace {
 
-constexpr float kQuadratureGain = kDvSampleRate / (2.0f * kDvPi * kDvDeviation);
 constexpr float kFllSamplesPerSymbol = kDvSampleRate / kDvSymbolRate;
 constexpr float kFllRolloff = 0.2f;
 
@@ -141,7 +140,7 @@ bool dv_fsk4::process(cfloat sample, uint8_t& dibit)
   float const re = sample.real() * previous_.real() + sample.imag() * previous_.imag();
   float const im = sample.imag() * previous_.real() - sample.real() * previous_.imag();
   previous_ = sample;
-  history_[position_] = std::atan2(im, re) * kQuadratureGain;
+  history_[position_] = std::atan2(im, re) * quadrature_gain_;
   float const shaped = dv_fir(rx_taps_, history_, position_);
   position_ = (position_ + 1) % std::size(history_);
   float sym;

@@ -271,11 +271,11 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
     case DCS_CODE:
       chan->fm.dcs_code = decode_int(cp,optlen);
       break;
-    case M17_SOURCE:
+    case SOURCE_CALLSIGN:
       {
 	char *p = decode_string(cp,optlen);
 	if(p != NULL)
-	  strlcpy(chan->m17.source,p,sizeof chan->m17.source);
+	  strlcpy(chan->dv.source,p,sizeof chan->dv.source);
 	FREE(p);
       }
       break;

@@ -22,6 +22,7 @@ struct demodtab const Demodtab[] = {
       {P25_DEMOD,      "p25", },
       {DMR_DEMOD,      "dmr", },
       {M17_DEMOD,      "m17", },
+      {YSF_DEMOD,      "ysf", },
 };
 
 // Encode 64-bit integer, big endian, leading zeroes suppressed

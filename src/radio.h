@@ -187,8 +187,10 @@ struct channel {
   } dmr;
   struct {
     int can;                      // Channel Access Number to play, 0-15; -1 = any
-    char source[12];              // source callsign of the current transmission, "" if none
   } m17;
+  struct {
+    char source[12];              // digital voice (M17, YSF): source callsign of the current transmission, "" if none
+  } dv;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate
   int sampcount;               // Count of baseband samples
@@ -348,7 +350,7 @@ struct channel {
 typedef struct channel chan_t;
 
 static inline bool is_dv_demod(enum demod_type type){
-  return type == P25_DEMOD || type == DMR_DEMOD || type == M17_DEMOD;
+  return type == P25_DEMOD || type == DMR_DEMOD || type == M17_DEMOD || type == YSF_DEMOD;
 }
 static inline int channel_input_samprate(chan_t const *chan){
   return is_dv_demod(chan->demod_type) ? DV_IQ_SAMPRATE_RADIOD : chan->output.samprate;

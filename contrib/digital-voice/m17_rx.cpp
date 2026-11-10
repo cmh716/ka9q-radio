@@ -114,8 +114,8 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + dc_ * kDeviation;
     stats->error_rate = error_rate_;
     if (lsf_valid_) {
-      std::memcpy(stats->m17_src, src_, sizeof stats->m17_src);
-      std::memcpy(stats->m17_dst, dst_, sizeof stats->m17_dst);
+      std::memcpy(stats->src_call, src_, sizeof stats->src_call);
+      std::memcpy(stats->dst_call, dst_, sizeof stats->dst_call);
       stats->m17_can = (lsf_type(lsf_) >> 7) & 0xf;
       stats->m17_encrypted = encrypted_;
     } else {

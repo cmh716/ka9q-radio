@@ -234,7 +234,11 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
 	  fprintf(fp,"(spectrum v2)");
 	  break;
 	default:
-	  fprintf(fp,"(unknown)");
+	  {
+	    // Newer demods (p25, dmr, m17, ysf, ...) by their table name
+	    char const *name = demod_name_from_type(i);
+	    fprintf(fp,"(%s)",name != NULL ? name : "unknown");
+	  }
 	  break;
 	}
       }
@@ -284,10 +288,10 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
     case PEAK_DEVIATION:
       fprintf(fp,"peak FM dev %'lg Hz",decode_float(cp,optlen));
       break;
-    case M17_SOURCE:
+    case SOURCE_CALLSIGN:
       {
 	char *p = decode_string(cp,optlen);
-	fprintf(fp,"M17 source %s",p != NULL ? p : "");
+	fprintf(fp,"source callsign %s",p != NULL ? p : "");
 	FREE(p);
       }
       break;

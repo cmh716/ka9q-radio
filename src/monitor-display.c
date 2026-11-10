@@ -424,8 +424,8 @@ static void update_monitor_display(void){
 	  snprintf(scratch[i],COLS,"N%03X",sp->chan.p25.last_nac);
       } else if(sp->chan.demod_type == DMR_DEMOD){
 	; // nothing to show yet
-      } else if(sp->chan.demod_type == M17_DEMOD){
-	snprintf(scratch[i],COLS,"%s",sp->chan.m17.source);
+      } else if(sp->chan.demod_type == M17_DEMOD || sp->chan.demod_type == YSF_DEMOD){
+	snprintf(scratch[i],COLS,"%s",sp->chan.dv.source);
       } else if(sp->notch_enable && sp->current_tone != 0)
 	snprintf(scratch[i],COLS,"%.1f%c",sp->notch_tone,sp->current_tone == sp->notch_tone ? '*' : ' ');
       else if(sp->notch_enable && sp->current_dcs != 0)

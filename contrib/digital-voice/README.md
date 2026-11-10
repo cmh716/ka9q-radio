@@ -1,6 +1,6 @@
 # Digital voice decoders
 
-Static library linked into `radiod` for the `p25`, `dmr` and `m17` demodulators
+Static library linked into `radiod` for the `p25`, `dmr`, `m17` and `ysf` demodulators
 (`src/dv.c`). It takes 48 kHz complex IQ from the radiod channel filter and
 returns 8 kHz speech; the public API is `dv.h`. `src/Makefile` builds it
 automatically.
@@ -12,6 +12,7 @@ automatically.
     p25_voice.cpp    P25: NID framing, HDU/LDU2 encryption detection, IMBE decoding
     dmr_rx.cpp       DMR: burst framing, timeslot tracking, AMBE+2 decoding
     m17_rx.cpp       M17: discriminator, RRC, sync-word timing, LSF/LICH, Codec2
+    ysf_rx.cpp       YSF: frame sync, FICH, DN (AMBE+2) and VW (IMBE) voice, DN callsigns
     dv_api.cpp       C API
     upstream/        code taken from OP25; upstream/libm17 from the M17 Foundation
 
@@ -38,6 +39,19 @@ synthesized signals (libm17's encoder, FM modulated, 2-20 dB SNR, +/-1 kHz
 offset, +/-10% deviation): every frame decoded down to 10 dB, no false
 audio from 120 s of noise.
 
+YSF follows OP25's receive path (rx_sync.cc), with three changes: the FICH
+and DN data channel are decoded with libm17's Viterbi decoder (the same K=5
+code; OP25 walks the trellis with hard decisions and fails on any bit
+error), which moves the weak-signal cliff about 2 dB lower; VW (full rate)
+audio isn't multiplied by 32768, which in OP25 clips every sample; and
+voice is taken only from communication frames. The source callsign comes
+from the DN data channel. The receiver is centred on 750 Hz per symbol
+level and decodes 550-1000 Hz (OP25's transmitter uses DMR's 648). VD mode 1
+and data-only frames are muted, as in OP25. Tested only on synthesized
+signals (OP25's YSF transmitter code with its AMBE and IMBE encoders, FM
+modulated): every frame down to 9 dB SNR, about 70% at 6 dB, nothing from
+noise.
+
 Example channels:
 
 ```ini
@@ -62,6 +76,12 @@ mode = m17
 data = m17.local
 freq = "433m475"
 encoding = opus
+
+[Fusion]
+mode = ysf
+data = ysf.local
+freq = "444m000"
+encoding = opus
 ```
 
 `control` shows recognized sync words as TP1 and decoded frames (P25) or
@@ -82,6 +102,8 @@ original notices are kept in the imported files.
   `p25p2_vf.cc` (AMBE codeword error correction): Max H. Parke, KA1RBI;
   `software_imbe_decoder.cc` (synthesis): Steve Glass (2008-2009)
 - FSK4 MMSE timing: Frank (Radio Rausch) (2006-2007), Steve Glass (2011)
+- YSF receive (`ysf_rx.cpp`, from `rx_sync.cc`) and `ysf_const.h`, `crc16.h`:
+  Max H. Parke KA1RBI, Graham J. Norbury
 - `upstream/libm17` (M17 frame encoding/decoding): libm17 1.4.1 by Wojciech
   Kaczmarski, SP5WWP, and the M17 Foundation,
   [M17-Project/libm17](https://github.com/M17-Project/libm17),
@@ -99,8 +121,8 @@ Local changes: IMBE encoder removed; the IMBE vocoder's random seed and
 fixed-point Overflow/Carry flags are per instance (thread-local context) so
 channels don't interfere; constructor banner removed; the P25 framer no
 longer uses OP25's logger and prints NAC mismatches only in debug mode. The
-DMR vocoder files (`p25p2_vf`, `rs`, `mbelib`, `ambe`, `software_imbe_decoder`,
-`imbe_decoder`, `dmr_const.h`, `bit_utils.h`) are unmodified.
+DMR and YSF vocoder files (`p25p2_vf`, `rs`, `mbelib`, `ambe`, `software_imbe_decoder`,
+`imbe_decoder`, `dmr_const.h`, `bit_utils.h`, `ysf_const.h`, `crc16.h`) are unmodified.
 
 OP25 is GPL-3.0-or-later, libm17 GPL-2.0-or-later and ka9q-radio GPL-3; mbelib is ISC; see
 `LICENSE.TXT`. AMBE+2 is a DVSI codec; mbelib is an independent

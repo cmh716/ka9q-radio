@@ -1,4 +1,4 @@
-// Digital voice receivers (P25 Phase 1, DMR, M17): 48 kHz complex IQ in, 8 kHz speech out
+// Digital voice receivers (P25 Phase 1, DMR, M17, YSF): 48 kHz complex IQ in, 8 kHz speech out
 // Adapted from OP25; see README.md for attribution
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifndef KA9Q_DV_H
@@ -21,6 +21,7 @@ typedef enum {
   DV_P25_CQPSK = 1,  // P25 simulcast (LSM/CQPSK)
   DV_DMR = 2,
   DV_M17 = 3,
+  DV_YSF = 4,        // Yaesu System Fusion (C4FM): DN and VW voice
 } dv_mode;
 
 typedef struct {
@@ -48,9 +49,10 @@ typedef struct {
   // DMR
   int active_slot;           // slot being played, 1 or 2; 0 = none
   float error_rate;          // DMR: AMBE bit error rate estimate of the active slot; M17: Viterbi
+  // M17 and YSF: callsigns of the current transmission, "" if not yet known
+  char src_call[12];
+  char dst_call[12];
   // M17, from the current transmission's link setup frame
-  char m17_src[12];          // source callsign, "" if not yet known
-  char m17_dst[12];          // destination callsign
   int m17_can;               // Channel Access Number, -1 if not yet known
   bool m17_encrypted;
 } dv_stats;

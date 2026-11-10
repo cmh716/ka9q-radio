@@ -75,13 +75,20 @@ private:
 class dv_fsk4 {
 public:
   using taps = std::array<float, 45>;
-  explicit dv_fsk4(taps const& rx_taps) : rx_taps_(rx_taps), fsk4_(kDvSampleRate, kDvSymbolRate) {}
+  // deviation: nominal Hz per symbol level (outer symbols at 3x). The FSK4
+  // level tracking follows about -25%..+33% around it
+  explicit dv_fsk4(taps const& rx_taps, float deviation = kDvDeviation)
+    : rx_taps_(rx_taps), deviation_(deviation),
+      quadrature_gain_(kDvSampleRate / (2.0f * kDvPi * deviation)),
+      fsk4_(kDvSampleRate, kDvSymbolRate) {}
   // Returns true and sets dibit when a symbol is ready
   bool process(cfloat in, uint8_t& dibit);
-  float fine_offset_hz() const { return static_cast<float>(fsk4_.fine_frequency_correction() * kDvDeviation); }
+  float fine_offset_hz() const { return static_cast<float>(fsk4_.fine_frequency_correction() * deviation_); }
 
 private:
   taps const& rx_taps_;
+  float const deviation_;
+  float const quadrature_gain_;
   p25_fsk4_demod fsk4_;
   cfloat previous_{};
   bool have_previous_ = false;
