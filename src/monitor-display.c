@@ -420,7 +420,10 @@ static void update_monitor_display(void){
       sess_t const *sp = Sess_ptr[session];
       if(!inuse(sp)) break;
       if(sp->chan.demod_type == P25_DEMOD){
-	if(sp->chan.p25.have_nac)
+	// The call being followed or decoded, else the NAC
+	if(sp->chan.dv.source[0] != '\0')
+	  snprintf(scratch[i],COLS,"%s",sp->chan.dv.source);
+	else if(sp->chan.p25.have_nac)
 	  snprintf(scratch[i],COLS,"N%03X",sp->chan.p25.last_nac);
       } else if(sp->chan.demod_type == DMR_DEMOD || sp->chan.demod_type == M17_DEMOD || sp->chan.demod_type == YSF_DEMOD
 		|| sp->chan.demod_type == DSTAR_DEMOD || sp->chan.demod_type == NXDN_DEMOD

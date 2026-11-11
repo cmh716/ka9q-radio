@@ -416,8 +416,17 @@ int demod_dv(void *arg){
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"%s%s%s",dv_mode_name(stats.active_mode),
 		   stats.src_call[0] ? " " : "",stats.src_call);
       }
-      if(events.follow != NULL && !dv_follow_source(events.follow,chan->dv.source,sizeof chan->dv.source))
-	chan->dv.source[0] = '\0';
+      if(events.follow != NULL){
+	if(!dv_follow_source(events.follow,chan->dv.source,sizeof chan->dv.source))
+	  chan->dv.source[0] = '\0';
+      } else if(mode == DV_P25_C4FM || mode == DV_P25_CQPSK){
+	// Conventional P25: the call's talkgroup and talker, from the link control
+	if(stats.dst_call[0] == '\0')
+	  chan->dv.source[0] = '\0';
+	else
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"TG%.6s%s%.8s",stats.dst_call,
+		   stats.src_call[0] ? " " : "",stats.src_call);
+      }
       if(!is_dmr && !has_callsign && !is_auto && stats.frames != 0){
 	chan->p25.last_nac = stats.last_nac;
 	chan->p25.have_nac = true;

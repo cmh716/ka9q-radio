@@ -293,13 +293,8 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
 bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
   if(f == NULL || f->voice == NULL)
     return false;
-  dv_stats st;
-  dv_get_stats(f->voice,&st);
-  uint32_t const source = st.src_call[0] ? (uint32_t)strtoul(st.src_call,NULL,10) : f->cur.source;
-  if(source != 0)
-    snprintf(buf,len,"TG%" PRIu32 " %" PRIu32,f->cur.group,source);
-  else
-    snprintf(buf,len,"TG%" PRIu32,f->cur.group);
+  // Talkgroup and voice channel: the talker is in the recordings and the -v log
+  snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
   return true;
 }
 
