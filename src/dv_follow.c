@@ -26,6 +26,7 @@ extern int Overlap; // fast convolution overlap factor (radio.c)
 #define FOLLOW_FRESH (DV_IQ_SAMPRATE_RADIOD * 3 / 2)   // grants or updates this recent are live calls
 #define FOLLOW_HANG (DV_IQ_SAMPRATE_RADIOD * 2)        // no voice this long (and no end seen): the call is over
 #define FOLLOW_LISTEN (DV_IQ_SAMPRATE_RADIOD * 3)      // give a new channel this long to produce voice
+#define FOLLOW_REGRANT (DV_IQ_SAMPRATE_RADIOD * 3 / 10) // voice this long after a grant of our channel: it was ours
 
 struct follow_grant {
   bool valid;
@@ -56,6 +57,8 @@ struct dv_follow {
   dv_decoder *voice;
   struct follow_grant cur;
   uint64_t started, last_voice, last_count;
+  uint32_t pending;          // a later grant number for our own channel and talkgroup, not yet placed
+  uint64_t pending_at;       // when it came
   uint64_t voice_serial;     // the voice decoder's call_serial when we joined
   uint64_t skip_freq;        // the call we last left: don't rejoin it while it's re-announced
   int skip_slot;
@@ -174,6 +177,13 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
     f->cur.seen = f->now;
     if(g.source != 0)
       f->cur.source = g.source;
+    // A later explicit grant of our own channel is either this transmission
+    // re-announced, or the next one (a quick re-key on the same channel).
+    // Which, the voice tells: if it carries on, it was this one (see below)
+    if(g.transmission > f->cur.transmission && g.transmission > f->pending){
+      f->pending = g.transmission;
+      f->pending_at = f->now;
+    }
   }
 }
 
@@ -242,6 +252,7 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
   if(f->voice == NULL)
     return;
   f->cur = *g;
+  f->pending = 0;
   {
     dv_stats st;
     dv_get_stats(f->voice,&st);
@@ -309,6 +320,13 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     if(heard != f->last_count){
       f->last_count = heard;
       f->last_voice = f->now;
+    }
+    // Voice well after a grant of our channel: that grant re-announced this
+    // transmission, so it's the number we finish with. (If the transmission
+    // ends first, the grant was the next one, and stays followable)
+    if(f->pending != 0 && f->last_voice > f->pending_at + FOLLOW_REGRANT){
+      f->cur.transmission = f->pending;
+      f->pending = 0;
     }
     struct follow_grant const *b = best_grant(f);
     struct follow_grant const *r = NULL;
