@@ -21,8 +21,9 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count);
 bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len);
 // The followed call's talkgroup (or unit) and source as decimal strings; false if none
 // and its voice channel frequency and TDMA slot (-1 for FDMA)
+// generation identifies the voice decoder; serial counts its call endings.
 bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen,
-		    double *freq, int *slot);
+		    double *freq, int *slot, uint64_t *generation, uint64_t *serial);
 void dv_follow_print(struct dv_follow const *f);
 
 #endif

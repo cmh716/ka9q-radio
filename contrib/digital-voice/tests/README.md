@@ -9,6 +9,15 @@ SANITIZE=1 ./run.sh   # the same under AddressSanitizer and UBSan
 
 `make test` in the library directory runs `run.sh`.
 
+Before replaying recordings, the runner tests radiod's PCM queue and call
+tracking, including a talkgroup change with old speech still queued,
+immediate same-talker re-keying after a terminator, brief fades, and late
+identification. It also tests DV_AUTO with several calls and a terminator
+inside one IQ block, checking the metadata seen in each PCM callback.
+The DMR recording is additionally decoded as one large block, directly and
+through DV_AUTO, to verify that its three same-talker key-ups have distinct
+call serials while every PCM frame retains its original caller IDs.
+
 The recordings are public captures from the Trunk Recorder Pro regression corpus
 ([trunkrecorder.pro/corpus](https://trunkrecorder.pro/corpus)), fetched by SHA-256 and
 resampled from 37.5 to 48 kHz (python3 with numpy and scipy):

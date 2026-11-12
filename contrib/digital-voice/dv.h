@@ -39,10 +39,15 @@ typedef struct {
   int m17_can;       // M17: Channel Access Number 0-15, if m17_can_filter
 } dv_config;
 
-// Called synchronously from dv_process() for each 20 ms frame of speech
+// Called synchronously from dv_process() for each 20 ms frame of speech.
+// dv_get_stats() inside this callback describes that frame's call, including
+// in DV_AUTO, which buffers frames before choosing a receiver.
 typedef void (*dv_pcm_callback)(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]);
 
 typedef struct {
+  // Changes when a call ends, including an explicit terminator within one
+  // dv_process() block. IDs alone cannot distinguish successive key-ups.
+  uint64_t call_serial;
   uint64_t samples;          // complex input samples
   uint64_t symbols;
   uint64_t syncs;            // frame sync words seen

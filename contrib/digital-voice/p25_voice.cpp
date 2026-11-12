@@ -67,6 +67,7 @@ struct p25_voice::impl {
   // A call ends with a TDU; when that is missed, with the signal
   void end_call()
   {
+    stats.call_serial++;
     encrypted = false;
     stats.src_call[0] = stats.dst_call[0] = '\0';
   }
@@ -224,6 +225,7 @@ void p25_voice::rx_dibit(uint8_t dibit)
 
 void p25_voice::get_stats(dv_stats *stats) const
 {
+  stats->call_serial = impl_->stats.call_serial;
   stats->frames = impl_->stats.frames;
   stats->ldu1 = impl_->stats.ldu1;
   stats->ldu2 = impl_->stats.ldu2;

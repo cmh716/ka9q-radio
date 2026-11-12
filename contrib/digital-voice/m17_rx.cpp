@@ -113,6 +113,7 @@ public:
   void get_stats(dv_stats *stats) const override
   {
     *stats = {};
+    stats->call_serial = call_serial_;
     stats->samples = frontend_.samples;
     stats->symbols = n_ / kSps;
     stats->syncs = syncs_;
@@ -299,6 +300,7 @@ private:
 
   void end_call()
   {
+    call_serial_++;
     lsf_valid_ = false;
     encrypted_ = false;
     lich_have_ = 0;
@@ -308,6 +310,7 @@ private:
   }
 
   int const wanted_can_;   // -1 = any
+  uint64_t call_serial_ = 0;
   dv_pcm_callback const callback_;
   void * const user_data_;
   dv_frontend frontend_;

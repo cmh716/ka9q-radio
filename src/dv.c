@@ -235,6 +235,8 @@ struct dv_call {
   uint32_t id;
   double freq;
   int slot;
+  uint64_t serial;     // decoder's call-ending counter
+  uint64_t generation; // followed decoder instance, which may reuse serials
 };
 
 // Decoded speech waiting for its 20 ms slot in the output, each frame
@@ -246,7 +248,12 @@ struct dv_audio_queue {
   unsigned int head;
   unsigned int count;
   uint64_t dropped;
-  struct dv_call const *current; // the decoders' current call, for labelling
+  struct dv_call *current;
+  chan_t const *chan;
+  dv_decoder const *decoder;
+  dv_mode mode;
+  struct dv_follow const *follow;
+  int absent; // IQ blocks without IDs, independent of the number of PCM frames
 };
 
 // P25 control channel events (site, band plan, voice grants), logged with -v
@@ -267,8 +274,10 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
   memset(call,0,sizeof *call);
   call->freq = chan->tune.freq;
   call->slot = -1;
+  call->serial = st->call_serial;
   if(follow != NULL){
-    if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src,&call->freq,&call->slot))
+    if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src,
+		      &call->freq,&call->slot,&call->generation,&call->serial))
       strlcpy(call->mode,"P25",sizeof call->mode);
     return;
   }
@@ -304,18 +313,27 @@ static void push_status(chan_t *chan){
 // go. A talker or destination that fills in later is the same call
 static uint32_t Call_seq; // ids across all channels, so they never repeat on one
 #define DV_CALL_GONE 25 // blocks (0.5 s) without IDs that end a call
-static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,int *absent){
+static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,bool tick){
+  // A terminator is definitive, even when the next key-up has identical
+  // IDs, or both calls occur within a single input block. Only uncertain
+  // loss of IDs gets the fade grace period below.
+  if(cur->serial != seen->serial || cur->generation != seen->generation){
+    memset(cur,0,sizeof *cur);
+    queue->absent = 0;
+  }
   bool const has_ids = seen->dest[0] != '\0' || seen->src[0] != '\0';
   if(!has_ids){
     // Gone for a moment (a fade, a slot glitch) is still the same call
-    if(cur->id != 0 && ++*absent >= DV_CALL_GONE){
+    if(cur->id != 0 && tick && ++queue->absent >= DV_CALL_GONE){
       if(Verbose > 1)
 	fprintf(stderr,"%s call %u ended\n",chan->name,cur->id);
       memset(cur,0,sizeof *cur); // ended
     }
+    if(cur->id == 0)
+      *cur = *seen; // retain the boundary token for unidentified audio
     return;
   }
-  *absent = 0;
+  queue->absent = 0;
   bool const differs = cur->id == 0
     || (cur->dest[0] != '\0' && seen->dest[0] != '\0' && strcmp(cur->dest,seen->dest) != 0)
     || (cur->src[0] != '\0' && seen->src[0] != '\0' && strcmp(cur->src,seen->src) != 0)
@@ -335,7 +353,7 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
       // Speech decoded before the IDs arrived, still queued, is this call's start
       for(unsigned int i = 0; i < queue->count; i++){
 	struct dv_call *c = &queue->call[(queue->head + i) % DV_AUDIO_QUEUE_DEPTH];
-	if(c->id == 0)
+	if(c->id == 0 && c->serial == cur->serial && c->generation == cur->generation)
 	  *c = *cur;
       }
     }
@@ -367,6 +385,14 @@ static void publish_call(chan_t *chan,struct dv_call const *call){
 
 static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   struct dv_audio_queue * const queue = user_data;
+  // Query synchronously: after dv_process() returns, the decoder may have
+  // reached a terminator or a later call. Existing queued frames keep their
+  // own labels when this frame changes the current call.
+  dv_stats st;
+  dv_get_stats(queue->decoder,&st);
+  struct dv_call seen;
+  call_ids(&st,queue->mode,queue->follow,queue->chan,&seen);
+  track_call(queue->chan,queue->current,&seen,queue,false);
   if(queue->count == DV_AUDIO_QUEUE_DEPTH){
     queue->dropped++;
     return;
@@ -417,8 +443,8 @@ int demod_dv(void *arg){
   struct dv_audio_queue audio_queue = {0};
   struct dv_call decoding = {0};     // the call the decoders are producing
   audio_queue.current = &decoding;
+  audio_queue.chan = chan;
   int idle_frames = 0;               // output frames with nothing queued
-  int ids_absent = 0;                // blocks since the decoders last gave IDs
   dv_config const config = {
     .p25_nac = chan->p25.nac,
     .p25_wacn = chan->p25.wacn,
@@ -439,6 +465,8 @@ int demod_dv(void *arg){
     chan->demod_type = INVALID_DEMOD;
     return -1;
   }
+  audio_queue.decoder = decoder;
+  audio_queue.mode = mode;
   // A P25 Phase 1 control channel can follow its voice grants
   struct dv_events events = { .chan = chan };
   if(chan->p25.follow && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK)){
@@ -447,6 +475,7 @@ int demod_dv(void *arg){
       fprintf(stderr,"%s: couldn't create the P25 voice channel follower\n",chan->name);
   }
   dv_set_event_callback(decoder,log_event,&events);
+  audio_queue.follow = events.follow;
 
   // Emit one 20 ms audio frame per 20 ms of IQ, in integer arithmetic
   uint64_t output_clock = 0;
@@ -548,7 +577,7 @@ int demod_dv(void *arg){
       // Labels for what the decoders produce next; published as it plays
       struct dv_call seen;
       call_ids(&st,mode,events.follow,chan,&seen);
-      track_call(chan,&decoding,&seen,&audio_queue,&ids_absent);
+      track_call(chan,&decoding,&seen,&audio_queue,true);
     }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);

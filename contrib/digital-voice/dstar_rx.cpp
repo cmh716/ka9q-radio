@@ -171,6 +171,7 @@ public:
   void get_stats(dv_stats *stats) const override
   {
     *stats = {};
+    stats->call_serial = call_serial_;
     stats->samples = frontend_.samples;
     stats->symbols = bits_;
     stats->syncs = syncs_;
@@ -421,6 +422,7 @@ private:
 
   void end_call()
   {
+    call_serial_++;
     header_valid_ = false;
     header_left_ = 0;
     locked_ = false;
@@ -432,6 +434,7 @@ private:
   }
 
   static constexpr size_t kMaxGolayErrors = 6; // two Golay(24,12) words, 3 each
+  uint64_t call_serial_ = 0;
 
   dv_pcm_callback const callback_;
   void * const user_data_;

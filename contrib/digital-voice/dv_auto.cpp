@@ -23,7 +23,10 @@ bool shares_frontend(dv_mode m) { return m != DV_NXDN48; }
 // The owner lets go after this long without decoding a frame
 constexpr uint64_t kHoldSamples = DV_IQ_SAMPRATE / 2; // 500 ms
 
-using pcm_frame = std::array<int16_t, DV_PCM_SAMPLES>;
+struct pcm_frame {
+  std::array<int16_t, DV_PCM_SAMPLES> samples;
+  dv_stats stats;
+};
 
 class auto_decoder : public dv_decoder {
 public:
@@ -94,8 +97,16 @@ public:
     // Pass on the owner's audio, drop everyone else's
     for (size_t i = 0; i < kNumModes; i++) {
       if (static_cast<int>(i) == owner_ && callback_ != nullptr)
-        for (auto const& f : queue_[i])
-          callback_(user_data_, f.data());
+        for (auto const& f : queue_[i]) {
+          playing_ = &f.stats;
+          // Also restore live stats if a C++ API client throws from its
+          // callback; dv_process() catches that exception at the C boundary.
+          struct restore_stats {
+            dv_stats const *&playing;
+            ~restore_stats() { playing = nullptr; }
+          } restore{playing_};
+          callback_(user_data_, f.samples.data());
+        }
       queue_[i].clear();
     }
   }
@@ -119,6 +130,12 @@ public:
 
   void get_stats(dv_stats *stats) const override
   {
+    // A PCM callback must see the identity at collection time, even if a
+    // terminator or another call was decoded later in the same IQ block.
+    if (playing_ != nullptr) {
+      *stats = *playing_;
+      return;
+    }
     if (owner_ >= 0) {
       sub_[owner_]->get_stats(stats);
       stats->active_mode = kModes[owner_];
@@ -155,7 +172,9 @@ private:
   {
     tap const *t = static_cast<tap const *>(user_data);
     pcm_frame f;
-    std::memcpy(f.data(), pcm, sizeof f);
+    std::memcpy(f.samples.data(), pcm, sizeof f.samples);
+    t->self->sub_[t->index]->get_stats(&f.stats);
+    f.stats.active_mode = kModes[t->index];
     t->self->queue_[t->index].push_back(f);
   }
 
@@ -166,6 +185,7 @@ private:
   std::unique_ptr<dv_decoder> sub_[kNumModes];
   tap tap_[kNumModes];
   std::vector<pcm_frame> queue_[kNumModes];
+  dv_stats const *playing_ = nullptr;
   uint64_t last_voice_[kNumModes]{};
   uint64_t last_frames_[kNumModes]{};
   uint64_t samples_ = 0;

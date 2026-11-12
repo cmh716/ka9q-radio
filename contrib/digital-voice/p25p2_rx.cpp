@@ -156,6 +156,7 @@ private:
   // Forget the call and the superframe position (the counters stay)
   void reset_call()
   {
+    stats_.call_serial++;
     confident_ = false;
     slotid_ = 0;
     in_call_ = false;
@@ -406,6 +407,7 @@ private:
       }
       break;
     case 2: // MAC_END_PTT
+      stats_.call_serial++;
       in_call_ = false;
       algid_ = next_algid_ = kAlgClear;
       alg_known_ = false;

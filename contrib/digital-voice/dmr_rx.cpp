@@ -81,6 +81,7 @@ public:
   void get_stats(dv_stats *stats) const override
   {
     *stats = {};
+    stats->call_serial = call_serial_;
     stats->samples = frontend_.samples;
     stats->symbols = symbols_;
     stats->syncs = syncs_;
@@ -160,6 +161,7 @@ private:
   // a mere resync, which happens within a call)
   void end_calls()
   {
+    call_serial_++;
     for (int s = 0; s < 2; s++) {
       calls_[s] = call{};
       emb_lc_[s].clear();
@@ -310,8 +312,10 @@ private:
     }
     case kDataTypeTerminator:
       c = call{};
-      if (call_slot_ == chan)
+      if (call_slot_ == chan) {
         call_slot_ = -1;
+        call_serial_++;
+      }
       break;
     default:
       break;
@@ -442,6 +446,7 @@ private:
   uint64_t unmute_until_[2]{};
   int active_slot_ = -1;
   int call_slot_ = -1;
+  uint64_t call_serial_ = 0;
   uint64_t last_sync_ = 0;      // symbols_ at the last sync          // slot of the call last played, -1 once it has ended
 
   // Vocoder, one per timeslot

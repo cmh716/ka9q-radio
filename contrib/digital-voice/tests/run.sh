@@ -20,8 +20,18 @@ else
   LIB=$TOP/build/libdv.a
 fi
 mkdir -p out
+# radiod's call tracking and PCM queue (no hardware or recordings needed).
+cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+  -iquote ../../../src -iquote .. ../../../src/dv-test.c \
+  -Wl,--gc-sections -lm -lbsd -o out/calltest
+out/calltest
+c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream auto-call-test.cpp \
+  $LIB -lcodec2 -lm -o out/auto-call-test
+out/auto-call-test
 cc $FLAGS -I$TOP -o out/dvtest dvtest.c $LIB -lcodec2 -lstdc++ -lm
 [ -d data ] || { echo "no recordings: run ./fetch.sh first"; exit 1; }
+cc $FLAGS -I$TOP call-serial-test.c $LIB -lcodec2 -lstdc++ -lm -o out/call-serial-test
+out/call-serial-test
 
 P2KEY="-n 443 -w BEE00 -y 445" # the voice-p25-phase2 system
 fail=0

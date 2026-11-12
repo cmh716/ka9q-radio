@@ -159,6 +159,7 @@ public:
   void get_stats(dv_stats *stats) const override
   {
     *stats = {};
+    stats->call_serial = call_serial_;
     stats->samples = frontend_.samples;
     stats->symbols = n_;
     stats->syncs = syncs_;
@@ -368,6 +369,7 @@ private:
 
   void end_call()
   {
+    call_serial_++;
     last_lich_ = -1;
     encrypted_ = false;
     sacch_have_ = 0;
@@ -375,6 +377,7 @@ private:
   }
 
   dv_pcm_callback const callback_;
+  uint64_t call_serial_ = 0;
   void * const user_data_;
   dv_frontend frontend_;
   dv_fsk4 fsk4_;

@@ -315,13 +315,15 @@ void dv_follow_print(struct dv_follow const *f){
 }
 
 bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen,
-		    double *freq, int *slot){
+		    double *freq, int *slot, uint64_t *generation, uint64_t *serial){
   if(f == NULL || f->voice == NULL)
     return false;
   *freq = (double)f->cur.freq;
   *slot = f->cur.slot;
   dv_stats st;
   dv_get_stats(f->voice,&st);
+  *generation = f->calls;
+  *serial = st.call_serial;
   snprintf(dest,dlen,"%" PRIu32,f->cur.group);
   if(st.src_call[0] != '\0')
     strlcpy(src,st.src_call,slen);
