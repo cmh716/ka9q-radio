@@ -288,6 +288,10 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
     case CALL_SLOT:
       chan->dv.call_slot = decode_int(cp,optlen);
       break;
+    case CALL_TIMESTAMP:
+      chan->dv.call_timestamp = decode_int32(cp,optlen);
+      chan->dv.call_timestamp_valid = true;
+      break;
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:

@@ -208,6 +208,8 @@ struct channel {
     uint32_t call_id;             // changes with each call, 0 = none; published as its audio starts and ends
     double call_freq;             // where the call is (a followed call's voice channel), Hz
     int call_slot;                // TDMA slot (0 or 1) of the call, -1 if none
+    uint32_t call_timestamp;      // RTP timestamp where this call change takes effect in the stream
+    bool call_timestamp_valid;    // (decoders: the sender gave one)
   } dv;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate

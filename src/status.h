@@ -176,6 +176,7 @@ enum status_type {
   CALL_ID,        // Digital voice: changes with each call (0 = none), as its audio starts and ends
   CALL_FREQUENCY, // Digital voice: frequency of the current call (a followed call's voice channel), Hz
   CALL_SLOT,      // Digital voice: TDMA slot of the current call, -1 if none
+  CALL_TIMESTAMP, // Digital voice: RTP timestamp of the stream's first sample this call change applies to
 };
 
 /**

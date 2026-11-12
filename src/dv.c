@@ -318,6 +318,8 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
   // IDs, or both calls occur within a single input block. Only uncertain
   // loss of IDs gets the fade grace period below.
   if(cur->serial != seen->serial || cur->generation != seen->generation){
+    if(cur->id != 0 && Verbose > 1)
+      fprintf(stderr,"%s call %u ended\n",chan->name,cur->id);
     memset(cur,0,sizeof *cur);
     queue->absent = 0;
   }
@@ -380,6 +382,10 @@ static void publish_call(chan_t *chan,struct dv_call const *call){
   chan->dv.call_id = call->id;
   chan->dv.call_freq = call->freq;
   chan->dv.call_slot = call->slot;
+  // Where in the stream this applies: the old call's audio is flushed, so the
+  // next packet starts here. A recorder splits at this timestamp, however
+  // status and data happen to interleave on their two sockets
+  chan->dv.call_timestamp = chan->output.rtp.timestamp;
   push_status(chan);
 }
 

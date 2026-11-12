@@ -131,6 +131,23 @@ struct wav {
   int32_t Subchunk2Size;
 };
 
+// --by-talkgroup: a call as radiod reports it
+struct call_info {
+  uint32_t id;                 // 0 = none
+  char dest[sizeof ((chan_t *)0)->dv.call_dest];
+  char src[sizeof ((chan_t *)0)->dv.call_src];
+  char mode[sizeof ((chan_t *)0)->dv.call_mode];
+  double freq;
+  int slot;
+};
+// A call change and the RTP timestamp where it takes effect in the stream
+struct call_change {
+  uint32_t timestamp;
+  struct call_info call;
+  struct timespec received;
+};
+#define CALL_CHANGES 8
+
 // One for each session being recorded
 struct session {
   struct session *prev;
@@ -184,6 +201,9 @@ struct session {
   char file_dest[sizeof ((chan_t *)0)->dv.call_dest];
   char file_src[sizeof ((chan_t *)0)->dv.call_src];
   char file_mode[sizeof ((chan_t *)0)->dv.call_mode];
+  struct call_info stream_call; // the call at the point the stream has been written to
+  struct call_change changes[CALL_CHANGES]; // reported, waiting for their timestamp
+  int nchanges;
   uint32_t file_call;          // radiod's call id for this file, 0 = not yet known
   double file_freq;            // the call's frequency (a followed call's voice channel), 0 = unknown
   int file_slot;               // its TDMA slot, -1 = none
@@ -232,6 +252,8 @@ static int session_file_init(struct session *sp,struct sockaddr const *sender,in
 static int close_session(struct session **spp);
 static int close_file(struct session *sp,char const *reason);
 static void call_adopt(struct session *sp);
+static void call_change(struct session *sp,struct call_info const *call);
+static void call_reached(struct session *sp,uint32_t timestamp);
 static void call_file(struct session *sp,char const *tempfile);
 static uint8_t *encodeTagString(uint8_t *out,size_t size,const char *string);
 static int start_ogg_opus_stream(struct session *sp);
@@ -621,7 +643,37 @@ static void process_status(int fd){
   sp->sender = sender;
   sp->chan = chan;
   sp->frontend = frontend;
-  if(By_talkgroup && sp->fp != NULL){
+  if(By_talkgroup && chan.dv.call_timestamp_valid){
+    // radiod says where in the stream each call change applies: queue it
+    // until the audio gets there, however status and data interleave
+    struct call_info call = { .id = chan.dv.call_id, .freq = chan.dv.call_freq, .slot = chan.dv.call_slot };
+    strlcpy(call.dest,chan.dv.call_dest,sizeof call.dest);
+    strlcpy(call.src,chan.dv.call_src,sizeof call.src);
+    strlcpy(call.mode,chan.dv.call_mode,sizeof call.mode);
+    struct call_info const *last = sp->nchanges > 0 ? &sp->changes[sp->nchanges-1].call : &sp->stream_call;
+    if(call.id != last->id || strcmp(call.dest,last->dest) != 0 || strcmp(call.src,last->src) != 0){
+      if(sp->nchanges == CALL_CHANGES){
+	call_change(sp,&sp->changes[0].call); // full: apply the oldest now
+	memmove(&sp->changes[0],&sp->changes[1],(CALL_CHANGES-1) * sizeof sp->changes[0]);
+	sp->nchanges--;
+      }
+      struct call_change *c = &sp->changes[sp->nchanges++];
+      c->timestamp = chan.dv.call_timestamp;
+      c->call = call;
+      clock_gettime(CLOCK_REALTIME,&c->received);
+      if(sp->fp == NULL)
+	call_reached(sp,chan.dv.call_timestamp); // nothing being written: it applies now
+    }
+  } else if(By_talkgroup){
+    // An older radiod: the change applies as it arrives
+    sp->stream_call.id = chan.dv.call_id;
+    strlcpy(sp->stream_call.dest,chan.dv.call_dest,sizeof sp->stream_call.dest);
+    strlcpy(sp->stream_call.src,chan.dv.call_src,sizeof sp->stream_call.src);
+    strlcpy(sp->stream_call.mode,chan.dv.call_mode,sizeof sp->stream_call.mode);
+    sp->stream_call.freq = chan.dv.call_freq;
+    sp->stream_call.slot = chan.dv.call_slot;
+  }
+  if(By_talkgroup && !chan.dv.call_timestamp_valid && sp->fp != NULL){
     uint32_t const id = chan.dv.call_id;
     if(sp->file_call != 0 && id != sp->file_call){
       // radiod sends a call's end, or the next call, as its audio ends:
@@ -715,6 +767,8 @@ static void process_data(int fd){
     Sessions = sp;
   }
   clock_gettime(CLOCK_REALTIME,&sp->last_active);
+  if(By_talkgroup && sp->nchanges > 0)
+    call_reached(sp,rtp.timestamp); // this packet is past a call change: split here
   if(sp->fp == NULL && !sp->complete){
     int64_t sender_time = sp->chan.clocktime + (int64_t)BILLION * (UNIX_EPOCH - GPS_UTC_OFFSET);
     sender_time += (int64_t)BILLION * (int32_t)(rtp.timestamp - sp->chan.output.time_snap) / sp->samprate;
@@ -852,6 +906,14 @@ static void scan_sessions(){
   struct session *next = NULL;
   for(struct session *sp = Sessions;sp != NULL; sp = next){
     next = sp->next; // save in case sp is closed
+    // A call change whose audio never came (a call's end, with silence after
+    // it): apply it once it's clearly not waiting for packets in flight
+    while(By_talkgroup && sp->nchanges > 0
+	  && now.tv_sec - sp->changes[0].received.tv_sec + (now.tv_nsec - sp->changes[0].received.tv_nsec) * 1e-9 > 1.0){
+      call_change(sp,&sp->changes[0].call);
+      memmove(&sp->changes[0],&sp->changes[1],(size_t)(sp->nchanges - 1) * sizeof sp->changes[0]);
+      sp->nchanges--;
+    }
     // Don't close session waiting for first activity
     if(sp->last_active.tv_sec == 0 || sp->fp == NULL)
       continue;
@@ -1701,17 +1763,42 @@ static int close_file(struct session *sp,char const *reason){
 
 // --by-talkgroup: take the current call's IDs for this file where it has none yet
 static void call_adopt(struct session *sp){
-  if(sp->file_call == 0 && sp->chan.dv.call_id != 0){
-    sp->file_call = sp->chan.dv.call_id;
-    sp->file_freq = sp->chan.dv.call_freq;
-    sp->file_slot = sp->chan.dv.call_slot;
+  struct call_info const *c = &sp->stream_call;
+  if(sp->file_call == 0 && c->id != 0){
+    sp->file_call = c->id;
+    sp->file_freq = c->freq;
+    sp->file_slot = c->slot;
   }
   if(sp->file_dest[0] == '\0')
-    strlcpy(sp->file_dest,sp->chan.dv.call_dest,sizeof sp->file_dest);
+    strlcpy(sp->file_dest,c->dest,sizeof sp->file_dest);
   if(sp->file_src[0] == '\0')
-    strlcpy(sp->file_src,sp->chan.dv.call_src,sizeof sp->file_src);
+    strlcpy(sp->file_src,c->src,sizeof sp->file_src);
   if(sp->file_mode[0] == '\0')
-    strlcpy(sp->file_mode,sp->chan.dv.call_mode,sizeof sp->file_mode);
+    strlcpy(sp->file_mode,c->mode,sizeof sp->file_mode);
+}
+
+// The stream has reached a call change: a different call (or none) closes
+// the file, whose audio is all before the change; the same call's IDs fill in
+static void call_change(struct session *sp,struct call_info const *call){
+  if(sp->fp != NULL && sp->file_call != 0 && call->id != sp->file_call){
+    send_queue(sp,true); // what's waiting is the old call's
+    close_file(sp,call->id == 0 ? "call ended" : "new call");
+    sp->rtp_state.init = false; // the next file starts with the next call's audio, not the gap
+  }
+  sp->stream_call = *call;
+  if(sp->fp != NULL)
+    call_adopt(sp);
+}
+
+// Apply the queued call changes at or before this RTP timestamp
+static void call_reached(struct session *sp,uint32_t timestamp){
+  int n = 0;
+  while(n < sp->nchanges && (int32_t)(timestamp - sp->changes[n].timestamp) >= 0)
+    call_change(sp,&sp->changes[n++].call);
+  if(n > 0){
+    memmove(&sp->changes[0],&sp->changes[n],(size_t)(sp->nchanges - n) * sizeof sp->changes[0]);
+    sp->nchanges -= n;
+  }
 }
 
 // An ID made safe as one path component: letters, digits, '-', '_' and '.'

@@ -304,6 +304,9 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
     case CALL_SLOT:
       fprintf(fp,"call slot %d",decode_int(cp,optlen));
       break;
+    case CALL_TIMESTAMP:
+      fprintf(fp,"call timestamp %u",(unsigned)decode_int32(cp,optlen));
+      break;
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:

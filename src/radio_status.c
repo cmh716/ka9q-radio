@@ -844,6 +844,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_int32(&bp,CALL_ID,chan->dv.call_id);
     encode_double(&bp,CALL_FREQUENCY,chan->dv.call_freq);
     encode_int(&bp,CALL_SLOT,chan->dv.call_slot);
+    encode_int32(&bp,CALL_TIMESTAMP,chan->dv.call_timestamp);
     break;
   case M17_DEMOD:
   case YSF_DEMOD:
@@ -858,6 +859,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_int32(&bp,CALL_ID,chan->dv.call_id);
     encode_double(&bp,CALL_FREQUENCY,chan->dv.call_freq);
     encode_int(&bp,CALL_SLOT,chan->dv.call_slot);
+    encode_int32(&bp,CALL_TIMESTAMP,chan->dv.call_timestamp);
     break;
   case P25_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
@@ -870,6 +872,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_int32(&bp,CALL_ID,chan->dv.call_id);
     encode_double(&bp,CALL_FREQUENCY,chan->dv.call_freq);
     encode_int(&bp,CALL_SLOT,chan->dv.call_slot);
+    encode_int32(&bp,CALL_TIMESTAMP,chan->dv.call_timestamp);
     break;
   case SPECT_DEMOD:
   case SPECT2_DEMOD:
