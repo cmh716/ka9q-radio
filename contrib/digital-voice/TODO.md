@@ -39,6 +39,10 @@ Capacity Max (going encrypted).
       channels near zero CPU. Live test on a mixed repeater; tune the 0 dB /
       -3 dB thresholds.
 
+- [x] Vocoder synthesis: JMBE (SDRTrunk) vs mbelib, blind A/B on five error-free
+      Phase 2 calls from the live system (2026-11-12): no audible difference.
+      Not worth porting without new evidence.
+
 ## Amateur radio
 
 - [ ] **FreeDV 700D, 700E, 1600** on HF through libcodec2's FreeDV API
