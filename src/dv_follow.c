@@ -24,7 +24,7 @@ extern int Overlap; // fast convolution overlap factor (radio.c)
 
 #define FOLLOW_GRANTS 16
 #define FOLLOW_FRESH (DV_IQ_SAMPRATE_RADIOD * 3 / 2)   // grants or updates this recent are live calls
-#define FOLLOW_HANG (DV_IQ_SAMPRATE_RADIOD * 2)        // no voice this long: the call is over
+#define FOLLOW_HANG (DV_IQ_SAMPRATE_RADIOD * 2)        // no voice this long (and no end seen): the call is over
 #define FOLLOW_LISTEN (DV_IQ_SAMPRATE_RADIOD * 3)      // give a new channel this long to produce voice
 
 struct follow_grant {
@@ -34,6 +34,7 @@ struct follow_grant {
   uint32_t group, source;
   bool unit;
   uint64_t seen;             // sample count of the last grant or update
+  uint64_t granted;          // sample count of the last grant (not update): a new transmission
 };
 
 struct dv_follow {
@@ -54,9 +55,11 @@ struct dv_follow {
   dv_decoder *voice;
   struct follow_grant cur;
   uint64_t started, last_voice, last_count;
+  uint64_t voice_serial;     // the voice decoder's call_serial when we joined
   uint64_t skip_freq;        // the call we last left: don't rejoin it while it's re-announced
   int skip_slot;
   uint32_t skip_group;
+  uint32_t skip_source;
   uint64_t calls;            // calls followed
 };
 
@@ -114,6 +117,7 @@ static void release(struct dv_follow *f, char const *why){
     f->skip_freq = f->cur.freq;
     f->skip_slot = f->cur.slot;
     f->skip_group = f->cur.group;
+    f->skip_source = f->cur.source;
   }
 }
 
@@ -133,12 +137,13 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
     return; // band plan unknown yet, or nothing to hear
   struct follow_grant g = {
     .valid = true, .freq = e->freq_hz, .slot = e->slot,
-    .group = e->group, .source = e->source, .unit = e->unit, .seen = f->now,
+    .group = e->group, .source = e->source, .unit = e->unit, .seen = f->now, .granted = f->now,
   };
   if(priority(f,&g) < 0)
     return;
-  // A new grant of the call we left is a new call
-  if(e->type == DV_EVENT_GRANT && g.freq == f->skip_freq && g.slot == f->skip_slot && g.group == f->skip_group)
+  // A new grant of the call we left, or another talker on it, is a new transmission
+  if(g.freq == f->skip_freq && g.slot == f->skip_slot && g.group == f->skip_group
+     && (e->type == DV_EVENT_GRANT || (g.source != 0 && g.source != f->skip_source)))
     f->skip_freq = 0;
   // One entry per voice channel and slot
   int slot = -1, oldest = 0;
@@ -151,6 +156,9 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
     if(!o->valid || o->seen < f->grants[oldest].seen)
       oldest = i;
   }
+  // An update keeps the time of the grant it repeats
+  if(slot >= 0 && e->type == DV_EVENT_UPDATE && f->grants[slot].group == g.group)
+    g.granted = f->grants[slot].granted;
   f->grants[slot >= 0 ? slot : oldest] = g;
   // The call we follow: still live, and perhaps a new talker (the voice
   // channel's own source ID takes precedence when it has one)
@@ -201,6 +209,11 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
   if(f->voice == NULL)
     return;
   f->cur = *g;
+  {
+    dv_stats st;
+    dv_get_stats(f->voice,&st);
+    f->voice_serial = st.call_serial;
+  }
   f->started = f->last_voice = f->now;
   f->last_count = 0;
   f->calls++;
@@ -267,6 +280,11 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     struct follow_grant const *b = best_grant(f);
     if(st.m17_encrypted && st.voice_decoded == 0)
       release(f,"encrypted");
+    else if(st.call_serial != f->voice_serial)
+      release(f,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
+    else if(b != NULL && b->group == f->cur.group && b->granted > f->started
+	    && !(b->freq == f->cur.freq && b->slot == f->cur.slot))
+      release(f,"next transmission"); // transmission trunking: the reply has its own channel
     else if(f->last_voice == f->started && f->now - f->started > FOLLOW_LISTEN)
       release(f,"no voice");
     else if(f->last_voice != f->started && f->now - f->last_voice > FOLLOW_HANG)

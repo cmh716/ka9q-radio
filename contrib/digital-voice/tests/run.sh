@@ -29,6 +29,11 @@ if [ -f ../../../src/config_paths.h ]; then
     -iquote ../../../src -iquote .. ../../../src/dv-test.c \
     -Wl,--gc-sections -lm -lbsd -o out/calltest
   out/calltest
+  cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+    -isystem /usr/include/x86_64-linux-gnu/bsd -DLIBBSD_OVERLAY \
+    -iquote ../../../src -iquote .. ../../../src/follow-test.c \
+    -Wl,--gc-sections -lm -lbsd -o out/follow-test
+  out/follow-test
 else
   echo "skipping radiod call queue test: build radiod (make -C src) first"
 fi

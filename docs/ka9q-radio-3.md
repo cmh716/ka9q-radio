@@ -327,8 +327,10 @@ must lie within the front end's coverage.
 **p25-talkgroups** limits it to the listed talkgroups, in priority order,
 separated by spaces or commas: a call on an earlier one preempts a later
 one. Without it, any clear group or unit call is followed, first come first
-served. Encrypted calls are skipped. A call is left 2 seconds after its
-last voice frame. For example:
+served. Encrypted calls are skipped. A call is left as soon as its voice
+channel signals the end of the transmission, or when its talkgroup is granted
+another channel (transmission trunking: each reply gets its own channel), or
+otherwise 2 seconds after its last voice frame. For example:
 
     [Trunked]
     mode = p25
