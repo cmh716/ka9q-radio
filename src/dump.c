@@ -295,6 +295,15 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
 	FREE(p);
       }
       break;
+    case CALL_ID:
+      fprintf(fp,"call id %u",(unsigned)decode_int32(cp,optlen));
+      break;
+    case CALL_FREQUENCY:
+      fprintf(fp,"call frequency %'.3lf Hz",decode_double(cp,optlen));
+      break;
+    case CALL_SLOT:
+      fprintf(fp,"call slot %d",decode_int(cp,optlen));
+      break;
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:

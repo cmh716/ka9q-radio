@@ -279,6 +279,15 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
 	FREE(p);
       }
       break;
+    case CALL_ID:
+      chan->dv.call_id = decode_int32(cp,optlen);
+      break;
+    case CALL_FREQUENCY:
+      chan->dv.call_freq = decode_double(cp,optlen);
+      break;
+    case CALL_SLOT:
+      chan->dv.call_slot = decode_int(cp,optlen);
+      break;
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:

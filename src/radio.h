@@ -205,6 +205,9 @@ struct channel {
     char call_dest[24];           // talkgroup, target unit or destination callsign
     char call_src[24];            // source unit ID or callsign
     char call_mode[8];            // "P25", "DMR", ...
+    uint32_t call_id;             // changes with each call, 0 = none; published as its audio starts and ends
+    double call_freq;             // where the call is (a followed call's voice channel), Hz
+    int call_slot;                // TDMA slot (0 or 1) of the call, -1 if none
   } dv;
   char preset[32];             // name of last mode preset -- DEPRECATED
   float complex *baseband;     // Output buffer of filter or filter 2 as appropriate

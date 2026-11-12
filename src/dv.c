@@ -227,11 +227,26 @@ static void dv_agc_frame(struct dv_agc *agc,float *audio,int n){
   }
 }
 
+// A call: what a recorder files it under. id changes with each call; 0 = none
+struct dv_call {
+  char dest[sizeof ((chan_t *)0)->dv.call_dest];
+  char src[sizeof ((chan_t *)0)->dv.call_src];
+  char mode[sizeof ((chan_t *)0)->dv.call_mode];
+  uint32_t id;
+  double freq;
+  int slot;
+};
+
+// Decoded speech waiting for its 20 ms slot in the output, each frame
+// labelled with the call it belongs to, so the call's start and end are
+// published exactly where its audio starts and ends
 struct dv_audio_queue {
   int16_t samples[DV_AUDIO_QUEUE_DEPTH][DV_PCM_SAMPLES];
+  struct dv_call call[DV_AUDIO_QUEUE_DEPTH];
   unsigned int head;
   unsigned int count;
   uint64_t dropped;
+  struct dv_call const *current; // the decoders' current call, for labelling
 };
 
 // P25 control channel events (site, band plan, voice grants), logged with -v
@@ -248,15 +263,12 @@ static void log_event(void *user_data,dv_event const *event){
 }
 
 // The current call's destination, source and mode, as recorders want them
-struct dv_call {
-  char dest[sizeof ((chan_t *)0)->dv.call_dest];
-  char src[sizeof ((chan_t *)0)->dv.call_src];
-  char mode[sizeof ((chan_t *)0)->dv.call_mode];
-};
-static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *follow,struct dv_call *call){
+static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *follow,chan_t const *chan,struct dv_call *call){
   memset(call,0,sizeof *call);
+  call->freq = chan->tune.freq;
+  call->slot = -1;
   if(follow != NULL){
-    if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src))
+    if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src,&call->freq,&call->slot))
       strlcpy(call->mode,"P25",sizeof call->mode);
     return;
   }
@@ -265,6 +277,8 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
     return; // DV_AUTO, nothing playing
   if((m == DV_DMR || m == DV_P25P2) && st->active_slot == 0)
     return; // no call on the slot we play
+  if(m == DV_P25P2)
+    call->slot = st->active_slot - 1;
   if(st->dst_call[0] == '\0' && st->src_call[0] == '\0')
     return;
   strlcpy(call->dest,st->dst_call,sizeof call->dest);
@@ -281,6 +295,65 @@ static void push_status(chan_t *chan){
   pthread_mutex_unlock(&chan->status.lock);
 }
 
+// Follow the decoders' view of the call. A call starts when IDs appear, or
+// when the destination, the talker or the mode changes; it ends when the IDs
+// go. A talker or destination that fills in later is the same call
+static uint32_t Call_seq; // ids across all channels, so they never repeat on one
+#define DV_CALL_GONE 25 // blocks (0.5 s) without IDs that end a call
+static void track_call(struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,int *absent){
+  bool const has_ids = seen->dest[0] != '\0' || seen->src[0] != '\0';
+  if(!has_ids){
+    // Gone for a moment (a fade, a slot glitch) is still the same call
+    if(cur->id != 0 && ++*absent >= DV_CALL_GONE)
+      memset(cur,0,sizeof *cur); // ended
+    return;
+  }
+  *absent = 0;
+  bool const differs = cur->id == 0
+    || (cur->dest[0] != '\0' && seen->dest[0] != '\0' && strcmp(cur->dest,seen->dest) != 0)
+    || (cur->src[0] != '\0' && seen->src[0] != '\0' && strcmp(cur->src,seen->src) != 0)
+    || strcmp(cur->mode,seen->mode) != 0 || cur->freq != seen->freq || cur->slot != seen->slot;
+  if(differs){
+    bool const fresh = cur->id == 0;
+    uint32_t id = __atomic_add_fetch(&Call_seq,1,__ATOMIC_RELAXED);
+    if(id == 0)
+      id = __atomic_add_fetch(&Call_seq,1,__ATOMIC_RELAXED); // 0 means none
+    *cur = *seen;
+    cur->id = id;
+    if(fresh){
+      // Speech decoded before the IDs arrived, still queued, is this call's start
+      for(unsigned int i = 0; i < queue->count; i++){
+	struct dv_call *c = &queue->call[(queue->head + i) % DV_AUDIO_QUEUE_DEPTH];
+	if(c->id == 0)
+	  *c = *cur;
+      }
+    }
+  } else {
+    // Same call: take any ID that has filled in
+    if(cur->dest[0] == '\0')
+      strlcpy(cur->dest,seen->dest,sizeof cur->dest);
+    if(cur->src[0] == '\0')
+      strlcpy(cur->src,seen->src,sizeof cur->src);
+  }
+}
+
+// Make a call (or none) the channel's published call: flush the audio of the
+// previous one onto the network first, then send status
+static void publish_call(chan_t *chan,struct dv_call const *call){
+  if(call->id == chan->dv.call_id && strcmp(call->dest,chan->dv.call_dest) == 0
+     && strcmp(call->src,chan->dv.call_src) == 0)
+    return;
+  if(call->id != chan->dv.call_id)
+    send_output(chan,NULL,0,false); // flush: the old call's last packet goes first
+  strlcpy(chan->dv.call_dest,call->dest,sizeof chan->dv.call_dest);
+  strlcpy(chan->dv.call_src,call->src,sizeof chan->dv.call_src);
+  strlcpy(chan->dv.call_mode,call->mode,sizeof chan->dv.call_mode);
+  chan->dv.call_id = call->id;
+  chan->dv.call_freq = call->freq;
+  chan->dv.call_slot = call->slot;
+  push_status(chan);
+}
+
 static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   struct dv_audio_queue * const queue = user_data;
   if(queue->count == DV_AUDIO_QUEUE_DEPTH){
@@ -289,6 +362,10 @@ static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   }
   unsigned int const tail = (queue->head + queue->count) % DV_AUDIO_QUEUE_DEPTH;
   memcpy(queue->samples[tail],pcm,sizeof queue->samples[tail]);
+  if(queue->current != NULL)
+    queue->call[tail] = *queue->current;
+  else
+    memset(&queue->call[tail],0,sizeof queue->call[tail]);
   queue->count++;
 }
 
@@ -327,6 +404,10 @@ int demod_dv(void *arg){
   set_channel_filter(chan);
 
   struct dv_audio_queue audio_queue = {0};
+  struct dv_call decoding = {0};     // the call the decoders are producing
+  audio_queue.current = &decoding;
+  int idle_frames = 0;               // output frames with nothing queued
+  int ids_absent = 0;                // blocks since the decoders last gave IDs
   dv_config const config = {
     .p25_nac = chan->p25.nac,
     .p25_wacn = chan->p25.wacn,
@@ -390,6 +471,9 @@ int demod_dv(void *arg){
   chan->p25.have_nac = false;
   chan->dv.source[0] = '\0';
   chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = '\0';
+  chan->dv.call_id = 0;
+  chan->dv.call_freq = chan->tune.freq;
+  chan->dv.call_slot = -1;
   bool restart_needed = false;
   realtime(chan->prio);
 
@@ -450,15 +534,10 @@ int demod_dv(void *arg){
 	gate_syncs = st.syncs;
 	gate->quiet_since = 0; // still decoding: hold the gate open
       }
-      struct dv_call call;
-      call_ids(&st,mode,events.follow,&call);
-      if(strcmp(call.dest,chan->dv.call_dest) != 0 || strcmp(call.src,chan->dv.call_src) != 0
-	 || strcmp(call.mode,chan->dv.call_mode) != 0){
-	strlcpy(chan->dv.call_dest,call.dest,sizeof chan->dv.call_dest);
-	strlcpy(chan->dv.call_src,call.src,sizeof chan->dv.call_src);
-	strlcpy(chan->dv.call_mode,call.mode,sizeof chan->dv.call_mode);
-	push_status(chan);
-      }
+      // Labels for what the decoders produce next; published as it plays
+      struct dv_call seen;
+      call_ids(&st,mode,events.follow,chan,&seen);
+      track_call(&decoding,&seen,&audio_queue,&ids_absent);
     }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);
@@ -604,19 +683,33 @@ int demod_dv(void *arg){
 	if(audio_queue.count == 0){
 	  if(have_fm && fm_open && !digital){
 	    fm_playing = true;
+	    idle_frames = 0;
 	    if(chan->dv.source[0] == '\0')
 	      strlcpy(chan->dv.source,"FM",sizeof chan->dv.source);
+	    if(strcmp(chan->dv.call_mode,"FM") != 0){
+	      // An FM transmission is a call of its own (no IDs)
+	      struct dv_call fmcall = { .mode = "FM", .freq = chan->tune.freq, .slot = -1 };
+	      fmcall.id = __atomic_add_fetch(&Call_seq,1,__ATOMIC_RELAXED);
+	      publish_call(chan,&fmcall);
+	    }
 	    goto play;
 	  }
-	  chan->output.power = 0;
-	  send_output(chan,NULL,DV_PCM_SAMPLES,true); // keep RTP timestamps moving
-	  continue;
 	}
-      } else if(audio_queue.count == 0){
+      }
+      if(audio_queue.count == 0){
+	// Nothing to play. A call whose decoders have finished, with its last
+	// frame out 100 ms ago, has ended
+	if(++idle_frames >= 5 && chan->dv.call_id != 0
+	   && (decoding.id == 0 || decoding.id != chan->dv.call_id)){
+	  struct dv_call const none = { .freq = chan->tune.freq, .slot = -1 };
+	  publish_call(chan,&none);
+	}
 	chan->output.power = 0;
 	send_output(chan,NULL,DV_PCM_SAMPLES,true); // keep RTP timestamps moving
 	continue;
       }
+      idle_frames = 0;
+      publish_call(chan,&audio_queue.call[audio_queue.head]); // a new call's first frame
       {
 	int16_t const * const pcm = audio_queue.samples[audio_queue.head];
 	for(int i = 0; i < DV_PCM_SAMPLES; i++)

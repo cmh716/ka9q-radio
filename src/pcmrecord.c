@@ -184,6 +184,9 @@ struct session {
   char file_dest[sizeof ((chan_t *)0)->dv.call_dest];
   char file_src[sizeof ((chan_t *)0)->dv.call_src];
   char file_mode[sizeof ((chan_t *)0)->dv.call_mode];
+  uint32_t file_call;          // radiod's call id for this file, 0 = not yet known
+  double file_freq;            // the call's frequency (a followed call's voice channel), 0 = unknown
+  int file_slot;               // its TDMA slot, -1 = none
 };
 
 #define SIZE_LIMIT 1
@@ -473,7 +476,7 @@ int main(int argc,char *argv[]){
     }
     setlinebuf(Call_log);
     if(ftell(Call_log) == 0)
-      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,ssrc,file\n");
+      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file\n");
   }
   if(strlen(Recordings) > 0 && chdir(Recordings) != 0){
     fprintf(stderr,"Can't change to directory %s: %s\n",Recordings,strerror(errno));
@@ -619,14 +622,23 @@ static void process_status(int fd){
   sp->chan = chan;
   sp->frontend = frontend;
   if(By_talkgroup && sp->fp != NULL){
-    // A different talkgroup, or another talker, is a new call: start a new file
-    char const *dest = chan.dv.call_dest;
-    char const *src = chan.dv.call_src;
-    if((sp->file_dest[0] != '\0' && dest[0] != '\0' && strcmp(dest,sp->file_dest) != 0)
-       || (sp->file_src[0] != '\0' && src[0] != '\0' && strcmp(src,sp->file_src) != 0))
-      close_file(sp,"new call"); // the next data packet opens the next file
-    else
-      call_adopt(sp);
+    uint32_t const id = chan.dv.call_id;
+    if(sp->file_call != 0 && id != sp->file_call){
+      // radiod sends a call's end, or the next call, as its audio ends:
+      // this file is complete. The next data packet opens the next file
+      close_file(sp,id == 0 ? "call ended" : "new call");
+      sp->rtp_state.init = false; // the next file starts with the next call's audio, not the gap
+    } else if(sp->file_call == 0 && id == 0){
+      // No call ids (an older radiod): a different talkgroup or talker is a new call
+      char const *dest = chan.dv.call_dest;
+      char const *src = chan.dv.call_src;
+      if((sp->file_dest[0] != '\0' && dest[0] != '\0' && strcmp(dest,sp->file_dest) != 0)
+	 || (sp->file_src[0] != '\0' && src[0] != '\0' && strcmp(src,sp->file_src) != 0))
+	close_file(sp,"new call");
+      else
+	call_adopt(sp);
+    } else
+      call_adopt(sp); // this call, or its ids just arrived for audio already being written
   }
   // Ogg (containing opus) can concatenate streams with new metadata, so restart when it changes
   // WAV files don't even have this metadata, so ignore changes
@@ -1520,6 +1532,9 @@ static int session_file_init(struct session *sp,struct sockaddr const *sender,in
   }
   sp->can_seek = true; // Ordinary file
   sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = '\0';
+  sp->file_call = 0;
+  sp->file_freq = 0;
+  sp->file_slot = -1;
   if(By_talkgroup)
     call_adopt(sp);
   // We byte swap S16BE to S16LE, so change the tag
@@ -1674,6 +1689,9 @@ static int close_file(struct session *sp,char const *reason){
   //  FREE(sp->iobuffer);
   sp->filename[0] = '\0';
   sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = '\0';
+  sp->file_call = 0;
+  sp->file_freq = 0;
+  sp->file_slot = -1;
   sp->samples_written = 0;
   sp->total_file_samples = 0;
   sp->current_segment_samples = 0;
@@ -1683,6 +1701,11 @@ static int close_file(struct session *sp,char const *reason){
 
 // --by-talkgroup: take the current call's IDs for this file where it has none yet
 static void call_adopt(struct session *sp){
+  if(sp->file_call == 0 && sp->chan.dv.call_id != 0){
+    sp->file_call = sp->chan.dv.call_id;
+    sp->file_freq = sp->chan.dv.call_freq;
+    sp->file_slot = sp->chan.dv.call_slot;
+  }
   if(sp->file_dest[0] == '\0')
     strlcpy(sp->file_dest,sp->chan.dv.call_dest,sizeof sp->file_dest);
   if(sp->file_src[0] == '\0')
@@ -1734,6 +1757,10 @@ static void call_file(struct session *sp,char const *tempfile){
     attrprintf(fd,"call source","%s",sp->file_src);
   if(sp->file_mode[0] != '\0')
     attrprintf(fd,"call mode","%s",sp->file_mode);
+  double const freq = sp->file_freq != 0 ? sp->file_freq : sp->chan.tune.freq;
+  attrprintf(fd,"call frequency","%.3lf",freq);
+  if(sp->file_slot >= 0)
+    attrprintf(fd,"call slot","%d",sp->file_slot);
   fclose(sp->fp);
 
   char dest[64],src[64];
@@ -1762,7 +1789,7 @@ static void call_file(struct session *sp,char const *tempfile){
       snprintf(unique,sizeof unique,"-%d",tries);
     snprintf(final,sizeof final,"%s/%4d%02d%02dT%02d%02d%02dZ_%.4lf_%s%s%s",dir,
 	     tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,
-	     sp->chan.tune.freq * 1e-6,src,unique,suffix);
+	     freq * 1e-6,src,unique,suffix);
     if(access(final,F_OK) != 0)
       break;
   }
@@ -1775,10 +1802,13 @@ static void call_file(struct session *sp,char const *tempfile){
     fprintf(stderr,"filed '%s'\n",final);
   if(Call_log != NULL){
     imaxdiv_t const r = imaxdiv(sp->file_time,BILLION);
-    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%u,%s/%s\n",
+    char slot[16] = "";
+    if(sp->file_slot >= 0)
+      snprintf(slot,sizeof slot,"%d",sp->file_slot);
+    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s/%s\n",
 	    tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,(int)(r.rem / 100000000),
 	    sp->samprate != 0 ? (float)sp->samples_written / sp->samprate : 0.0f,
-	    sp->file_dest,sp->file_src,sp->file_mode,sp->chan.tune.freq,sp->ssrc,Recordings,final);
+	    sp->file_dest,sp->file_src,sp->file_mode,freq,slot,sp->ssrc,Recordings,final);
   }
 }
 

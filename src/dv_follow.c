@@ -152,9 +152,13 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
       oldest = i;
   }
   f->grants[slot >= 0 ? slot : oldest] = g;
-  // A talker change on the call we follow
-  if(f->voice != NULL && g.freq == f->cur.freq && g.slot == f->cur.slot && g.group == f->cur.group)
+  // The call we follow: still live, and perhaps a new talker (the voice
+  // channel's own source ID takes precedence when it has one)
+  if(f->voice != NULL && g.freq == f->cur.freq && g.slot == f->cur.slot && g.group == f->cur.group){
     f->cur.seen = f->now;
+    if(g.source != 0)
+      f->cur.source = g.source;
+  }
 }
 
 // The best live grant, or NULL
@@ -310,9 +314,12 @@ void dv_follow_print(struct dv_follow const *f){
 	  100.0f * st.error_rate,st.freq_offset);
 }
 
-bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen){
+bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen,
+		    double *freq, int *slot){
   if(f == NULL || f->voice == NULL)
     return false;
+  *freq = (double)f->cur.freq;
+  *slot = f->cur.slot;
   dv_stats st;
   dv_get_stats(f->voice,&st);
   snprintf(dest,dlen,"%" PRIu32,f->cur.group);
