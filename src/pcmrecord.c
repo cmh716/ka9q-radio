@@ -1778,24 +1778,41 @@ static void call_file(struct session *sp,char const *tempfile){
       strlcpy(suffix,dot,sizeof suffix);
   }
   if(mkdirs(dir) != 0){
-    fprintf(stderr,"can't create directory %s: %s\n",dir,strerror(errno));
-    rename(tempfile,sp->filename); // leave it where it was written
-    return;
+    fprintf(stderr,"can't create directory %s: %s; left as %s\n",dir,strerror(errno),tempfile);
+    return; // never risk replacing a recording
   }
+  // File it under a name nobody has: link() and renameat2(RENAME_NOREPLACE)
+  // fail rather than replace a recording, even with another pcmrecord racing us
   char final[512];
-  for(int tries = 0; tries < 100; tries++){
+  bool filed = false;
+  for(int tries = 0; tries < 1000 && !filed; tries++){
     char unique[8] = "";
     if(tries > 0)
       snprintf(unique,sizeof unique,"-%d",tries);
     snprintf(final,sizeof final,"%s/%4d%02d%02dT%02d%02d%02dZ_%.4lf_%s%s%s",dir,
 	     tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,
 	     freq * 1e-6,src,unique,suffix);
-    if(access(final,F_OK) != 0)
+    if(link(tempfile,final) == 0){
+      unlink(tempfile);
+      filed = true;
       break;
+    }
+    if(errno == EEXIST)
+      continue;
+#if defined(RENAME_NOREPLACE)
+    // A file system without hard links
+    if(renameat2(AT_FDCWD,tempfile,AT_FDCWD,final,RENAME_NOREPLACE) == 0){
+      filed = true;
+      break;
+    }
+    if(errno == EEXIST)
+      continue;
+#endif
+    break;
   }
-  if(rename(tempfile,final) != 0){
-    fprintf(stderr,"can't rename %s to %s: %s\n",tempfile,final,strerror(errno));
-    rename(tempfile,sp->filename);
+  if(!filed){
+    // Never overwrite: keep the recording where it was written
+    fprintf(stderr,"can't file %s as %s: %s; left as %s\n",tempfile,final,strerror(errno),tempfile);
     return;
   }
   if(Verbose)
