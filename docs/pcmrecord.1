@@ -55,8 +55,10 @@ For digital voice streams: write one file per call and file it by the call's
 talkgroup (or target unit, or destination callsign) as
 .IR talkgroup / year / month / day / yyyymmdd Thhmmss Z_ MHz _ source .wav
 (or .ogg). radiod reports each call's start and end with the RTP timestamp
-where it falls in the stream, and the file is split exactly there, so every
-call gets its own file, even the same talker keying up again a moment later
+where it falls in the stream, and the file is split exactly there, in
+stream order after resequencing, so every call gets its own file even when
+packets arrive out of order or a report arrives up to 0.25 s after its audio
+(audio is held back that long before it is written), even the same talker keying up again a moment later
 (for decoders that see the end of a transmission; a fade without one holds
 the call for half a second). The frequency in the name is the call's own (a
 followed call's voice channel).

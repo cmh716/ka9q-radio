@@ -32,6 +32,15 @@ if [ -f ../../../src/config_paths.h ]; then
 else
   echo "skipping radiod call queue test: build radiod (make -C src) first"
 fi
+# pcmrecord --by-talkgroup on reordered packets, late status and bursts,
+# over local multicast
+if [ -x ../../../src/pcmrecord ] && [ -f ../../../src/libradio.a ]; then
+  cc $FLAGS -iquote ../../../src recorder-test.c ../../../src/libstatus.a ../../../src/libradio.a \
+    -lm -lbsd -o out/recorder-test
+  out/recorder-test ../../../src/pcmrecord out/recorder
+else
+  echo "skipping pcmrecord test: build radiod (make -C src) first"
+fi
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream auto-call-test.cpp \
   $LIB -lcodec2 -lm -o out/auto-call-test
 out/auto-call-test

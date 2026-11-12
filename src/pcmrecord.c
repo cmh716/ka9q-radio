@@ -204,6 +204,11 @@ struct session {
   struct call_info stream_call; // the call at the point the stream has been written to
   struct call_change changes[CALL_CHANGES]; // reported, waiting for their timestamp
   int nchanges;
+  uint32_t newest;             // latest RTP timestamp received (the holdback is measured from it)
+  bool have_newest;
+  bool at_boundary;            // the write loop stopped at the next call change
+  bool skip_gap;               // a new call's file: start at its first audio, not the gap before
+  bool draining;               // flushing to the end of what's queued, and no further
   uint32_t file_call;          // radiod's call id for this file, 0 = not yet known
   double file_freq;            // the call's frequency (a followed call's voice channel), 0 = unknown
   int file_slot;               // its TDMA slot, -1 = none
@@ -236,6 +241,9 @@ static bool Reset_time = false;
 static bool By_talkgroup = false; // File digital voice calls by talkgroup
 static char const *Call_log_name; // CSV log of calls recorded, with By_talkgroup
 static FILE *Call_log;
+// With --by-talkgroup, audio waits this long before it's written, so a call
+// change reported a little late still lands before the audio it governs
+#define CALL_HOLDBACK 0.25 // seconds
 
 const char *App_path;
 static int Input_fd,Status_fd;
@@ -254,6 +262,9 @@ static int close_file(struct session *sp,char const *reason);
 static void call_adopt(struct session *sp);
 static void call_change(struct session *sp,struct call_info const *call);
 static void call_reached(struct session *sp,uint32_t timestamp);
+static bool call_gate(struct session *sp,uint32_t timestamp,bool flush);
+static void drain_queue(struct session *sp);
+static bool queue_busy(struct session const *sp);
 static void call_file(struct session *sp,char const *tempfile);
 static uint8_t *encodeTagString(uint8_t *out,size_t size,const char *string);
 static int start_ogg_opus_stream(struct session *sp);
@@ -661,8 +672,6 @@ static void process_status(int fd){
       c->timestamp = chan.dv.call_timestamp;
       c->call = call;
       clock_gettime(CLOCK_REALTIME,&c->received);
-      if(sp->fp == NULL)
-	call_reached(sp,chan.dv.call_timestamp); // nothing being written: it applies now
     }
   } else if(By_talkgroup){
     // An older radiod: the change applies as it arrives
@@ -701,6 +710,71 @@ static void process_status(int fd){
     emit_ogg_opus_tags(sp);
   }
 }
+// Open the session's next file, for a stream position (RTP timestamp)
+static int open_stream(struct session *sp,struct sockaddr const *sender,uint32_t timestamp){
+  if(sp->fp != NULL || sp->complete)
+    return 0;
+  sp->skip_gap = By_talkgroup;
+  {
+    int64_t sender_time = sp->chan.clocktime + (int64_t)BILLION * (UNIX_EPOCH - GPS_UTC_OFFSET);
+    sender_time += (int64_t)BILLION * (int32_t)(timestamp - sp->chan.output.time_snap) / sp->samprate;
+
+    if(session_file_init(sp,sender,sender_time) != 0)
+      return -1;
+
+    if(sp->encoding == OPUS || sp->encoding == OPUS_VOIP){
+      if(Raw)
+	fprintf(stderr,"--raw ignored on Ogg Opus streams\n");
+      start_ogg_opus_stream(sp);
+      emit_ogg_opus_tags(sp);
+      if(sp->starting_offset != 0)
+	emit_opus_silence(sp,sp->starting_offset,false);
+    } else {
+      if(!Raw)
+	start_wav_stream(sp); // Don't emit wav header in --raw
+      int sampsize;
+      switch (sp->encoding) {
+      case F32LE:
+      case F32BE:
+        sampsize = sizeof(float);
+	break;
+      case S16LE:
+      case S16BE:
+      case F16LE:
+      case F16BE:
+        sampsize = sizeof(int16_t);
+	break;
+      case MULAW:
+      case ALAW:
+        sampsize = sizeof(uint8_t);
+	break;
+      default:
+	sampsize = 0;
+	break;
+      }
+      int const framesize = sp->channels * sampsize;
+      if(framesize == 0)
+	return -1; // invalid, can't process
+
+      if(sp->fp != NULL){
+	if(sp->can_seek){
+	  fseeko(sp->fp,framesize * sp->starting_offset,SEEK_CUR);
+	} else {
+	  // Emit zero padding
+	  uint8_t zeroes[4096] = {0};
+	  int bytesleft = sp->starting_offset * framesize;
+	  while(bytesleft > 0){
+	    int bytes = min(bytesleft,4096);
+	    fwrite(zeroes,1,bytes,sp->fp);
+	    bytesleft -= bytes;
+	  }
+	}
+      }
+    }
+    }
+  return sp->fp != NULL ? 0 : -1;
+}
+
 static void process_data(int fd){
   // Process data packet, if any
   uint8_t buffer[PKTSIZE];
@@ -767,64 +841,16 @@ static void process_data(int fd){
     Sessions = sp;
   }
   clock_gettime(CLOCK_REALTIME,&sp->last_active);
-  if(By_talkgroup && sp->nchanges > 0)
-    call_reached(sp,rtp.timestamp); // this packet is past a call change: split here
+  if(By_talkgroup){
+    if(!sp->have_newest || (int32_t)(rtp.timestamp - sp->newest) > 0)
+      sp->newest = rtp.timestamp;
+    sp->have_newest = true;
+  }
   if(sp->fp == NULL && !sp->complete){
-    int64_t sender_time = sp->chan.clocktime + (int64_t)BILLION * (UNIX_EPOCH - GPS_UTC_OFFSET);
-    sender_time += (int64_t)BILLION * (int32_t)(rtp.timestamp - sp->chan.output.time_snap) / sp->samprate;
-
-    if(session_file_init(sp,&sender,sender_time) != 0)
+    if(By_talkgroup)
+      call_reached(sp,rtp.timestamp); // a new file starts with the call this packet belongs to
+    if(open_stream(sp,&sender,rtp.timestamp) != 0)
       return;
-
-    if(sp->encoding == OPUS || sp->encoding == OPUS_VOIP){
-      if(Raw)
-	fprintf(stderr,"--raw ignored on Ogg Opus streams\n");
-      start_ogg_opus_stream(sp);
-      emit_ogg_opus_tags(sp);
-      if(sp->starting_offset != 0)
-	emit_opus_silence(sp,sp->starting_offset,false);
-    } else {
-      if(!Raw)
-	start_wav_stream(sp); // Don't emit wav header in --raw
-      int sampsize;
-      switch (sp->encoding) {
-      case F32LE:
-      case F32BE:
-        sampsize = sizeof(float);
-	break;
-      case S16LE:
-      case S16BE:
-      case F16LE:
-      case F16BE:
-        sampsize = sizeof(int16_t);
-	break;
-      case MULAW:
-      case ALAW:
-        sampsize = sizeof(uint8_t);
-	break;
-      default:
-	sampsize = 0;
-	break;
-      }
-      int const framesize = sp->channels * sampsize;
-      if(framesize == 0)
-	return; // invalid, can't process
-
-      if(sp->fp != NULL){
-	if(sp->can_seek){
-	  fseeko(sp->fp,framesize * sp->starting_offset,SEEK_CUR);
-	} else {
-	  // Emit zero padding
-	  uint8_t zeroes[4096] = {0};
-	  int bytesleft = sp->starting_offset * framesize;
-	  while(bytesleft > 0){
-	    int bytes = min(bytesleft,4096);
-	    fwrite(zeroes,1,bytes,sp->fp);
-	    bytesleft -= bytes;
-	  }
-	}
-      }
-    }
   }
   // Output stream now ready to go
   if(sp->rtp_state.odd_seq_set){
@@ -908,6 +934,9 @@ static void scan_sessions(){
     next = sp->next; // save in case sp is closed
     // A call change whose audio never came (a call's end, with silence after
     // it): apply it once it's clearly not waiting for packets in flight
+    if(By_talkgroup && sp->nchanges > 0
+       && now.tv_sec - sp->changes[0].received.tv_sec + (now.tv_nsec - sp->changes[0].received.tv_nsec) * 1e-9 > 1.0)
+      drain_queue(sp); // the audio before it, split at any change it reaches
     while(By_talkgroup && sp->nchanges > 0
 	  && now.tv_sec - sp->changes[0].received.tv_sec + (now.tv_nsec - sp->changes[0].received.tv_nsec) * 1e-9 > 1.0){
       call_change(sp,&sp->changes[0].call);
@@ -920,6 +949,8 @@ static void scan_sessions(){
     float const idle_time = now.tv_sec - sp->last_active.tv_sec + (now.tv_nsec - sp->last_active.tv_nsec) * 1.0e-9;
     if(idle_time >= Timeout){
       // Close idle file
+      if(By_talkgroup)
+	drain_queue(sp); // the held-back audio
       close_file(sp,"idle timeout"); // sp will be NULL
       if(sp->exit_after_close)
 	exit(EX_OK); // if writing to a pipe
@@ -1077,10 +1108,21 @@ static int emit_opus_silence(struct session * const sp,int samples,bool plc_ok){
 static int send_queue(struct session * const sp,bool const flush){
   if(sp == NULL)
     return -1;
-  if(sp->encoding == OPUS || sp->encoding == OPUS_VOIP)
-    send_opus_queue(sp,flush);
-  else
-    send_wav_queue(sp,flush);
+  // Write in order; with --by-talkgroup, stop at a call change, close the
+  // old call's file there, open the next one and go on
+  for(int changes = 0; changes <= CALL_CHANGES; changes++){
+    sp->at_boundary = false;
+    if(sp->encoding == OPUS || sp->encoding == OPUS_VOIP)
+      send_opus_queue(sp,flush);
+    else
+      send_wav_queue(sp,flush);
+    if(!sp->at_boundary)
+      break;
+    uint32_t const next = sp->reseq[sp->rtp_state.seq % RESEQ].rtp.timestamp;
+    call_reached(sp,next); // may close the file
+    if(sp->fp == NULL && open_stream(sp,&sp->sender,next) != 0)
+      break;
+  }
 
   // If file length is not limited, keep resetting it so it won't expire
   if(Max_length == 0)
@@ -1101,6 +1143,8 @@ static int send_opus_queue(struct session * const sp,bool const flush){
     if(sp->samples_remaining <= 0)
       break; // Can't send any more in this file
     struct reseq * const qp = &sp->reseq[sp->rtp_state.seq % RESEQ];
+    if(sp->draining && !queue_busy(sp))
+      break; // drained: don't step the sequence past what was queued
     if(!qp->inuse){
       if(!flush)
 	break; // Stop on first empty entry if we're not resynchronizing
@@ -1111,6 +1155,8 @@ static int send_opus_queue(struct session * const sp,bool const flush){
       sp->rtp_state.drops++;
       continue;
     }
+    if(!call_gate(sp,qp->rtp.timestamp,flush))
+      break; // a call change comes first, or the audio is still held back
     int32_t jump = (int32_t)(qp->rtp.timestamp - sp->rtp_state.timestamp);
     if(jump > 0){
       // Timestamp jumped since last frame
@@ -1215,12 +1261,16 @@ static int send_wav_queue(struct session * const sp,bool flush){
     if(sp->samples_remaining <= 0)
       break; // Can't send any more in this file
     struct reseq * const qp = &sp->reseq[sp->rtp_state.seq % RESEQ];
+    if(sp->draining && !queue_busy(sp))
+      break; // drained: don't step the sequence past what was queued
     if(!qp->inuse){
       if(!flush)
 	break; // Stop on first empty entry if we're not resynchronizing
       else
 	continue;
     }
+    if(!call_gate(sp,qp->rtp.timestamp,flush))
+      break; // a call change comes first, or the audio is still held back
     int32_t jump = (int32_t)(qp->rtp.timestamp - sp->rtp_state.timestamp);
     if(jump > 0){
       // Timestamp jumped since last frame
@@ -1670,6 +1720,14 @@ static int close_session(struct session **spp){
   if(sp == NULL)
     return -1;
 
+  if(By_talkgroup && sp->fp != NULL){
+    drain_queue(sp); // the held-back audio, split at any call changes it reaches
+    while(sp->nchanges > 0){
+      call_change(sp,&sp->changes[0].call);
+      memmove(&sp->changes[0],&sp->changes[1],(size_t)(sp->nchanges - 1) * sizeof sp->changes[0]);
+      sp->nchanges--;
+    }
+  }
   close_file(sp,"session closed");
 
   if(sp->exit_after_close)
@@ -1780,14 +1838,51 @@ static void call_adopt(struct session *sp){
 // The stream has reached a call change: a different call (or none) closes
 // the file, whose audio is all before the change; the same call's IDs fill in
 static void call_change(struct session *sp,struct call_info const *call){
-  if(sp->fp != NULL && sp->file_call != 0 && call->id != sp->file_call){
-    send_queue(sp,true); // what's waiting is the old call's
+  // Called when the audio written so far is all from before the change
+  if(sp->fp != NULL && sp->file_call != 0 && call->id != sp->file_call)
     close_file(sp,call->id == 0 ? "call ended" : "new call");
-    sp->rtp_state.init = false; // the next file starts with the next call's audio, not the gap
-  }
   sp->stream_call = *call;
   if(sp->fp != NULL)
     call_adopt(sp);
+}
+
+// Anything in the resequencing queue?
+static bool queue_busy(struct session const *sp){
+  for(int i = 0; i < RESEQ; i++)
+    if(sp->reseq[i].inuse)
+      return true;
+  return false;
+}
+
+// Write out everything queued (the held-back audio), splitting at any call
+// change it reaches, without flush's resynchronizing step past the last
+// packet (which would make the next packet look old and drop it)
+static void drain_queue(struct session *sp){
+  sp->draining = true;
+  send_queue(sp,true);
+  sp->draining = false;
+}
+
+// May the queued packet at this RTP timestamp be written now? Not if a call
+// change comes first (the caller then rotates the file), nor, unless
+// flushing, while it's within the holdback of the newest packet
+static bool call_gate(struct session *sp,uint32_t timestamp,bool flush){
+  if(!By_talkgroup)
+    return true;
+  if(sp->nchanges > 0 && (int32_t)(timestamp - sp->changes[0].timestamp) >= 0){
+    sp->at_boundary = true;
+    return false;
+  }
+  if(!flush && sp->have_newest){
+    unsigned const rate = (sp->encoding == OPUS || sp->encoding == OPUS_VOIP) ? OPUS_SAMPRATE : sp->samprate;
+    if((int32_t)(sp->newest - timestamp) < (int32_t)(CALL_HOLDBACK * rate))
+      return false;
+  }
+  if(sp->skip_gap){
+    sp->rtp_state.timestamp = timestamp; // no silence before the call's first audio
+    sp->skip_gap = false;
+  }
+  return true;
 }
 
 // Apply the queued call changes at or before this RTP timestamp
