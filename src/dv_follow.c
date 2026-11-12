@@ -27,6 +27,7 @@ extern int Overlap; // fast convolution overlap factor (radio.c)
 #define FOLLOW_HANG (DV_IQ_SAMPRATE_RADIOD * 2)        // no voice this long (and no end seen): the call is over
 #define FOLLOW_LISTEN (DV_IQ_SAMPRATE_RADIOD * 3)      // give a new channel this long to produce voice
 #define FOLLOW_REGRANT (DV_IQ_SAMPRATE_RADIOD * 3 / 10) // voice this long after a grant of our channel: it was ours
+#define FOLLOW_LINGER (DV_IQ_SAMPRATE_RADIOD)          // after an end with such a grant unplaced: wait for voice this long
 
 struct follow_grant {
   bool valid;
@@ -59,6 +60,7 @@ struct dv_follow {
   uint64_t started, last_voice, last_count;
   uint32_t pending;          // a later grant number for our own channel and talkgroup, not yet placed
   uint64_t pending_at;       // when it came
+  bool lingering;            // stayed past an end to see whether that grant brings voice
   uint64_t voice_serial;     // the voice decoder's call_serial when we joined
   uint64_t skip_freq;        // the call we last left: don't rejoin it while it's re-announced
   int skip_slot;
@@ -253,6 +255,7 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
     return;
   f->cur = *g;
   f->pending = 0;
+  f->lingering = false;
   {
     dv_stats st;
     dv_get_stats(f->voice,&st);
@@ -320,6 +323,7 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     if(heard != f->last_count){
       f->last_count = heard;
       f->last_voice = f->now;
+      f->lingering = false;
     }
     // Voice well after a grant of our channel: that grant re-announced this
     // transmission, so it's the number we finish with. (If the transmission
@@ -332,8 +336,26 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     struct follow_grant const *r = NULL;
     if(st.m17_encrypted && st.voice_decoded == 0)
       release(f,"encrypted");
-    else if(st.call_serial != f->voice_serial)
-      release(f,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
+    else if(st.call_serial != f->voice_serial){
+      if(f->pending != 0){
+	// Our channel was granted again during this transmission and the
+	// voice didn't settle whether that was this transmission re-announced
+	// or the next one. The channel will say: stay up to FOLLOW_LINGER.
+	// Voice now is the next transmission (a new call: the decoder's call
+	// serial has moved on); silence means it was a re-announcement, and
+	// we leave with its number so its updates can't bring us back.
+	// A re-key whose voice starts later than that is missed: the price of
+	// not having a signal that tells the two apart
+	f->cur.transmission = f->pending;
+	f->pending = 0;
+	f->voice_serial = st.call_serial;
+	f->started = f->last_voice = f->now;
+	f->lingering = true;
+      } else
+	release(f,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
+    }
+    else if(f->lingering && f->last_voice == f->started && f->now - f->started > FOLLOW_LINGER)
+      release(f,"transmission ended");
     else if((r = newer_transmission(f)) != NULL
 	    && !(b != NULL && priority(f,b) < priority(f,r) && b->group != f->cur.group)){
       // Transmission trunking: the reply has its own channel. Go straight

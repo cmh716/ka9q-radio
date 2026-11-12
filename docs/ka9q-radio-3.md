@@ -330,7 +330,12 @@ one. Without it, any clear group or unit call is followed, first come first
 served. Encrypted calls are skipped. A call is left as soon as its voice
 channel signals the end of the transmission, or when its talkgroup is granted
 another channel (transmission trunking: each reply gets its own channel), or
-otherwise 2 seconds after its last voice frame. For example:
+otherwise 2 seconds after its last voice frame. If the control channel granted the same
+voice channel again during the transmission, the follower can't tell whether
+that was the transmission re-announced or a quick re-key there, so after the
+end it stays up to 1 second: voice then is followed as the next transmission,
+silence means a re-announcement. A re-key whose voice starts later than that
+is missed. For example:
 
     [Trunked]
     mode = p25
