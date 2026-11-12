@@ -341,8 +341,13 @@ last voice frame. For example:
 With **-v**, radiod logs each call it follows and leaves.
 
 To record the calls by talkgroup, use pcmrecord's **--by-talkgroup** option
-(see pcmrecord(1)): radiod sends each call's talkgroup, source and mode in the
-stream's status as the call starts, for every digital voice mode.
+(see pcmrecord(1)): for every digital voice mode radiod numbers each call and
+sends its talkgroup, source, mode, frequency and slot in the stream's status
+exactly as the call's audio starts, and marks its end, so each call is a file.
+With **-v -v** radiod logs each call's start and end.
+
+To test without a receiver, the **iq_file** front end plays a recorded IQ file
+(complex 32-bit float) into radiod in real time; see the top of src/iq_file.c.
 
 A following channel plays one call at a time. To hear simultaneous calls,
 define several following channels on the same control channel, each with
