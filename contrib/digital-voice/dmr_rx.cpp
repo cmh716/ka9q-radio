@@ -407,7 +407,7 @@ private:
   bool locked_ = false;
 
   // Timeslots (dmr_cai, dmr_slot)
-  int shift_reg_ = 0;
+  unsigned shift_reg_ = 0; // only the low 3 bits matter
   int chan_ = 0;
   uint64_t slot_type_[2]{};
   uint64_t unmute_until_[2]{};

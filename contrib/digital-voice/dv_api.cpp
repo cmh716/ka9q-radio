@@ -1,5 +1,9 @@
 // C API for the digital voice receivers
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <atomic>
+#include <cstdio>
+#include <exception>
+
 #include "dv_decoder.h"
 
 extern "C" dv_decoder *dv_create(dv_mode mode, dv_config const *config,
@@ -50,8 +54,20 @@ extern "C" void dv_destroy(dv_decoder *decoder)
 
 extern "C" void dv_process(dv_decoder *decoder, float const *iq, size_t count)
 {
-  // std::complex<float> is layout-compatible with float[2]
-  decoder->process(reinterpret_cast<std::complex<float> const *>(iq), count);
+  // A C++ exception must not unwind into radiod's C code (it would abort
+  // the whole process): drop the block instead, and say so once
+  try {
+    // std::complex<float> is layout-compatible with float[2]
+    decoder->process(reinterpret_cast<std::complex<float> const *>(iq), count);
+  } catch (std::exception const& e) {
+    static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (!logged.test_and_set())
+      std::fprintf(stderr, "digital voice decoder error, block dropped: %s\n", e.what());
+  } catch (...) {
+    static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (!logged.test_and_set())
+      std::fprintf(stderr, "digital voice decoder error, block dropped\n");
+  }
 }
 
 extern "C" void dv_get_stats(dv_decoder const *decoder, dv_stats *stats)

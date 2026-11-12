@@ -369,8 +369,9 @@ mbe_dequantizeAmbeParms (mbe_parms* cur_mp, mbe_parms* prev_mp, mbe_errs* errs, 
 #ifdef AMBE_DEBUG
       fprintf (stderr, "delta%i: %f ", l, deltal[l]);
 #endif
-      // eq 43
-      Sum43 = Sum43 + ((((float) 1 - deltal[l]) * prev_mp->log2Ml[intkl[l]]) + (deltal[l] * prev_mp->log2Ml[intkl[l] + 1]));
+      // eq 43 (ka9q-radio: the k+1 index is clamped at 56; with prev L = 56 it
+      // read log2Ml[57], past the array, though with zero weight)
+      Sum43 = Sum43 + ((((float) 1 - deltal[l]) * prev_mp->log2Ml[intkl[l]]) + (deltal[l] * prev_mp->log2Ml[intkl[l] < 56 ? intkl[l] + 1 : 56]));
     }
   Sum43 = (((float) 0.65 / (float) cur_mp->L) * Sum43);
 #ifdef AMBE_DEBUG
@@ -392,7 +393,7 @@ mbe_dequantizeAmbeParms (mbe_parms* cur_mp, mbe_parms* prev_mp, mbe_errs* errs, 
   for (l = 1; l <= cur_mp->L; l++)
     {
       c1 = ((float) 0.65 * ((float) 1 - deltal[l]) * prev_mp->log2Ml[intkl[l]]);
-      c2 = ((float) 0.65 * deltal[l] * prev_mp->log2Ml[intkl[l] + 1]);
+      c2 = ((float) 0.65 * deltal[l] * prev_mp->log2Ml[intkl[l] < 56 ? intkl[l] + 1 : 56]);
       cur_mp->log2Ml[l] = Tl[l] + c1 + c2 - Sum43 + BigGamma;
       // inverse log to generate spectral amplitudes
       if (cur_mp->Vl[l] == 1)

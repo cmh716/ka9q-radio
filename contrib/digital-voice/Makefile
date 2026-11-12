@@ -4,6 +4,9 @@ CC ?= cc
 AR ?= ar
 CXXFLAGS ?= -O2 -g
 CXXFLAGS += -std=c++17 -Wall -Wextra -MMD -MP
+# Reed-Solomon decoding failures return -1 rather than throw: a corrupt
+# codeword must never take down radiod
+CPPFLAGS += -DEZPWD_NO_EXCEPTS
 CFLAGS ?= -O2 -g
 CFLAGS += -std=gnu11 -Wall -MMD -MP
 CPPFLAGS += -I. -Iupstream -Iupstream/imbe_vocoder -Iupstream/libm17

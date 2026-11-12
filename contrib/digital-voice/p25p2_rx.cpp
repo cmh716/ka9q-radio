@@ -197,6 +197,12 @@ private:
       int const chn = (rc >> 5) & 3;
       int const loc = (rc >> 3) & 3;
       int const check = loc * 4 + chn;
+      if (check >= kSuperframe) {
+        // Not a position in the 12-burst superframe: a corrupted I-ISCH.
+        // (Used as a slot number, it would index past the descrambling sequence.)
+        confident_ = false;
+        return false;
+      }
       // An I-ISCH says where in the superframe we are
       confident_ = true;
       slotid_ = check;
