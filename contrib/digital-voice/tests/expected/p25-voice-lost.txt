@@ -1,0 +1,7 @@
+   0.02 mode P25 slot 0 src - dst -
+   2.04 mode P25 slot 0 src 1118028 dst 2501
+   5.00 signal lost
+   5.00 mode P25 slot 0 src - dst -
+   6.36 mode P25 slot 0 src 1118028 dst 2501
+end: syncs 131 frames 133 voice 1116 muted 18 played 1116 tsbk 0/0
+speech sha256 604ae18b87e8fb97

@@ -1,0 +1,3 @@
+   0.02 mode P25 slot 0 src - dst -
+end: syncs 0 frames 0 voice 0 muted 0 played 0 tsbk 0/0
+speech sha256 e3b0c44298fc1c14

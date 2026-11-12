@@ -11,7 +11,7 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=gnu11 -Wall -MMD -MP
 CPPFLAGS += -I. -Iupstream -Iupstream/imbe_vocoder -Iupstream/libm17
 
-BUILD_DIR := build
+BUILD_DIR ?= build
 SOURCES := dv_api.cpp dv_auto.cpp dv_frontend.cpp dv_ambe.cpp fsk4.cpp \
 	p25_rx.cpp p25p2_rx.cpp p25_voice.cpp p25_trunk.cpp upstream/p25_framer.cc upstream/bch.cc \
 	$(wildcard upstream/imbe_vocoder/*.cc) \
@@ -31,8 +31,12 @@ vpath %.cpp .
 vpath %.cc upstream upstream/imbe_vocoder
 vpath %.c upstream
 
-.PHONY: all clean
+.PHONY: all clean test
 all: $(LIBRARY)
+
+# Regression and lifecycle tests (run tests/fetch.sh once first)
+test: $(LIBRARY)
+	tests/run.sh
 
 $(LIBRARY): $(OBJECTS)
 	rm -f $@

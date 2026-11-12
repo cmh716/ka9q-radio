@@ -1,0 +1,33 @@
+   0.02 mode P25 slot 0 src - dst -
+   0.14 event grant TG 11027 on ch 3-1264
+   0.14 event grant TG 11327 on ch 3-1355
+   0.22 event site: system 445 RFSS 1 site 3
+   0.30 event band plan 2: base 851.01250 MHz, spacing 12.50 kHz, TDMA, 12500 Hz wide
+   0.30 event grant TG 11057 on ch 3-1265
+   0.30 event band plan 3: base 762.00625 MHz, spacing 12.50 kHz, TDMA, 12500 Hz wide
+   0.36 event band plan 4: base 935.01250 MHz, spacing 12.50 kHz, FDMA, 12500 Hz wide
+   0.44 event network: WACN BEE00 system 445
+   0.66 event band plan 0: base 851.00625 MHz, spacing 6.25 kHz, FDMA, 12500 Hz wide
+   0.66 event band plan 1: base 762.00625 MHz, spacing 6.25 kHz, FDMA, 12500 Hz wide
+   4.86 event grant TG 11025 from 1103315 on 770.4688 MHz TDMA slot 0 encrypted
+   7.12 event grant TG 11031 from 1104118 on 774.2812 MHz TDMA slot 0 encrypted
+   9.66 event grant TG 11033 from 1102848 on 774.2812 MHz TDMA slot 1 encrypted
+  12.22 event grant TG 11025 from 1116729 on 769.9062 MHz TDMA slot 1 encrypted
+  15.00 event grant TG 11027 from 1105581 on 770.4688 MHz TDMA slot 0 encrypted
+  16.34 event grant TG 11031 from 1116753 on 774.2812 MHz TDMA slot 0 encrypted
+  22.86 event grant TG 716 from 1118629 on 858.5875 MHz encrypted
+  22.94 event grant TG 717 from 1118629 on 859.0375 MHz encrypted
+  26.76 event grant TG 11057 from 1104797 on 770.9688 MHz TDMA slot 0 encrypted
+  27.00 event grant TG 11027 from 1116749 on 770.9688 MHz TDMA slot 1 encrypted
+  28.94 event grant TG 11025 from 1116729 on 769.9062 MHz TDMA slot 0 encrypted
+  30.00 event grant TG 11027 from 1116749 on 769.9062 MHz TDMA slot 1 encrypted
+  31.56 event grant TG 2501 from 1118028 on 860.9875 MHz
+  32.76 event grant TG 729 from 1118606 on 859.0375 MHz
+  33.90 event grant TG 101 from 1116707 on 857.1875 MHz
+  35.76 event grant TG 11025 from 1116729 on 770.9688 MHz TDMA slot 1 encrypted
+  47.32 event grant TG 728 from 1116746 on 857.5875 MHz
+  49.56 event grant TG 11027 from 1116749 on 770.9688 MHz TDMA slot 0 encrypted
+  58.12 event grant TG 11027 from 1116749 on 770.9688 MHz TDMA slot 0 encrypted
+  58.20 event grant TG 11057 from 1105000 on 770.4688 MHz TDMA slot 0 encrypted
+end: syncs 740 frames 778 voice 0 muted 0 played 0 tsbk 2227/2282 wacn BEE00 sys 445 rfss 1 site 3
+speech sha256 e3b0c44298fc1c14

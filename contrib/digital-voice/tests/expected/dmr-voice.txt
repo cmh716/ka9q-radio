@@ -1,0 +1,10 @@
+   0.02 mode DMR slot 0 src - dst -
+   0.72 mode DMR slot 1 src 4477055 dst TG 44772
+   1.08 mode DMR slot 0 src - dst -
+   1.80 mode DMR slot 1 src 4477055 dst TG 44772
+   2.16 mode DMR slot 0 src - dst -
+   5.10 mode DMR slot 1 src 4477055 dst TG 44772
+   6.54 mode DMR slot 0 src 4477055 dst TG 44772
+   6.60 mode DMR slot 0 src - dst -
+end: syncs 113 frames 222 voice 108 muted 0 played 108 tsbk 0/0
+speech sha256 b502277f06de259b

@@ -1,1 +1,4 @@
 /build/
+/build-asan/
+/tests/data/
+/tests/out/

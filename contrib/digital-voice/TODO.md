@@ -52,5 +52,10 @@ Capacity Max (going encrypted).
 
 ## Housekeeping
 
+- [x] Test suite: `tests/` (public corpus recordings, call-ending cases,
+      sanitizers) and the `iq_file` radiod front end for end-to-end runs.
+- [ ] More test recordings: YSF, D-STAR, NXDN, M17 and a mixed FM/digital
+      repeater; the user's own captures if he's willing to publish them.
+
 - [ ] Merge `digital` to main (on hold).
 - [ ] P25 trunking: show site and system in monitor, not just the -v log.

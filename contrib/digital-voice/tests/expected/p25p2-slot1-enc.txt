@@ -1,0 +1,12 @@
+   0.02 mode P25 slot 0 src - dst -
+   0.22 mode P25 slot 2 src - dst -
+   0.36 mode P25 slot 2 src - dst 11033
+   0.58 mode P25 slot 2 src - dst 11033 encrypted
+   0.70 mode P25 slot 2 src 1116510 dst 11033 encrypted
+   1.96 mode P25 slot 0 src - dst -
+   4.30 mode P25 slot 2 src 1102896 dst 11033 encrypted
+   6.70 mode P25 slot 2 src 1116510 dst 11033 encrypted
+   9.10 mode P25 slot 2 src 1102896 dst 11033 encrypted
+  14.20 mode P25 slot 0 src - dst -
+end: syncs 219 frames 240 voice 0 muted 300 played 0 tsbk 0/0
+speech sha256 e3b0c44298fc1c14

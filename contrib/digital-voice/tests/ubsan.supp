@@ -1,0 +1,6 @@
+# The IMBE vocoder (upstream/imbe_vocoder, from OP25) emulates ETSI/ITU
+# fixed-point basic operations with deliberate two's-complement wraparound
+# and shifts of negative values; gcc on our targets does what it means.
+# Only those two checks, only there: anything else still fails the tests.
+signed-integer-overflow:*/imbe_vocoder/*
+shift-base:*/imbe_vocoder/*
