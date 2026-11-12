@@ -21,10 +21,17 @@ else
 fi
 mkdir -p out
 # radiod's call tracking and PCM queue (no hardware or recordings needed).
-cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
-  -iquote ../../../src -iquote .. ../../../src/dv-test.c \
-  -Wl,--gc-sections -lm -lbsd -o out/calltest
-out/calltest
+# It compiles src/dv.c itself, so it needs radiod's tree configured (the
+# generated src/config_paths.h) and GNU ld to discard the radio functions
+# the test never reaches.
+if [ -f ../../../src/config_paths.h ]; then
+  cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+    -iquote ../../../src -iquote .. ../../../src/dv-test.c \
+    -Wl,--gc-sections -lm -lbsd -o out/calltest
+  out/calltest
+else
+  echo "skipping radiod call queue test: build radiod (make -C src) first"
+fi
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream auto-call-test.cpp \
   $LIB -lcodec2 -lm -o out/auto-call-test
 out/auto-call-test

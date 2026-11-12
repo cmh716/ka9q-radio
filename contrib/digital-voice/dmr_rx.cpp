@@ -445,9 +445,9 @@ private:
   uint64_t slot_type_[2]{};
   uint64_t unmute_until_[2]{};
   int active_slot_ = -1;
-  int call_slot_ = -1;
-  uint64_t call_serial_ = 0;
-  uint64_t last_sync_ = 0;      // symbols_ at the last sync          // slot of the call last played, -1 once it has ended
+  int call_slot_ = -1;          // slot of the call last played, -1 once it has ended
+  uint64_t call_serial_ = 0;    // advances when a call ends
+  uint64_t last_sync_ = 0;      // symbols_ at the last sync
 
   // Vocoder, one per timeslot
   dv_ambe2450 slots_[2];

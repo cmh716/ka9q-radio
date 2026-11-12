@@ -45,9 +45,6 @@ typedef struct {
 typedef void (*dv_pcm_callback)(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]);
 
 typedef struct {
-  // Changes when a call ends, including an explicit terminator within one
-  // dv_process() block. IDs alone cannot distinguish successive key-ups.
-  uint64_t call_serial;
   uint64_t samples;          // complex input samples
   uint64_t symbols;
   uint64_t syncs;            // frame sync words seen
@@ -78,6 +75,11 @@ typedef struct {
   uint32_t wacn;
   uint16_t sysid;
   uint8_t rfss, site;
+  // Changes when a call definitively ends (an end-of-transmission marker,
+  // signal loss or timeout), even within one dv_process() block: IDs alone
+  // cannot tell successive key-ups apart. Added last to keep the layout of
+  // the fields before it.
+  uint64_t call_serial;
 } dv_stats;
 
 // P25 control channel events
