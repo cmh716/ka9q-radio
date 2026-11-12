@@ -143,51 +143,48 @@ int main(void){
   run(1,false);
   check(following() == 851912500,"follows a reply granted right after joining");
 
-  // Codex: our own channel re-granted mid-transmission (number 11 for the
-  // transmission we follow as 10). When it ends, an update repeating 11
-  // mustn't bring us back to the transmission that just ended. Voice
-  // carries on 0.8 s after the re-grant (settled at once), then 0.2 s
-  // (Codex's case: settled by the silence after the end)
-  uint32_t n = 10;
-  uint64_t const chans[2] = {853037500,851287500};
-  int const after[2] = {40,10};
-  for(int k = 0; k < 2; k++){
-    run(10,true);
-    Voice_stats.call_serial++;
-    run(1,false);
-    grant(DV_EVENT_GRANT,chans[k],10003,3421241,n);
+  // The re-grant cases, each on a fresh follower: our own channel granted
+  // again during the transmission we follow (10), as a re-announcement or
+  // as the next transmission (a quick re-key on the same channel)
+  struct regrant { char const *what; int before_end; int gap; bool rekey; };
+  static struct regrant const cases[] = {
+    {"re-announced, voice 0.8 s on after it: not rejoined",40,0,false},
+    {"re-announced, voice 0.2 s on after it (Codex): not rejoined",10,0,false},
+    {"re-key granted 0.4 s before the end, voice 0.3 s after (Codex): followed",20,15,true},
+    {"re-key granted just before the end, voice 0.3 s after: followed",2,15,true},
+    {"re-key granted 0.4 s before the end, voice 1.2 s after: missed (the documented limit)",20,60,true},
+  };
+  for(size_t k = 0; k < sizeof cases / sizeof cases[0]; k++){
+    struct regrant const *c = &cases[k];
+    dv_follow_destroy(F);
+    memset(&Voice_stats,0,sizeof Voice_stats);
+    F = dv_follow_create(&Chan,NULL,NULL);
+    grant(DV_EVENT_GRANT,853037500,10003,3421241,10);
     run(2,false);
     run(25,true);
-    check(following() == chans[k],"follows the transmission");
-    grant(DV_EVENT_UPDATE,chans[k],10003,3421241,n + 1); // re-announced
-    run(after[k],true);
-    Voice_stats.call_serial++;                            // its end
+    bool ok = following() == 853037500;
+    grant(DV_EVENT_UPDATE,853037500,10003,3421241,11); // our channel, granted again
+    run(c->before_end,true);
+    Voice_stats.call_serial++;                         // the end of 10
     run(1,false);
-    grant(DV_EVENT_UPDATE,chans[k],10003,3421241,n + 1);
-    run(60,false);                                        // past the linger
-    grant(DV_EVENT_UPDATE,chans[k],10003,3421241,n + 1);
-    run(5,false);
-    check(F->voice == NULL,k == 0 ? "doesn't rejoin a re-announced transmission (voice 0.8 s on)"
-	  : "doesn't rejoin a re-announced transmission (voice 0.2 s on)");
-    n += 2;
+    grant(DV_EVENT_UPDATE,853037500,10003,3421241,11);
+    run(c->gap,false);
+    bool const listening = F->voice != NULL;
+    uint64_t const heard = Voice_stats.voice_decoded;
+    if(c->rekey){
+      run(25,true);                                    // 11 talks, if anyone listens
+      grant(DV_EVENT_UPDATE,853037500,10003,3421241,11);
+      run(1,false);
+    } else {
+      run(60,false);                                   // past the listening window
+      grant(DV_EVENT_UPDATE,853037500,10003,3421241,11);
+      run(5,false);
+    }
+    bool const followed = Voice_stats.voice_decoded > heard && listening;
+    bool const limit = c->gap > 50;
+    ok = ok && (c->rekey ? followed != limit : F->voice == NULL);
+    check(ok,c->what);
   }
-
-  // The counterpart: our channel granted again just as the transmission ends
-  // (a quick re-key on the same channel) is the next transmission
-  grant(DV_EVENT_GRANT,852812500,10003,3421116,20);
-  run(2,false);
-  run(25,true);
-  check(following() == 852812500,"follows transmission 20 on 852.8125");
-  grant(DV_EVENT_UPDATE,852812500,10003,3421116,21); // granted as it ends
-  run(2,true);
-  Voice_stats.call_serial++;                         // the end of 20
-  run(1,false);
-  grant(DV_EVENT_UPDATE,852812500,10003,3421116,21);
-  run(15,false);                                     // 0.3 s before 21's voice
-  uint64_t const serial = Voice_stats.call_serial;
-  run(50,true);                                      // 21 talks
-  check(following() == 852812500 && Voice_stats.call_serial == serial,
-	"follows a re-key granted just before the end, on the same channel");
 
   dv_follow_destroy(F);
   printf(Failures ? "follower tests FAILED\n" : "Follower tests passed\n");
