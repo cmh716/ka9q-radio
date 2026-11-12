@@ -27,12 +27,12 @@ mkdir -p out
 if [ -f ../../../src/config_paths.h ]; then
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
     -iquote ../../../src -iquote .. ../../../src/dv-test.c \
-    -Wl,--gc-sections -lm -lbsd -o out/calltest
+    -Wl,--gc-sections -lm $(pkg-config --libs libbsd-overlay) -o out/calltest
   out/calltest
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
-    -isystem /usr/include/x86_64-linux-gnu/bsd -DLIBBSD_OVERLAY \
+    $(pkg-config --cflags libbsd-overlay) \
     -iquote ../../../src -iquote .. ../../../src/follow-test.c \
-    -Wl,--gc-sections -lm -lbsd -o out/follow-test
+    -Wl,--gc-sections -lm $(pkg-config --libs libbsd-overlay) -o out/follow-test
   out/follow-test
 else
   echo "skipping radiod call queue test: build radiod (make -C src) first"
@@ -41,7 +41,7 @@ fi
 # over local multicast
 if [ -x ../../../src/pcmrecord ] && [ -f ../../../src/libradio.a ]; then
   cc $FLAGS -iquote ../../../src recorder-test.c ../../../src/libstatus.a ../../../src/libradio.a \
-    -lm -lbsd -o out/recorder-test
+    -lm $(pkg-config --libs libbsd-overlay) -o out/recorder-test
   out/recorder-test ../../../src/pcmrecord out/recorder
 else
   echo "skipping pcmrecord test: build radiod (make -C src) first"

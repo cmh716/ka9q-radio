@@ -152,7 +152,7 @@ void p25_trunk::emit(dv_event& e)
     callback_(user_data_, &e);
 }
 
-void p25_trunk::grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts, bool unit)
+void p25_trunk::grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts, bool unit, bool explicit_grant)
 {
   // Forget calls nobody has mentioned lately
   for (auto it = calls_.begin(); it != calls_.end();) {
@@ -163,19 +163,26 @@ void p25_trunk::grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts
   }
   auto it = calls_.find(ch);
   bool const known = it != calls_.end() && it->second.group == group;
+  // Each explicit grant is a transmission of its own, even to the same
+  // talker on the same channel: it gets a new sequence number. (Logging still
+  // treats a known channel and talkgroup as the same call)
+  uint32_t const transmission = explicit_grant ? ++transmissions_ : 0;
   if (known) {
     it->second.seen = now_;
     if (source != 0)
       it->second.source = source; // perhaps a new talker; not worth a GRANT
     if (opts != 0)
       it->second.opts = opts;
+    if (transmission != 0)
+      it->second.transmission = transmission;
   } else {
-    calls_[ch] = call{group, source, now_, opts};
+    calls_[ch] = call{group, source, now_, opts, transmission};
     grants_++;
   }
 
   dv_event e{};
   e.type = known ? DV_EVENT_UPDATE : DV_EVENT_GRANT;
+  e.transmission = calls_[ch].transmission;
   e.channel = ch;
   e.freq_hz = channel_hz(ch, &e.slot);
   e.group = group;
@@ -258,11 +265,11 @@ void p25_trunk::tsbk(uint8_t const t[12], uint16_t nac)
   uint8_t const mfid = t[1];
   if (mfid == 0x90) { // Motorola
     if (opcode == 0x02) // MOT_GRG_CN_GRANT: supergroup (patch) grant
-      grant(be16(t + 3), be16(t + 5), be24(t + 7), t[2], false);
+      grant(be16(t + 3), be16(t + 5), be24(t + 7), t[2], false, true);
     else if (opcode == 0x03) { // MOT_GRG_CN_GRANT_UPDT
-      grant(be16(t + 2), be16(t + 4), 0, 0, false);
+      grant(be16(t + 2), be16(t + 4), 0, 0, false, false);
       if (be16(t + 6) != be16(t + 2))
-        grant(be16(t + 6), be16(t + 8), 0, 0, false);
+        grant(be16(t + 6), be16(t + 8), 0, 0, false, false);
     }
     return;
   }
@@ -270,19 +277,19 @@ void p25_trunk::tsbk(uint8_t const t[12], uint16_t nac)
     return;
   switch (opcode) {
   case 0x00: // GRP_V_CH_GRANT
-    grant(be16(t + 3), be16(t + 5), be24(t + 7), t[2], false);
+    grant(be16(t + 3), be16(t + 5), be24(t + 7), t[2], false, true);
     break;
   case 0x02: // GRP_V_CH_GRANT_UPDT: two channel/group pairs
-    grant(be16(t + 2), be16(t + 4), 0, 0, false);
+    grant(be16(t + 2), be16(t + 4), 0, 0, false, false);
     if (be16(t + 6) != be16(t + 2))
-      grant(be16(t + 6), be16(t + 8), 0, 0, false);
+      grant(be16(t + 6), be16(t + 8), 0, 0, false, false);
     break;
   case 0x03: // GRP_V_CH_GRANT_UPDT_EXP
-    grant(be16(t + 4), be16(t + 8), 0, t[2], false);
+    grant(be16(t + 4), be16(t + 8), 0, t[2], false, false);
     break;
   case 0x04: // UU_V_CH_GRANT
   case 0x06: // UU_V_CH_GRANT_UPDT
-    grant(be16(t + 2), be24(t + 4), be24(t + 7), 0, true);
+    grant(be16(t + 2), be24(t + 4), be24(t + 7), 0, true, opcode == 0x04);
     break;
   case 0x33: // IDEN_UP_TDMA
   case 0x34: // IDEN_UP_VU

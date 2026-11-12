@@ -35,6 +35,7 @@ struct follow_grant {
   bool unit;
   uint64_t seen;             // sample count of the last grant or update
   uint64_t granted;          // sample count of the last grant (not update): a new transmission
+  uint32_t transmission;     // the control channel's number for its explicit grant, 0 if unseen
 };
 
 struct dv_follow {
@@ -60,6 +61,8 @@ struct dv_follow {
   int skip_slot;
   uint32_t skip_group;
   uint32_t skip_source;
+  uint32_t skip_transmission;
+  uint32_t last_group;       // talkgroup of the call last followed: the conversation
   uint64_t calls;            // calls followed
 };
 
@@ -113,11 +116,13 @@ static void release(struct dv_follow *f, char const *why){
   }
   dv_destroy(f->voice);
   f->voice = NULL;
+  f->last_group = f->cur.group;
   if(strcmp(why,"preempted") != 0){ // a preempted call may be rejoined later
     f->skip_freq = f->cur.freq;
     f->skip_slot = f->cur.slot;
     f->skip_group = f->cur.group;
     f->skip_source = f->cur.source;
+    f->skip_transmission = f->cur.transmission;
   }
 }
 
@@ -138,12 +143,15 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
   struct follow_grant g = {
     .valid = true, .freq = e->freq_hz, .slot = e->slot,
     .group = e->group, .source = e->source, .unit = e->unit, .seen = f->now, .granted = f->now,
+    .transmission = e->transmission,
   };
   if(priority(f,&g) < 0)
     return;
-  // A new grant of the call we left, or another talker on it, is a new transmission
+  // A new grant of the call we left (even to the same talker on the same
+  // channel), or another talker on it, is a new transmission
   if(g.freq == f->skip_freq && g.slot == f->skip_slot && g.group == f->skip_group
-     && (e->type == DV_EVENT_GRANT || (g.source != 0 && g.source != f->skip_source)))
+     && (e->type == DV_EVENT_GRANT || g.transmission > f->skip_transmission
+	 || (g.source != 0 && g.source != f->skip_source)))
     f->skip_freq = 0;
   // One entry per voice channel and slot
   int slot = -1, oldest = 0;
@@ -182,12 +190,37 @@ static struct follow_grant const *best_grant(struct dv_follow const *f){
     int const p = priority(f,g);
     if(p < 0)
       continue;
-    if(best == NULL || p < best_pri || (p == best_pri && g->seen > best->seen)){
+    // Equal priority: stay with the conversation, then the newest
+    bool const conv = g->group == f->last_group, best_conv = best != NULL && best->group == f->last_group;
+    if(best == NULL || p < best_pri || (p == best_pri && (conv != best_conv ? conv : g->seen > best->seen))){
       best = g;
       best_pri = p;
     }
   }
   return best;
+}
+
+// A later transmission of the talkgroup we follow, on another channel (the
+// reply, under transmission trunking): the newest, or NULL. Ordered by the
+// control channel's grant numbers where both have one, else by grant time
+static struct follow_grant const *newer_transmission(struct dv_follow const *f){
+  struct follow_grant const *newest = NULL;
+  for(int i = 0; i < FOLLOW_GRANTS; i++){
+    struct follow_grant const *g = &f->grants[i];
+    if(!g->valid || f->now - g->seen > FOLLOW_FRESH || g->group != f->cur.group || g->unit != f->cur.unit)
+      continue;
+    if(g->freq == f->cur.freq && g->slot == f->cur.slot)
+      continue;
+    bool const newer = (g->transmission != 0 && f->cur.transmission != 0)
+      ? g->transmission > f->cur.transmission
+      : g->transmission != 0 ? g->granted >= f->started  // an explicit grant from our join on
+      : g->granted > f->started;
+    if(!newer)
+      continue;
+    if(newest == NULL || g->transmission > newest->transmission || g->granted > newest->granted)
+      newest = g;
+  }
+  return newest;
 }
 
 static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats const *cc){
@@ -278,13 +311,20 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
       f->last_voice = f->now;
     }
     struct follow_grant const *b = best_grant(f);
+    struct follow_grant const *r = NULL;
     if(st.m17_encrypted && st.voice_decoded == 0)
       release(f,"encrypted");
     else if(st.call_serial != f->voice_serial)
       release(f,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
-    else if(b != NULL && b->group == f->cur.group && b->granted > f->started
-	    && !(b->freq == f->cur.freq && b->slot == f->cur.slot))
-      release(f,"next transmission"); // transmission trunking: the reply has its own channel
+    else if((r = newer_transmission(f)) != NULL
+	    && !(b != NULL && priority(f,b) < priority(f,r) && b->group != f->cur.group)){
+      // Transmission trunking: the reply has its own channel. Go straight
+      // to it (unless a higher priority call is waiting, which the
+      // preemption below then takes)
+      struct follow_grant const reply = *r;
+      release(f,"next transmission");
+      join(f,&reply,cc);
+    }
     else if(f->last_voice == f->started && f->now - f->started > FOLLOW_LISTEN)
       release(f,"no voice");
     else if(f->last_voice != f->started && f->now - f->last_voice > FOLLOW_HANG)

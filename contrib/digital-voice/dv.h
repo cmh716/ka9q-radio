@@ -99,6 +99,9 @@ typedef struct {
   bool unit;            // GRANT: unit-to-unit call
   bool encrypted;       // GRANT: service options say protected
   bool emergency;
+  uint32_t transmission; // GRANT/UPDATE: sequence number of the explicit grant that started this
+                         // transmission (it increases with each one; 0 if only updates were seen),
+                         // so a key-up re-granted on the same channel to the same talker is new
   char text[128];       // readable summary for logging
 } dv_event;
 

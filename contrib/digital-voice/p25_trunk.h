@@ -43,11 +43,13 @@ private:
     uint32_t source = 0;
     uint64_t seen = 0;
     uint8_t opts = 0;         // service options of the grant (updates carry none)
+    uint32_t transmission = 0; // sequence number of its explicit grant
   };
 
   void tsbk(uint8_t const t[12], uint16_t nac);
   void set_iden(uint8_t opcode, uint8_t const t[12]);
-  void grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts, bool unit);
+  // explicit: a channel grant message (a new transmission), not an update
+  void grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts, bool unit, bool explicit_grant);
   // Channel number to (downlink frequency, TDMA slot); 0 Hz if its band plan isn't known yet
   uint64_t channel_hz(uint16_t ch, int *slot) const;
   void emit(dv_event& e);
@@ -64,6 +66,7 @@ private:
   uint8_t rfss_ = 0, site_ = 0;
   bool site_known_ = false;
   uint64_t grants_ = 0;
+  uint32_t transmissions_ = 0; // explicit grants seen
 };
 
 #endif
