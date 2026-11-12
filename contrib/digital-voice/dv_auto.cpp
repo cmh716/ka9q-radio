@@ -102,6 +102,15 @@ public:
 
   void process_leveled(std::complex<float> const *, size_t) override {} // auto is never shared
 
+  void signal_lost() override
+  {
+    for (auto& d : sub_)
+      d->signal_lost();
+    owner_ = -1; // the next transmission may be any mode
+    for (auto& q : queue_)
+      q.clear();
+  }
+
   void set_event_callback(dv_event_callback callback, void *user_data) override
   {
     for (auto& d : sub_)

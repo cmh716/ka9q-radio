@@ -417,6 +417,8 @@ private:
       callback_(user_data_, pcm);
   }
 
+  void signal_lost() override { end_call(); }
+
   void end_call()
   {
     header_valid_ = false;

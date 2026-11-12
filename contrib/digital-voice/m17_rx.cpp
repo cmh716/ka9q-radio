@@ -295,6 +295,8 @@ private:
     decode_callsign_bytes(dst_, lsf.dst);
   }
 
+  void signal_lost() override { end_call(); }
+
   void end_call()
   {
     lsf_valid_ = false;

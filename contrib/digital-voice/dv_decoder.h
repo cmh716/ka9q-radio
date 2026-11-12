@@ -18,6 +18,9 @@ struct dv_decoder {
   virtual void process_leveled(std::complex<float> const *samples, size_t count) = 0;
   virtual void get_stats(dv_stats *stats) const = 0;
   virtual void set_event_callback(dv_event_callback, void *) {}
+  // The signal is gone (radiod's carrier gate closed): forget the current
+  // call (encryption, IDs, partial headers) and sync, keep the counters
+  virtual void signal_lost() = 0;
 };
 
 dv_decoder *dv_create_p25(bool cqpsk, uint16_t nac, dv_pcm_callback callback, void *user_data);

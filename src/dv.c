@@ -424,6 +424,7 @@ int demod_dv(void *arg){
       } else if(sample_count - gate->quiet_since > DV_GATE_HANG && audio_queue.count == 0){
 	gate->open = false; // carrier gone and the decoders have nothing more
 	fm_locked = false;
+	dv_signal_lost(decoder); // the next transmission starts clean
 	if(Verbose > 1)
 	  fprintf(stderr,"%s %s gate closed after %.1f s\n",chan->name,label,
 		  (double)(sample_count - gate->opened) / DV_IQ_SAMPRATE_RADIOD);

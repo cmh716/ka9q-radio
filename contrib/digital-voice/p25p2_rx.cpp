@@ -22,6 +22,7 @@ namespace {
 constexpr int kBurst = 180;          // dibits per timeslot
 constexpr int kSuperframe = 12;      // timeslots
 constexpr uint8_t kAlgClear = 0x80;
+constexpr uint64_t kCallTimeout = 6000; // symbols (1 s) without a burst in sync: the call is over
 
 // The 4320-bit (2160-dibit) superframe scrambling sequence, seeded with the
 // WACN, system ID and NAC (OP25 apps/tdma/lfsr.py)
@@ -144,7 +145,28 @@ public:
       snprintf(stats->dst_call, sizeof stats->dst_call, "%u", group_);
   }
 
+  void signal_lost() override
+  {
+    allowance_ = 0;
+    next_ = 0;
+    reset_call();
+  }
+
 private:
+  // Forget the call and the superframe position (the counters stay)
+  void reset_call()
+  {
+    confident_ = false;
+    slotid_ = 0;
+    in_call_ = false;
+    burst_id_ = -1;
+    ess_b_.fill(0);
+    algid_ = next_algid_ = kAlgClear;
+    alg_known_ = false;
+    source_ = 0;
+    group_ = 0;
+  }
+
   void leveled(cfloat lev)
   {
     demod_.process(lev, [this](uint8_t raw) { dibit(raw); });
@@ -155,6 +177,8 @@ private:
   void dibit(uint8_t raw)
   {
     stats_.symbols++;
+    if ((in_call_ || confident_) && stats_.symbols - last_good_ > kCallTimeout)
+      reset_call(); // the signal faded away without a MAC_END_PTT
     accum_ = (accum_ << 2) | (raw & 3);
     struct variant { uint64_t sync; int tolerance; std::array<uint8_t, 4> map; };
     static constexpr variant kVariants[] = {
@@ -216,6 +240,7 @@ private:
   {
     if (!track(burst_.data()))
       return;
+    last_good_ = stats_.symbols;
     uint8_t const *b = burst_.data() + 10;
     uint8_t const duid_bits = static_cast<uint8_t>(b[10] << 6 | b[47] << 4 | b[132] << 2 | b[169]);
     int const type = P25P2_DUID_LOOKUP[duid_bits];
@@ -270,7 +295,9 @@ private:
   void voice(uint8_t const *dibits)
   {
     int16_t pcm[DV_PCM_SAMPLES];
-    if (algid_ != kAlgClear) {
+    // Joined mid-call: stay quiet until a MAC_PTT or an ESS says whether
+    // the call is clear (at most one superframe), rather than play ciphertext
+    if (algid_ != kAlgClear || !alg_known_) {
       stats_.voice_muted++;
       return;
     }
@@ -298,8 +325,11 @@ private:
     }
     std::vector<uint8_t> bb(ess_b_.begin(), ess_b_.end());
     int const ec = rs28_.decode(bb, a);
-    if (ec >= 0 && ec <= 14)
+    if (ec >= 0 && ec <= 14) {
       next_algid_ = static_cast<uint8_t>(bb[0] << 2 | bb[1] >> 4);
+      algid_ = next_algid_; // the 2V burst that completes the ESS applies it anyway
+      alg_known_ = true;
+    }
   }
 
   // SACCH / FACCH: RS(63,35) shortened, CRC-12, then a MAC PDU
@@ -360,6 +390,7 @@ private:
       in_call_ = true;
       burst_id_ = -1;
       algid_ = next_algid_ = pdu[10];
+      alg_known_ = true;
       source_ = static_cast<uint32_t>(pdu[13] << 16 | pdu[14] << 8 | pdu[15]);
       group_ = static_cast<uint16_t>(pdu[16] << 8 | pdu[17]);
       break;
@@ -377,6 +408,7 @@ private:
     case 2: // MAC_END_PTT
       in_call_ = false;
       algid_ = next_algid_ = kAlgClear;
+      alg_known_ = false;
       source_ = 0;
       group_ = 0;
       break;
@@ -403,11 +435,13 @@ private:
   int allowance_ = 0;
   int slotid_ = 0;
   bool confident_ = false;
+  uint64_t last_good_ = 0;   // symbol count of the last burst in sync
 
   bool in_call_ = false;
   int burst_id_ = -1;
   std::array<uint8_t, 16> ess_b_{};
   uint8_t algid_ = kAlgClear, next_algid_ = kAlgClear;
+  bool alg_known_ = false;   // a MAC_PTT or ESS of this call has given the ALGID
   uint32_t source_ = 0;
   uint16_t group_ = 0;
 };

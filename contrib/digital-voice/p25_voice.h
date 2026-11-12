@@ -20,6 +20,8 @@ public:
   void get_stats(dv_stats *stats) const;
   // Control channel events (P25 trunking)
   void set_event_callback(dv_event_callback callback, void *user_data);
+  // End the current call: encryption and IDs are forgotten
+  void signal_lost();
 
 private:
   struct impl;

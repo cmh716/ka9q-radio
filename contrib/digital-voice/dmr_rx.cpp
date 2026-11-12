@@ -134,13 +134,32 @@ private:
       expires_ = symbol_count_ + kExpiration;
     }
     if (locked_ && symbol_count_ >= expires_) {
-      sync_reset();
+      sync_reset();  // no sync for too long: the transmission is over
+      end_calls();
       return;
     }
     if (rx_count_ < kBurstDibits)
       return;
     rx_count_ = 0;
     burst(buf_ + sizeof buf_ - kBurstDibits);
+  }
+
+  void signal_lost() override
+  {
+    sync_reset();
+    end_calls();
+  }
+
+  // Forget both slots' calls: encryption, IDs, embedded LC fragments. (Not on
+  // a mere resync, which happens within a call)
+  void end_calls()
+  {
+    for (int s = 0; s < 2; s++) {
+      calls_[s] = call{};
+      emb_lc_[s].clear();
+      voice_burst_[s] = 5;
+      slot_type_[s] = 0;
+    }
   }
 
   void sync_reset()

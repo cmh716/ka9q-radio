@@ -108,6 +108,11 @@ void dv_destroy(dv_decoder *decoder);
 // (a C 'float complex' array may be passed directly)
 void dv_process(dv_decoder *decoder, float const *iq, size_t count);
 void dv_get_stats(dv_decoder const *decoder, dv_stats *stats);
+// The channel's signal has gone (e.g. a squelch or carrier gate closed, so
+// dv_process() will not be called until it returns): end the current call.
+// Encryption, caller IDs and partially received headers are forgotten, so
+// the next transmission starts clean; counters are kept
+void dv_signal_lost(dv_decoder *decoder);
 // P25: called synchronously from dv_process() for control channel events
 void dv_set_event_callback(dv_decoder *decoder, dv_event_callback callback, void *user_data);
 // Short display name of a mode ("P25", "DMR", "M17", "YSF", "DSTAR", "NXDN"), "" if none

@@ -179,6 +179,8 @@ private:
     frame(buf_);
   }
 
+  void signal_lost() override { sync_reset(); }
+
   void sync_reset()
   {
     symbol_count_ = 0;

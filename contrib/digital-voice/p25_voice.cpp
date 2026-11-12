@@ -62,6 +62,15 @@ struct p25_voice::impl {
   // Assume clear (as OP25 does) until an HDU or LDU2 says otherwise
   bool encrypted = false;
 
+  uint64_t last_frame = 0;    // symbol count of the last frame
+
+  // A call ends with a TDU; when that is missed, with the signal
+  void end_call()
+  {
+    encrypted = false;
+    stats.src_call[0] = stats.dst_call[0] = '\0';
+  }
+
   void set_algid(uint8_t algid) { encrypted = algid != ALGID_CLEAR; }
 
   void read_hdu(bit_vector const& frame)
@@ -169,8 +178,7 @@ struct p25_voice::impl {
       break;
     case DUID_TDU:
     case DUID_TDULC:
-      encrypted = false; // end of call
-      stats.src_call[0] = stats.dst_call[0] = '\0';
+      end_call();
       break;
     case DUID_LDU1:
       stats.ldu1++;
@@ -206,8 +214,12 @@ p25_voice::~p25_voice() = default;
 void p25_voice::rx_dibit(uint8_t dibit)
 {
   impl_->trunk.tick(++impl_->symbols);
-  if (impl_->framer.rx_sym(dibit))
+  if (impl_->framer.rx_sym(dibit)) {
+    impl_->last_frame = impl_->symbols;
     impl_->process_frame();
+  } else if (impl_->symbols - impl_->last_frame == 4800) {
+    impl_->end_call(); // 1 s without a frame: the call faded out without its TDU
+  }
 }
 
 void p25_voice::get_stats(dv_stats *stats) const
@@ -222,6 +234,11 @@ void p25_voice::get_stats(dv_stats *stats) const
   memcpy(stats->src_call, impl_->stats.src_call, sizeof stats->src_call);
   memcpy(stats->dst_call, impl_->stats.dst_call, sizeof stats->dst_call);
   impl_->trunk.get_stats(stats);
+}
+
+void p25_voice::signal_lost()
+{
+  impl_->end_call();
 }
 
 void p25_voice::set_event_callback(dv_event_callback callback, void *user_data)

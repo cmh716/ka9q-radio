@@ -364,6 +364,8 @@ private:
       callback_(user_data_, pcm);
   }
 
+  void signal_lost() override { unlock(); } // unlock() ends the call
+
   void end_call()
   {
     last_lich_ = -1;
