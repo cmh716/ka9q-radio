@@ -347,6 +347,7 @@ private:
       std::snprintf(src_, sizeof src_, "%u", source);
       std::snprintf(dst_, sizeof dst_, "%s%u", call_type == 1 ? "TG " : "", destination);
     } else if (type == 0x08) { // TX_REL
+      call_serial_++;
       end_call();
     }
   }
@@ -365,11 +366,17 @@ private:
       callback_(user_data_, pcm);
   }
 
-  void signal_lost() override { unlock(); } // unlock() ends the call
-
-  void end_call()
+  void signal_lost() override
   {
     call_serial_++;
+    unlock(); // and the call
+  }
+
+  // call_serial_ advances only on a definitive end (an end-of-transmission
+  // marker, or the signal lost); a lost sync lock ends the call's state but
+  // not its identity, which radiod holds through a brief fade
+  void end_call()
+  {
     last_lich_ = -1;
     encrypted_ = false;
     sacch_have_ = 0;

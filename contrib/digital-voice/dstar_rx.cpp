@@ -260,6 +260,7 @@ private:
     // End of transmission (either polarity)
     uint64_t const r48 = reg_ & 0xffffffffffffULL;
     if (locked_ && (r48 == eot_ || r48 == (~eot_ & 0xffffffffffffULL))) {
+      call_serial_++;
       end_call();
       return;
     }
@@ -418,11 +419,17 @@ private:
       callback_(user_data_, pcm);
   }
 
-  void signal_lost() override { end_call(); }
-
-  void end_call()
+  void signal_lost() override
   {
     call_serial_++;
+    end_call();
+  }
+
+  // call_serial_ advances only on a definitive end (an end-of-transmission
+  // marker, or the signal lost); a lost sync lock ends the call's state but
+  // not its identity, which radiod holds through a brief fade
+  void end_call()
+  {
     header_valid_ = false;
     header_left_ = 0;
     locked_ = false;

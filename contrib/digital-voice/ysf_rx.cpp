@@ -180,7 +180,11 @@ private:
     frame(buf_);
   }
 
-  void signal_lost() override { sync_reset(); }
+  void signal_lost() override
+  {
+    call_serial_++;
+    sync_reset();
+  }
 
   void sync_reset()
   {
@@ -193,9 +197,11 @@ private:
     end_call();
   }
 
+  // call_serial_ advances only on a definitive end (an end-of-transmission
+  // marker, or the signal lost); a lost sync lock ends the call's state but
+  // not its identity, which radiod holds through a brief fade
   void end_call()
   {
-    call_serial_++;
     dt_ = kDtVd1; // OP25 starts muted until a FICH says voice
     src_[0] = dst_[0] = '\0';
   }
@@ -213,6 +219,7 @@ private:
       dt_ = (fich >> 8) & 3;
     }
     if (fi == kFiTerminator) {
+      call_serial_++;
       end_call();
       return;
     }

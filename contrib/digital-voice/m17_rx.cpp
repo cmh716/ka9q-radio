@@ -179,6 +179,7 @@ private:
     float const d_lsf = fit_sync(syms, lsf_sync_symbols, g_lsf, c_lsf);
     float const d_eot = fit_sync(syms, eot_symbols, g_eot, c_eot);
     if (locked && d_eot < kSyncThreshold && d_eot < d_str && d_eot < d_lsf) {
+      call_serial_++;
       end_call(); // end of transmission marker
       return;
     }
@@ -276,8 +277,10 @@ private:
           callback_(user_data_, pcm + i * DV_PCM_SAMPLES);
       }
     }
-    if (fn & 0x8000)
+    if (fn & 0x8000) {
+      call_serial_++;
       end_call(); // last frame of the stream
+    }
   }
 
   void accept_frame()
@@ -296,11 +299,17 @@ private:
     decode_callsign_bytes(dst_, lsf.dst);
   }
 
-  void signal_lost() override { end_call(); }
-
-  void end_call()
+  void signal_lost() override
   {
     call_serial_++;
+    end_call();
+  }
+
+  // call_serial_ advances only on a definitive end (an end-of-transmission
+  // marker, or the signal lost); a lost sync lock ends the call's state but
+  // not its identity, which radiod holds through a brief fade
+  void end_call()
+  {
     lsf_valid_ = false;
     encrypted_ = false;
     lich_have_ = 0;
