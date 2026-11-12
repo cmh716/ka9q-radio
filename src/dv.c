@@ -48,6 +48,47 @@
 #define DV_FM_CLOSE_FRAMES 3        // below the close threshold this long to close
 #define DV_DIGITAL_HOLD (DV_IQ_SAMPRATE_RADIOD / 2) // FM stays muted 500 ms after digital activity
 
+// Carrier gate: the decoders run only while there is something to decode
+#define DV_GATE_OPEN 1.0f            // SNR (power ratio in the channel filter) to start them: 0 dB
+#define DV_GATE_CLOSE 0.5f           // below this (-3 dB) ...
+#define DV_GATE_HANG (DV_IQ_SAMPRATE_RADIOD)          // ... for 1 s, with no sync word, stops them
+#define DV_GATE_PREROLL (DV_IQ_SAMPRATE_RADIOD / 5)   // 200 ms of IQ replayed into them on opening
+// Mixed channels: a carrier with no digital sync this long is FM; the digital
+// receivers stop until it drops, except for a look every DV_FM_RECHECK
+#define DV_FM_LOCK (DV_IQ_SAMPRATE_RADIOD / 2)
+#define DV_FM_RECHECK (DV_IQ_SAMPRATE_RADIOD * 5)
+
+struct dv_gate {
+  bool enabled;
+  bool open;
+  uint64_t opened;                   // sample count when it opened
+  uint64_t quiet_since;              // when the SNR went (and stayed) below DV_GATE_CLOSE
+  float complex ring[DV_GATE_PREROLL];
+  size_t ring_pos, ring_fill;
+};
+
+// Remember the latest DV_GATE_PREROLL samples
+static void gate_remember(struct dv_gate *g,float complex const *iq,int count){
+  for(int i = 0; i < count; i++){
+    g->ring[g->ring_pos] = iq[i];
+    g->ring_pos = (g->ring_pos + 1) % DV_GATE_PREROLL;
+  }
+  g->ring_fill = g->ring_fill + (size_t)count > DV_GATE_PREROLL ? DV_GATE_PREROLL : g->ring_fill + (size_t)count;
+}
+
+// Feed the remembered samples, oldest first, to a decoder that was asleep
+static void gate_replay(struct dv_gate *g,dv_decoder *decoder){
+  size_t start = (g->ring_pos + DV_GATE_PREROLL - g->ring_fill) % DV_GATE_PREROLL;
+  size_t left = g->ring_fill;
+  while(left > 0){
+    size_t const n = start + left > DV_GATE_PREROLL ? DV_GATE_PREROLL - start : left;
+    dv_process(decoder,(float const *)&g->ring[start],n);
+    left -= n;
+    start = (start + n) % DV_GATE_PREROLL;
+  }
+  g->ring_fill = 0;
+}
+
 struct dv_fm {
   float complex prev;
   float taps[DV_FM_TAPS];
@@ -330,6 +371,16 @@ int demod_dv(void *arg){
       fm = &fm_zero;
     dv_fm_init(fm);
   }
+  // The carrier gate; never on a channel following a control channel, which must run
+  static struct dv_gate gate_zero;
+  struct dv_gate *gate = calloc(1,sizeof *gate);
+  if(gate == NULL)
+    gate = &gate_zero;
+  gate->enabled = chan->dv.gate && events.follow == NULL;
+  gate->open = !gate->enabled;
+  uint64_t gate_syncs = 0;      // decoder sync count when last seen moving
+  bool fm_locked = false;       // mixed: this carrier is FM, the digital receivers rest
+  uint64_t fm_locked_at = 0;
   uint64_t digital_seen = 0;    // sample count of the last digital activity
   uint64_t sample_count = 0;
   uint64_t last_syncs = 0;
@@ -351,14 +402,53 @@ int demod_dv(void *arg){
       continue; // channel inactive; poll for commands
 
     int const count = chan->sampcount;
-    // float complex is layout-compatible with interleaved I/Q floats
-    dv_process(decoder,(float const *)chan->baseband,(size_t)count);
     sample_count += (uint64_t)count;
+    bool run = true;
+    if(gate->enabled){
+      float const noise = chan->sig.n0 * fabsf(chan->filter.max_IF - chan->filter.min_IF);
+      float const snr = noise <= 0 ? 0 : chan->sig.bb_power / noise - 1;
+      if(!gate->open){
+	if(snr >= DV_GATE_OPEN){
+	  gate->open = true;
+	  gate->opened = sample_count;
+	  gate->quiet_since = 0;
+	  fm_locked = false;
+	  gate_replay(gate,decoder); // the start of the transmission
+	  if(Verbose > 1)
+	    fprintf(stderr,"%s %s gate open, SNR %.1f dB\n",chan->name,label,power2dB(snr));
+	}
+      } else if(snr >= DV_GATE_CLOSE){
+	gate->quiet_since = 0;
+      } else if(gate->quiet_since == 0){
+	gate->quiet_since = sample_count;
+      } else if(sample_count - gate->quiet_since > DV_GATE_HANG && audio_queue.count == 0){
+	gate->open = false; // carrier gone and the decoders have nothing more
+	fm_locked = false;
+	if(Verbose > 1)
+	  fprintf(stderr,"%s %s gate closed after %.1f s\n",chan->name,label,
+		  (double)(sample_count - gate->opened) / DV_IQ_SAMPRATE_RADIOD);
+      }
+      if(!gate->open)
+	gate_remember(gate,chan->baseband,count);
+      run = gate->open;
+    }
+    if(run && fm_locked && sample_count - fm_locked_at > DV_FM_RECHECK){
+      fm_locked = false; // a look for digital that came up under the FM
+      gate->opened = sample_count;
+    }
+    if(run && !fm_locked){
+      // float complex is layout-compatible with interleaved I/Q floats
+      dv_process(decoder,(float const *)chan->baseband,(size_t)count);
+    }
     {
       dv_stats st;
       dv_get_stats(decoder,&st);
       if(events.follow != NULL)
 	dv_follow_block(events.follow,&st,count);
+      if(st.syncs != gate_syncs){
+	gate_syncs = st.syncs;
+	gate->quiet_since = 0; // still decoding: hold the gate open
+      }
       struct dv_call call;
       call_ids(&st,mode,events.follow,&call);
       if(strcmp(call.dest,chan->dv.call_dest) != 0 || strcmp(call.src,chan->dv.call_src) != 0
@@ -377,6 +467,14 @@ int demod_dv(void *arg){
       if(st.active_mode >= 0 || st.syncs != last_syncs || audio_queue.count != 0)
 	digital_seen = sample_count;
       last_syncs = st.syncs;
+      // FM squelch open, and no digital since the carrier came up: it's FM
+      if(gate->enabled && gate->open && !fm_locked && fm->open
+	 && sample_count - gate->opened > DV_FM_LOCK && digital_seen < gate->opened){
+	fm_locked = true;
+	fm_locked_at = sample_count;
+	if(Verbose > 1)
+	  fprintf(stderr,"%s %s carrier is FM: digital receivers resting\n",chan->name,label);
+      }
     }
 
     telemetry_samples += count;
@@ -545,5 +643,7 @@ int demod_dv(void *arg){
     free(fm);
   dv_destroy(decoder);
   dv_follow_destroy(events.follow);
+  if(gate != &gate_zero)
+    free(gate);
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;
 }

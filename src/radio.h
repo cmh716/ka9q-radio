@@ -199,6 +199,7 @@ struct channel {
   } nxdn;
   struct {
     bool analog;                  // "digital" also plays analog FM when no digital mode is on the air
+    bool gate;                    // run the decoders only while a carrier is present (default on)
     char source[20];              // digital voice (M17, YSF, D-STAR; NXDN unit ID; with the mode in front for "digital"): source of the current transmission, "" if none
     // The current call, for recorders ("" if none or not yet known)
     char call_dest[24];           // talkgroup, target unit or destination callsign

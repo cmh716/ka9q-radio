@@ -32,6 +32,11 @@ is decoded with a Viterbi search rather than OP25's greedy one. Grants and
 grant updates are reported once per call (a channel's talkgroup changing),
 through dv_set_event_callback(); a channel unmentioned for 3 s is idle again.
 
+DV_AUTO feeds only the owning receiver while a call plays; the rest resume
+when its transmission ends. radiod adds a carrier gate around all modes
+(src/dv.c, `dv-gate`): decoders sleep while the channel is quiet and are
+handed the last 200 ms of IQ when a carrier appears.
+
 P25 Phase 2 follows OP25's p25p2_framer, p25p2_sync and p25p2_tdma: a
 frame sync starts a 180-dibit burst and up to 10 more follow; the ISCH
 places each in the 12-burst superframe; the burst is descrambled with

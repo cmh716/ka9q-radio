@@ -83,9 +83,13 @@ yet follow the grants.
 "YSF" decodes Yaesu System Fusion (C4FM) digital voice, DN and VW modes, to mono 8 kHz audio.
 "DSTAR" decodes D-STAR digital voice to mono 8 kHz audio.
 "DIGITAL" runs all the digital voice receivers (but P25 CQPSK) on one channel and plays whichever
-decodes voice first, until that transmission ends; monitor shows the mode and its callsign or ID.
+decodes voice first, until that transmission ends; meanwhile the other receivers are not run.
+Monitor shows the mode and its callsign or ID.
 With **analog = yes** (the **mixed** preset) it also plays analog FM, with the channel's de-emphasis and
 squelch, whenever no digital mode is on the air; FM audio is delayed 240 ms so digital is recognized first.
+A carrier that shows no digital sync word for half a second is taken to be FM: the digital receivers
+rest until it drops, except for a half-second look every 5 seconds.
+All digital modes sleep between transmissions; see **dv-gate**.
 "NXDN" decodes NXDN conventional digital voice (NXDN48 or NXDN96, see **nxdn-rate**) to mono 8 kHz audio; encrypted calls are muted.
 
 ### samprate =
@@ -380,6 +384,15 @@ For example:
     p25-nac = 0x469
     p25-slot = 0
     freq = "851m9125"
+
+### dv-gate = yes
+
+Digital voice modes (p25, dmr, m17, ysf, dstar, nxdn, digital): run the decoders only while there is
+a signal in the channel. They start when the SNR in the channel filter reaches 0 dB, with the last
+200 ms of signal replayed into them so the start of the transmission isn't lost, and stop after 1
+second below -3 dB without a sync word. An idle channel then costs little more than its
+downconverter. **dv-gate = no** keeps them running all the time. A channel with **p25-follow** is
+never gated.
 
 ### dmr-slot = 0
 

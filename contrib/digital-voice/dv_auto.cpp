@@ -1,5 +1,6 @@
 // Automatic digital voice mode: every receiver runs on the same IQ, and the
-// first one to decode voice owns the audio until its transmission ends
+// first one to decode voice owns the audio until its transmission ends; the
+// others are not run meanwhile
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <array>
 #include <cstring>
@@ -55,6 +56,10 @@ public:
         leveled_.push_back(lev);
     }
     for (size_t i = 0; i < kNumModes; i++) {
+      // While one receiver plays a call, the rest rest: a repeater carries
+      // one transmission at a time
+      if (owner_ >= 0 && static_cast<int>(i) != owner_)
+        continue;
       if (shares_frontend(kModes[i]))
         sub_[i]->process_leveled(leveled_.data(), leveled_.size());
       else

@@ -42,6 +42,7 @@ chan_t Template = {
   .output.channels = 1,
   .linear.env = false,
   .m17.can = -1, // any
+  .dv.gate = true, // digital decoders sleep between transmissions
   .linear.agc = true,
   .linear.hangtime = DEFAULT_HANGTIME,
   .opus.signal = DEFAULT_OPUS_SIGNAL,
@@ -169,6 +170,7 @@ char const *Channel_keys[] = {
   "m17-can",
   "nxdn-rate",
   "analog",
+  "dv-gate",
   "pl", // do these too (sigh)
   "pll-bw",
   "pll",
@@ -351,6 +353,7 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
     }
   }
   chan->dv.analog = config_getboolean(table,sname,"analog",chan->dv.analog);
+  chan->dv.gate = config_getboolean(table,sname,"dv-gate",chan->dv.gate);
   chan->use_dns = config_getboolean(table, sname, "dns", chan->use_dns);
   chan->advertise = config_getboolean(table,sname,"advertise",chan->advertise);
   double lifetime = config_getdouble(table,sname,"lifetime",chan->lifetime * Blocktime);

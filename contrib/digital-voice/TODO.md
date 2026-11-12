@@ -35,6 +35,10 @@ Capacity Max (going encrypted).
       systems use for explicit and Phase 2 grants.
 - [ ] DMR Tier III Capacity Max: parked, since the system is going encrypted.
 
+- [x] Carrier gate (`dv-gate`) and mode lock for DV_AUTO / mixed: idle
+      channels near zero CPU. Live test on a mixed repeater; tune the 0 dB /
+      -3 dB thresholds.
+
 ## Amateur radio
 
 - [ ] **FreeDV 700D, 700E, 1600** on HF through libcodec2's FreeDV API
