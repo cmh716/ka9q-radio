@@ -12,7 +12,8 @@ SANITIZE=1 ./run.sh   # the same under AddressSanitizer and UBSan
 `recorder-test.c` runs pcmrecord --by-talkgroup against radiod-like audio and
 status over local multicast, each call a tone of its own, and checks every 20 ms
 of every file: a packet reordered across a call change, a status arriving after
-its call's first audio, a burst preemption, and a same-talker re-key. It and the
+its call's first audio, a burst preemption, a same-talker re-key, and a call's
+audio in a burst with its status 100 ms behind. It and the
 queue test below need radiod's tree built (`make -C src`) and are skipped otherwise.
 
 Before replaying recordings, the runner tests radiod's PCM queue and call

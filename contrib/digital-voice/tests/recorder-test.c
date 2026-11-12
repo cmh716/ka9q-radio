@@ -3,7 +3,8 @@
 // of every file is the right call's (each call is a tone of its own).
 // Scenarios: a packet reordered across a call change, a status arriving
 // after its call's first audio, a preemption with the audio sent in a
-// burst, and the same talker keying up again 0.3 s after a call ends.
+// burst, the same talker keying up again 0.3 s after a call ends, and a
+// call's audio in a burst with its status 100 ms behind.
 //
 //   recorder-test path/to/pcmrecord work-directory
 //
@@ -91,6 +92,15 @@ static void send_scenarios(void){
   status("500","5",6,160 * 290);
   for(int k = 290; k < 315; k++) pkt(k,770,1);      // 0.5 s
   status("","",0,160 * 315);
+  usleep(400000);
+  // TG 600 (440 Hz, 0.5 s), then TG 700 (660 Hz): 0.5 s of its audio in a
+  // burst, its status only 100 ms later (Codex's case)
+  status("600","6",7,160 * 330);
+  for(int k = 330; k < 355; k++) pkt(k,440,1);
+  for(int k = 355; k < 380; k++) pkt(k,660,0);
+  usleep(100000);
+  status("700","7",8,160 * 355);
+  status("","",0,160 * 380);
   usleep(1500000);
 }
 
@@ -165,14 +175,15 @@ int main(int argc, char **argv){
   waitpid(pid,NULL,0);
 
   // Each call log line: start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file
-  static int const want_hz[] = {440,880,660,550,770,770};
-  static int const want_frames[] = {50,50,50,50,50,25};
-  static char const *const want_tg[] = {"100","200","300","400","500","500"};
+  static int const want_hz[] = {440,880,660,550,770,770,440,660};
+  static int const want_frames[] = {50,50,50,50,50,25,25,25};
+  static char const *const want_tg[] = {"100","200","300","400","500","500","600","700"};
+  int const ncalls = sizeof want_tg / sizeof want_tg[0];
   FILE *f = fopen(log,"r");
   char line[8192];
   int calls = 0;
   if(f != NULL && fgets(line,sizeof line,f) != NULL){
-    while(fgets(line,sizeof line,f) != NULL && calls < 6){
+    while(fgets(line,sizeof line,f) != NULL && calls < ncalls){
       char *fields[9] = {0};
       char *p = line;
       for(int i = 0; i < 9 && p != NULL; i++)
@@ -190,8 +201,8 @@ int main(int argc, char **argv){
   }
   if(f != NULL)
     fclose(f);
-  if(calls != 6){
-    printf("FAIL: %d calls recorded, want 6\n",calls);
+  if(calls != ncalls){
+    printf("FAIL: %d calls recorded, want %d\n",calls,ncalls);
     Failures++;
   }
   printf(Failures ? "recorder tests FAILED\n" : "Recorder call boundary tests passed\n");

@@ -181,6 +181,7 @@ struct session {
     uint8_t *data;
     size_t size;
     bool inuse;
+    int64_t received;          // when it arrived, CLOCK_MONOTONIC ns (for --by-talkgroup's holdback)
   } reseq[RESEQ];              // Reseqencing queue
 
   FILE *fp;                    // File being recorded
@@ -204,11 +205,10 @@ struct session {
   struct call_info stream_call; // the call at the point the stream has been written to
   struct call_change changes[CALL_CHANGES]; // reported, waiting for their timestamp
   int nchanges;
-  uint32_t newest;             // latest RTP timestamp received (the holdback is measured from it)
-  bool have_newest;
   bool at_boundary;            // the write loop stopped at the next call change
   bool skip_gap;               // a new call's file: start at its first audio, not the gap before
   bool draining;               // flushing to the end of what's queued, and no further
+  bool hurry;                  // the queue is full: skip the holdback
   uint32_t file_call;          // radiod's call id for this file, 0 = not yet known
   double file_freq;            // the call's frequency (a followed call's voice channel), 0 = unknown
   int file_slot;               // its TDMA slot, -1 = none
@@ -241,8 +241,9 @@ static bool Reset_time = false;
 static bool By_talkgroup = false; // File digital voice calls by talkgroup
 static char const *Call_log_name; // CSV log of calls recorded, with By_talkgroup
 static FILE *Call_log;
-// With --by-talkgroup, audio waits this long before it's written, so a call
-// change reported a little late still lands before the audio it governs
+// With --by-talkgroup, audio waits this long after it arrives before it's
+// written, so a call change reported a little late still lands before the
+// audio it governs
 #define CALL_HOLDBACK 0.25 // seconds
 
 const char *App_path;
@@ -262,7 +263,7 @@ static int close_file(struct session *sp,char const *reason);
 static void call_adopt(struct session *sp);
 static void call_change(struct session *sp,struct call_info const *call);
 static void call_reached(struct session *sp,uint32_t timestamp);
-static bool call_gate(struct session *sp,uint32_t timestamp,bool flush);
+static bool call_gate(struct session *sp,struct reseq const *qp,bool flush);
 static void drain_queue(struct session *sp);
 static bool queue_busy(struct session const *sp);
 static void call_file(struct session *sp,char const *tempfile);
@@ -536,7 +537,9 @@ static void input_loop(){
 	.events = POLLIN,
       },
     };
-    int const n = poll(pfd,2,1000); // Wait 1 sec max so we can scan active session list
+    // Wait 1 sec max so we can scan active session list; --by-talkgroup
+    // releases held-back audio from that scan, so look more often
+    int const n = poll(pfd,2,By_talkgroup ? 100 : 1000);
     if(n < 0)
       break; // error of some kind - should we exit or retry?
 
@@ -841,11 +844,6 @@ static void process_data(int fd){
     Sessions = sp;
   }
   clock_gettime(CLOCK_REALTIME,&sp->last_active);
-  if(By_talkgroup){
-    if(!sp->have_newest || (int32_t)(rtp.timestamp - sp->newest) > 0)
-      sp->newest = rtp.timestamp;
-    sp->have_newest = true;
-  }
   if(sp->fp == NULL && !sp->complete){
     if(By_talkgroup)
       call_reached(sp,rtp.timestamp); // a new file starts with the call this packet belongs to
@@ -870,7 +868,15 @@ static void process_data(int fd){
       fprintf(stderr,"ssrc %u init seq %u timestamp %u\n",rtp.ssrc,rtp.seq,rtp.timestamp);
   }
   // Place packet into proper place in resequence ring buffer
-  int16_t const seqdiff = rtp.seq - sp->rtp_state.seq;
+  int16_t seqdiff = rtp.seq - sp->rtp_state.seq;
+  if(By_talkgroup && seqdiff >= RESEQ){
+    // The holdback has filled the queue (a burst): write the oldest audio
+    // early, still splitting at call changes, rather than resynchronize
+    sp->hurry = true;
+    send_queue(sp,false);
+    sp->hurry = false;
+    seqdiff = rtp.seq - sp->rtp_state.seq;
+  }
 
   if(seqdiff < 0){
     // old, drop
@@ -899,6 +905,11 @@ static void process_data(int fd){
   struct reseq * const qp = &sp->reseq[qi];
   qp->inuse = true;
   qp->rtp = rtp;
+  {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC,&now);
+    qp->received = (int64_t)now.tv_sec * BILLION + now.tv_nsec;
+  }
   qp->data = malloc(size);
   assert(qp->data != NULL);
   qp->size = size;
@@ -932,6 +943,8 @@ static void scan_sessions(){
   struct session *next = NULL;
   for(struct session *sp = Sessions;sp != NULL; sp = next){
     next = sp->next; // save in case sp is closed
+    if(By_talkgroup && sp->fp != NULL)
+      send_queue(sp,false); // held audio that has now waited long enough
     // A call change whose audio never came (a call's end, with silence after
     // it): apply it once it's clearly not waiting for packets in flight
     if(By_talkgroup && sp->nchanges > 0
@@ -1155,7 +1168,7 @@ static int send_opus_queue(struct session * const sp,bool const flush){
       sp->rtp_state.drops++;
       continue;
     }
-    if(!call_gate(sp,qp->rtp.timestamp,flush))
+    if(!call_gate(sp,qp,flush))
       break; // a call change comes first, or the audio is still held back
     int32_t jump = (int32_t)(qp->rtp.timestamp - sp->rtp_state.timestamp);
     if(jump > 0){
@@ -1269,7 +1282,7 @@ static int send_wav_queue(struct session * const sp,bool flush){
       else
 	continue;
     }
-    if(!call_gate(sp,qp->rtp.timestamp,flush))
+    if(!call_gate(sp,qp,flush))
       break; // a call change comes first, or the audio is still held back
     int32_t jump = (int32_t)(qp->rtp.timestamp - sp->rtp_state.timestamp);
     if(jump > 0){
@@ -1863,19 +1876,22 @@ static void drain_queue(struct session *sp){
   sp->draining = false;
 }
 
-// May the queued packet at this RTP timestamp be written now? Not if a call
-// change comes first (the caller then rotates the file), nor, unless
-// flushing, while it's within the holdback of the newest packet
-static bool call_gate(struct session *sp,uint32_t timestamp,bool flush){
+// May this queued packet be written now? Not if a call change comes first
+// (the caller then rotates the file), nor, unless flushing, before it has
+// waited the holdback since it arrived: real time, so a burst of audio
+// can't hurry its own audio past a report that is still on its way
+static bool call_gate(struct session *sp,struct reseq const *qp,bool flush){
   if(!By_talkgroup)
     return true;
+  uint32_t const timestamp = qp->rtp.timestamp;
   if(sp->nchanges > 0 && (int32_t)(timestamp - sp->changes[0].timestamp) >= 0){
     sp->at_boundary = true;
     return false;
   }
-  if(!flush && sp->have_newest){
-    unsigned const rate = (sp->encoding == OPUS || sp->encoding == OPUS_VOIP) ? OPUS_SAMPRATE : sp->samprate;
-    if((int32_t)(sp->newest - timestamp) < (int32_t)(CALL_HOLDBACK * rate))
+  if(!flush && !sp->hurry){
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC,&now);
+    if((int64_t)now.tv_sec * BILLION + now.tv_nsec - qp->received < (int64_t)(CALL_HOLDBACK * BILLION))
       return false;
   }
   if(sp->skip_gap){

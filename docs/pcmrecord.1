@@ -58,7 +58,8 @@ talkgroup (or target unit, or destination callsign) as
 where it falls in the stream, and the file is split exactly there, in
 stream order after resequencing, so every call gets its own file even when
 packets arrive out of order or a report arrives up to 0.25 s after its audio
-(audio is held back that long before it is written), even the same talker keying up again a moment later
+(each packet is held back that long after it arrives before it is written;
+only a burst too big for the resequencing queue is written sooner), even the same talker keying up again a moment later
 (for decoders that see the end of a transmission; a fade without one holds
 the call for half a second). The frequency in the name is the call's own (a
 followed call's voice channel).
