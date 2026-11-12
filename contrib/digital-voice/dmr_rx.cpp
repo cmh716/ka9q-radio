@@ -26,6 +26,7 @@ constexpr int kBurstDibits = 144;      // CACH 12 + payload 54 + sync/EMB 24 + p
 constexpr int kSyncOffset = 66;        // dibits from burst start to sync
 constexpr int kSyncDibits = 24;
 constexpr int kExpiration = 1728;      // dibits without a sync before giving up (12 bursts)
+constexpr uint64_t kCallTimeout = 4800; // dibits (1 s) without any sync: the calls are over
 constexpr unsigned kBurstSyncThreshold = 6; // bit errors allowed when classifying a burst's sync
 
 constexpr uint64_t kSyncs[] = {
@@ -89,9 +90,12 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + fsk4_.fine_offset_hz();
     stats->active_slot = active_slot_ + 1;
     stats->dmr_cc = cc_;
-    if (active_slot_ >= 0) {
+    if (active_slot_ >= 0)
       stats->error_rate = slots_[active_slot_].error_rate();
-      call const& c = calls_[active_slot_];
+    // The call last played, until it ends (terminator, or sync lost): not
+    // just while its audio is unmuted, which drops out on a weak signal
+    if (call_slot_ >= 0) {
+      call const& c = calls_[call_slot_];
       if (c.have_ids) {
         std::snprintf(stats->src_call, sizeof stats->src_call, "%u", c.source);
         std::snprintf(stats->dst_call, sizeof stats->dst_call, "%s%u", c.group ? "TG " : "", c.destination);
@@ -106,6 +110,8 @@ private:
   {
     symbols_++;
     symbol_count_++;
+    if (symbols_ - last_sync_ == kCallTimeout)
+      end_calls(); // no sync at all for 1 s: the transmission is over
     sync_reg_ = (sync_reg_ << 2) | (dibit & 3);
     bool sync_detected = false;
     for (uint64_t magic : kSyncs) {
@@ -121,6 +127,7 @@ private:
     rx_count_++;
     if (sync_detected) {
       syncs_++;
+      last_sync_ = symbols_;
       if (!locked_) {
         locked_ = true;
         rx_count_ = kSyncOffset + kSyncDibits;
@@ -134,8 +141,7 @@ private:
       expires_ = symbol_count_ + kExpiration;
     }
     if (locked_ && symbol_count_ >= expires_) {
-      sync_reset();  // no sync for too long: the transmission is over
-      end_calls();
+      sync_reset(); // lost lock; the call may well continue
       return;
     }
     if (rx_count_ < kBurstDibits)
@@ -160,6 +166,7 @@ private:
       voice_burst_[s] = 5;
       slot_type_[s] = 0;
     }
+    call_slot_ = -1;
   }
 
   void sync_reset()
@@ -251,6 +258,7 @@ private:
       return;
     }
     active_slot_ = chan;
+    call_slot_ = chan;
 
     // Three 72-bit AMBE codewords per voice burst; the middle one straddles the sync
     uint8_t cw[36];
@@ -302,6 +310,8 @@ private:
     }
     case kDataTypeTerminator:
       c = call{};
+      if (call_slot_ == chan)
+        call_slot_ = -1;
       break;
     default:
       break;
@@ -431,6 +441,8 @@ private:
   uint64_t slot_type_[2]{};
   uint64_t unmute_until_[2]{};
   int active_slot_ = -1;
+  int call_slot_ = -1;
+  uint64_t last_sync_ = 0;      // symbols_ at the last sync          // slot of the call last played, -1 once it has ended
 
   // Vocoder, one per timeslot
   dv_ambe2450 slots_[2];

@@ -275,13 +275,17 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
   int const m = mode == DV_AUTO ? st->active_mode : (int)mode;
   if(m < 0)
     return; // DV_AUTO, nothing playing
-  if((m == DV_DMR || m == DV_P25P2) && st->active_slot == 0)
-    return; // no call on the slot we play
+  if(m == DV_P25P2 && st->active_slot == 0)
+    return; // no call on the slot we play (DMR reports its call until it ends)
   if(m == DV_P25P2)
     call->slot = st->active_slot - 1;
   if(st->dst_call[0] == '\0' && st->src_call[0] == '\0')
     return;
-  strlcpy(call->dest,st->dst_call,sizeof call->dest);
+  // DMR shows "TG 44772": recorders file talkgroups as bare numbers, as for P25
+  char const *dest = st->dst_call;
+  if(m == DV_DMR && strncmp(dest,"TG ",3) == 0)
+    dest += 3;
+  strlcpy(call->dest,dest,sizeof call->dest);
   strlcpy(call->src,st->src_call,sizeof call->src);
   strlcpy(call->mode,dv_mode_name(m),sizeof call->mode);
 }
@@ -300,12 +304,15 @@ static void push_status(chan_t *chan){
 // go. A talker or destination that fills in later is the same call
 static uint32_t Call_seq; // ids across all channels, so they never repeat on one
 #define DV_CALL_GONE 25 // blocks (0.5 s) without IDs that end a call
-static void track_call(struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,int *absent){
+static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,int *absent){
   bool const has_ids = seen->dest[0] != '\0' || seen->src[0] != '\0';
   if(!has_ids){
     // Gone for a moment (a fade, a slot glitch) is still the same call
-    if(cur->id != 0 && ++*absent >= DV_CALL_GONE)
+    if(cur->id != 0 && ++*absent >= DV_CALL_GONE){
+      if(Verbose > 1)
+	fprintf(stderr,"%s call %u ended\n",chan->name,cur->id);
       memset(cur,0,sizeof *cur); // ended
+    }
     return;
   }
   *absent = 0;
@@ -318,6 +325,10 @@ static void track_call(struct dv_call *cur,struct dv_call const *seen,struct dv_
     uint32_t id = __atomic_add_fetch(&Call_seq,1,__ATOMIC_RELAXED);
     if(id == 0)
       id = __atomic_add_fetch(&Call_seq,1,__ATOMIC_RELAXED); // 0 means none
+    if(Verbose > 1)
+      fprintf(stderr,"%s call %u: %s %s to %s%s\n",chan->name,id,seen->mode,
+	      seen->src[0] ? seen->src : "?",seen->dest[0] ? seen->dest : "?",
+	      cur->id != 0 ? " (replacing the last)" : "");
     *cur = *seen;
     cur->id = id;
     if(fresh){
@@ -537,7 +548,7 @@ int demod_dv(void *arg){
       // Labels for what the decoders produce next; published as it plays
       struct dv_call seen;
       call_ids(&st,mode,events.follow,chan,&seen);
-      track_call(&decoding,&seen,&audio_queue,&ids_absent);
+      track_call(chan,&decoding,&seen,&audio_queue,&ids_absent);
     }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);
