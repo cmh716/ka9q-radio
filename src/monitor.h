@@ -109,7 +109,8 @@ struct session {
 
   char callsign[24]; // What's the longest possible? (or a talkgroup's name)
   char id[64];
-  bool talkgroup_named;  // callsign and id are the current call's talkgroup, not a repeater
+  bool talkgroup_named;  // callsign and id are a P25 call's talkgroup, not a repeater
+  int64_t talkgroup_ended; // when that call ended (gps_time_ns), 0 while it lasts
   float distance;     // meters, if known
   bool notch_enable;         // Enable PL removal notch
   struct iir iir_left;       // State for PL removal filter

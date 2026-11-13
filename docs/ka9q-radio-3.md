@@ -348,7 +348,10 @@ is missed. For example:
     freq = "851m4625"
     data = trunk.local
 
-With **-v**, radiod logs each call it follows and leaves.
+With **-v**, radiod logs each call it follows and leaves. In monitor the
+channel shows the talkgroup and voice channel during a call; between calls
+it shows **CC** and the NAC while the control channel is being decoded, and
+**no CC** when nothing has been decoded for two seconds.
 
 To record the calls by talkgroup, use pcmrecord's **--by-talkgroup** option
 (see pcmrecord(1)): for every digital voice mode radiod numbers each call and

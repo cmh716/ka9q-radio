@@ -98,7 +98,12 @@ During a P25 call, monitor shows the talkgroup's name and description if
 the talkgroup number is listed in a .csv file in
 /var/lib/ka9q-radio/talkgroups.d. The files need "Decimal" and "Alpha Tag"
 columns, as in a talkgroup download from radioreference.com; see
-pcmrecord(1).
+pcmrecord(1). After the call the name stays, with the time since the call
+ended, until another call takes its place.
+.PP
+Between calls a P25 trunking follower (radiod's p25-follow) shows "CC" and
+the NAC while it is decoding the control channel, and "no CC" when it has
+decoded nothing for two seconds.
 .SH NOTES
 A session may not appear until data arrives, particularly when receiver
 squelch suppresses output. Missing metadata can prevent interpretation of

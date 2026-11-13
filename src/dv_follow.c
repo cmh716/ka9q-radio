@@ -27,6 +27,7 @@ extern int Overlap; // fast convolution overlap factor (radio.c)
 #define FOLLOW_HANG (DV_IQ_SAMPRATE_RADIOD * 2)        // no voice this long (and no end seen): the call is over
 #define FOLLOW_LISTEN (DV_IQ_SAMPRATE_RADIOD * 3)      // give a new channel this long to produce voice
 #define FOLLOW_LINGER (DV_IQ_SAMPRATE_RADIOD)          // after an end with such a grant unplaced: wait for voice this long
+#define FOLLOW_CC_LOST (DV_IQ_SAMPRATE_RADIOD * 2)     // no good control message this long: the control channel is gone
 
 struct follow_grant {
   bool valid;
@@ -69,6 +70,10 @@ struct dv_follow {
   uint32_t last_group;       // talkgroup of the call last followed: the conversation
   bool tdma_ready;           // the control channel has named the network (WACN): Phase 2 can be followed
   uint64_t calls;            // calls followed
+  uint64_t cc_good;          // control messages decoded (CRC good), as last counted
+  uint64_t cc_seen;          // when that count last rose
+  bool cc_ever;              // it has risen at all
+  uint16_t cc_nac;           // the control channel's NAC
 };
 
 // Position in the talkgroup list (lower is better), or -1 if not wanted
@@ -320,6 +325,13 @@ static float complex const *tune_block(struct dv_follow *f, double freq, int *co
 void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
   f->now += (uint64_t)count;
   f->tdma_ready = cc->wacn != 0;
+  uint64_t const good = cc->tsbks; // those that passed their CRC
+  if(good != f->cc_good){
+    f->cc_good = good;
+    f->cc_seen = f->now;
+    f->cc_ever = true;
+    f->cc_nac = cc->last_nac;
+  }
   double const freq = f->voice != NULL ? (double)f->cur.freq : f->chan->tune.freq;
   int n = 0;
   float complex const *iq = tune_block(f,freq,&n);
@@ -396,10 +408,16 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
 }
 
 bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
-  if(f == NULL || f->voice == NULL)
+  if(f == NULL)
     return false;
-  // Talkgroup and voice channel: the talker is in the recordings and the -v log
-  snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
+  // Talkgroup and voice channel: the talker is in the recordings and the -v log.
+  // Between calls, whether the control channel is being received
+  if(f->voice != NULL)
+    snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
+  else if(f->cc_ever && f->now - f->cc_seen <= FOLLOW_CC_LOST)
+    snprintf(buf,len,"CC N%03X",f->cc_nac);
+  else
+    snprintf(buf,len,"no CC");
   return true;
 }
 

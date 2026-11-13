@@ -72,11 +72,28 @@ int main(void){
   Chan.frontend = &fe;
   F = dv_follow_create(&Chan,NULL,NULL);
 
+  // Between calls the status text says whether the control channel is heard
+  char text[20];
+  run(5,false);
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"no CC") == 0,"idle with no control messages yet: \"no CC\"");
+  Cc.tsbks = 40;
+  run(5,false);
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"CC N469") == 0,"idle with control messages decoding: \"CC N469\"");
+  Cc.tsbk_errors = 500; // only errors since
+  run(95,false); // 4 + 95 blocks of 20 ms since the last good one
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"CC N469") == 0,"still \"CC N469\" 2 s after the last good message");
+  run(3,false);
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"no CC") == 0,"then \"no CC\"");
+  Cc.tsbks = 41;
+  run(1,false);
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"CC N469") == 0,"and \"CC N469\" again with the next good one");
+
   // A conversation on TG 10003: each reply on a new channel, the next grant
   // arriving 0.1 s after the previous transmission's last voice
   grant(DV_EVENT_GRANT,851287500,10003,3451001,1);
   run(2,false);
   check(following() == 851287500,"joins the first grant");
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"TG10003 851.2875") == 0,"a call shows its talkgroup and channel");
   run(50,true);
   grant(DV_EVENT_GRANT,851912500,10003,9989123,2);   // the reply, elsewhere, no END_PTT seen
   run(1,false);

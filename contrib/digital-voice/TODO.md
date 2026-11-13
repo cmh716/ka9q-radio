@@ -46,6 +46,13 @@ Capacity Max (going encrypted).
       Phase 2 calls from the live system (2026-11-12): no audible difference.
       Not worth porting without new evidence.
 
+## Conventional (non-trunked) systems
+
+- [ ] A master frequency list for non-trunked analog and digital systems:
+      one CSV that both names the channels in monitor (as `repeaters.d`
+      does for RepeaterBook data) and generates the channel definitions for
+      a radiod conf file.
+
 ## Amateur radio
 
 - [ ] **FreeDV 700D, 700E, 1600** on HF through libcodec2's FreeDV API

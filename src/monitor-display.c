@@ -536,7 +536,15 @@ static void update_monitor_display(void){
       if(!inuse(sp)) break;
 
       if(strlen(sp->id) > 0){
-	snprintf(scratch[i],COLS,"%s",sp->id);
+	if(sp->talkgroup_named && sp->talkgroup_ended != 0){
+	  // The last call heard, and how long ago it ended
+	  int64_t const age = (gps_time_ns() - sp->talkgroup_ended) / BILLION;
+	  if(age < 3600)
+	    snprintf(scratch[i],COLS,"%s  %d:%02d ago",sp->id,(int)(age / 60),(int)(age % 60));
+	  else
+	    snprintf(scratch[i],COLS,"%s  %d:%02d:%02d ago",sp->id,(int)(age / 3600),(int)(age / 60 % 60),(int)(age % 60));
+	} else
+	  snprintf(scratch[i],COLS,"%s",sp->id);
 	enable = true;
 	if(!sp->talkgroup_named)
 	  repeaters = true;

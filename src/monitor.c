@@ -558,7 +558,8 @@ void *statproc(void *arg){
 	strlcat(sp->id, id->state, sizeof sp->id);
       sp->distance = id->sort == SORT_INPUT ? 0 : id->distance;
     }
-    // A P25 call to a talkgroup with a name: show that while the call lasts
+    // A P25 call to a talkgroup with a name: show that, and leave it up
+    // after the call (with its age) until another call takes its place
     struct talkgroup const * const tg = lookup_talkgroup(sp->chan.dv.call_mode,sp->chan.dv.call_dest);
     if(tg != NULL){
       strlcpy(sp->callsign, tg->tag, sizeof sp->callsign);
@@ -568,10 +569,15 @@ void *statproc(void *arg){
 	strlcpy(sp->id, tg->description[0] != '\0' ? tg->description : tg->category[0] != '\0' ? tg->category : tg->tag, sizeof sp->id);
       sp->distance = 0;
       sp->talkgroup_named = true;
+      sp->talkgroup_ended = 0;
     } else if(sp->talkgroup_named){
-      sp->talkgroup_named = false;
-      if(!id) // a repeater's entry was put back above
-	sp->callsign[0] = sp->id[0] = '\0';
+      if(id || sp->chan.dv.call_dest[0] != '\0'){
+	// A repeater's entry was put back above, or a call without a name has begun
+	sp->talkgroup_named = false;
+	if(!id)
+	  sp->callsign[0] = sp->id[0] = '\0';
+      } else if(sp->talkgroup_ended == 0)
+	sp->talkgroup_ended = gps_time_ns();
     }
     // Update SNR calculation (not sent explicitly)
     float const noise_bandwidth = fabsf(sp->chan.filter.max_IF - sp->chan.filter.min_IF);
