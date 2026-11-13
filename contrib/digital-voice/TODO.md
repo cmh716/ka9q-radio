@@ -27,9 +27,7 @@ Capacity Max (going encrypted).
       Needs a live test with p25-follow.
 - [x] Talkgroup names from CSV files (a RadioReference download) in
       `/var/lib/ka9q-radio/talkgroups.d`: monitor's display, pcmrecord's
-      folders, attributes and call log. One table for all systems: to keep
-      two systems' numbers apart radiod would have to send the WACN and
-      system ID.
+      folders, attributes and call log.
 - [ ] P25 Phase 2: about 0.4 s of an encrypted call can play before the ESS
       says it is encrypted, when the MAC_PTT is missed.
 - [ ] **LTR Standard**: decode the 300 bps sub-audible data on each repeater's
@@ -51,9 +49,9 @@ Capacity Max (going encrypted).
       - sites that assign channel numbers: a channel plan option;
       - the UHF system (RadioReference 8099) and the NXDN96 one;
       - Type-D (no control channel) if a local system uses it.
-- [ ] Talkgroup names per system: `talkgroups.d` is one table and is used
-      for P25 calls only, since the NXDN and P25 systems here reuse the
-      same small numbers. radiod should say which system a call is on.
+- [x] Talkgroup names per system: `system = name` on the channel, and that
+      system's CSV files in `talkgroups.d/name/`; pcmrecord files its calls
+      under `name/`. Needs a live test (NXDN and P25 side by side).
 - [x] Backup control channels: on losing the control channel the follower
       searches the listed and broadcast control channel frequencies. The
       search (a list of candidates, a wait, a dwell) isn't specific to P25:

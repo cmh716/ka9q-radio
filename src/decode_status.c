@@ -295,10 +295,11 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:
+    case CALL_SYSTEM:
       {
 	char *p = decode_string(cp,optlen);
-	char *dst = type == CALL_DEST ? chan->dv.call_dest : type == CALL_SOURCE ? chan->dv.call_src : chan->dv.call_mode;
-	size_t const len = type == CALL_DEST ? sizeof chan->dv.call_dest : type == CALL_SOURCE ? sizeof chan->dv.call_src : sizeof chan->dv.call_mode;
+	char *dst = type == CALL_DEST ? chan->dv.call_dest : type == CALL_SOURCE ? chan->dv.call_src : type == CALL_MODE ? chan->dv.call_mode : chan->dv.system;
+	size_t const len = type == CALL_DEST ? sizeof chan->dv.call_dest : type == CALL_SOURCE ? sizeof chan->dv.call_src : type == CALL_MODE ? sizeof chan->dv.call_mode : sizeof chan->dv.system;
 	strlcpy(dst,p != NULL ? p : "",len);
 	FREE(p);
       }

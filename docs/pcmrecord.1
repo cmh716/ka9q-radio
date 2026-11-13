@@ -74,7 +74,8 @@ Supersedes --subdirs; superseded by --jt and pipe modes.
 .B "\-\-call\-log file"
 With --by-talkgroup, append one CSV line per recorded call: start time,
 seconds, talkgroup, source, mode, frequency, TDMA slot, SSRC, file name, and
-the talkgroup's name and description where known (see --talkgroups). A relative
+the talkgroup's name and description where known (see --talkgroups) and the
+system's name, if radiod's configuration gives it one. A relative
 name is relative to the current directory, not --directory.
 .TP
 .B "\-\-talkgroups file|directory"
@@ -84,7 +85,19 @@ wins). The first line names the columns: "Decimal" (the talkgroup number)
 and "Alpha Tag" (its short name) are needed, "Description" and "Category"
 are used if present, and other columns are ignored, so a talkgroup download
 from radioreference.com works as it comes. Default:
-/var/lib/ka9q-radio/talkgroups.d, if it exists. A P25 call to a named
+/var/lib/ka9q-radio/talkgroups.d, if it exists.
+.IP
+Several systems use the same talkgroup numbers for different things. A
+subdirectory of the directory holds the files of one system: the one whose
+channel in radiod's configuration has
+.B system =
+and the subdirectory's name (letter case ignored). A call on a system with a
+subdirectory takes its name from there alone, whatever its mode. Any other
+call is looked up in the files outside the subdirectories, and only if it
+is a P25 call. The recordings of a named system are filed under a folder of
+that name, and the name is written as the file attribute user.system.
+.IP
+A call to a named
 talkgroup is filed under
 .IR number _ name
 (e.g. 4002_OC_FD_E_Resp) rather than the number alone, and its name,

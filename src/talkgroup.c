@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,11 +27,18 @@ static struct {
   {"Category", COL_CATEGORY},
 };
 
-static struct talkgroup *Talkgroups; // sorted by id once loaded
-static size_t Ntalkgroups, Max_talkgroups;
+// One system's talkgroups; the first table (system "") is the general one
+struct table {
+  char *system;
+  struct talkgroup *talkgroups; // sorted by id once loaded
+  size_t n, max;
+};
+static struct table *Tables;
+static size_t Ntables;
 
 // One file's parse
 struct parse {
+  struct table *table;  // where its talkgroups go
   enum column *columns; // what each column of this file holds
   size_t ncolumns, max_columns;
   size_t field;         // column of the next field
@@ -107,17 +115,18 @@ static void line_cb(int eol, void *user){
     return;
   }
   if(p->have_id && p->row.tag != NULL && p->row.tag[0] != '\0'){
-    if(Ntalkgroups >= Max_talkgroups){
-      Max_talkgroups += 256;
-      Talkgroups = realloc(Talkgroups,Max_talkgroups * sizeof *Talkgroups);
-      if(Talkgroups == NULL)
+    struct table * const t = p->table;
+    if(t->n >= t->max){
+      t->max += 256;
+      t->talkgroups = realloc(t->talkgroups,t->max * sizeof *t->talkgroups);
+      if(t->talkgroups == NULL)
 	abort();
     }
     if(p->row.description == NULL)
       p->row.description = strdup("");
     if(p->row.category == NULL)
       p->row.category = strdup("");
-    Talkgroups[Ntalkgroups++] = p->row; // the table keeps the strings
+    t->talkgroups[t->n++] = p->row; // the table keeps the strings
   } else {
     free(p->row.tag);
     free(p->row.description);
@@ -127,7 +136,23 @@ static void line_cb(int eol, void *user){
   p->have_id = false;
 }
 
-static int load_file(char const *path){
+// The table for a system's talkgroups, made if need be. Names compare
+// without case: they come from a config file and a directory name
+static size_t find_table(char const *system, bool create){
+  for(size_t i = 0; i < Ntables; i++){
+    if(strcasecmp(Tables[i].system,system) == 0)
+      return i;
+  }
+  if(!create)
+    return SIZE_MAX;
+  Tables = realloc(Tables,(Ntables + 1) * sizeof *Tables);
+  if(Tables == NULL)
+    abort();
+  Tables[Ntables] = (struct table){.system = strdup(system)};
+  return Ntables++;
+}
+
+static int load_file(char const *path, size_t table){
   FILE * const fp = fopen(path,"r");
   if(fp == NULL)
     return -1;
@@ -136,7 +161,7 @@ static int load_file(char const *path){
     fclose(fp);
     return -1;
   }
-  struct parse parse = {0};
+  struct parse parse = {.table = &Tables[table]};
   char buf[4096];
   size_t n;
   while((n = fread(buf,1,sizeof buf,fp)) != 0){
@@ -164,72 +189,98 @@ static int name_compare(void const *a, void const *b){
   return strcmp(*(char * const *)a,*(char * const *)b);
 }
 
+// Every *.csv in a directory, in name order, so which file wins a duplicate
+// doesn't depend on the file system. Each subdirectory of the top one is a
+// system's own table
+static int load_directory(char const *path, size_t table, bool top){
+  DIR * const dir = opendir(path);
+  if(dir == NULL)
+    return -1;
+  char **names = NULL;
+  size_t nnames = 0;
+  struct dirent const *d;
+  while((d = readdir(dir)) != NULL){
+    if(d->d_name[0] == '.')
+      continue;
+    names = realloc(names,(nnames + 1) * sizeof *names);
+    if(names == NULL)
+      abort();
+    if(asprintf(&names[nnames++],"%s/%s",path,d->d_name) < 0)
+      abort();
+  }
+  closedir(dir);
+  if(nnames > 0)
+    qsort(names,nnames,sizeof *names,name_compare);
+  for(size_t i = 0; i < nnames; i++){
+    char const * const name = names[i] + strlen(path) + 1;
+    size_t const len = strlen(name);
+    struct stat st;
+    if(stat(names[i],&st) != 0){
+      // gone, or a dangling link
+    } else if(S_ISDIR(st.st_mode)){
+      if(top)
+	load_directory(names[i],find_table(name,true),false);
+    } else if(len > 4 && strcasecmp(name + len - 4,".csv") == 0){
+      if(load_file(names[i],table) != 0)
+	fprintf(stderr,"Can't read %s: %s\n",names[i],strerror(errno));
+    }
+    free(names[i]);
+  }
+  free(names);
+  return 0;
+}
+
 int load_talkgroups(char const *path){
   if(path == NULL)
     return -1;
   struct stat st;
   if(stat(path,&st) != 0)
     return -1;
-  if(!S_ISDIR(st.st_mode)){
-    if(load_file(path) != 0)
-      return -1;
-  } else {
-    DIR * const dir = opendir(path);
-    if(dir == NULL)
-      return -1;
-    // In name order, so which file wins a duplicate doesn't depend on the file system
-    char **names = NULL;
-    size_t nnames = 0;
-    struct dirent const *d;
-    while((d = readdir(dir)) != NULL){
-      size_t const len = strlen(d->d_name);
-      if(len <= 4 || d->d_name[0] == '.' || strcasecmp(d->d_name + len - 4,".csv") != 0)
-	continue;
-      names = realloc(names,(nnames + 1) * sizeof *names);
-      if(names == NULL)
-	abort();
-      if(asprintf(&names[nnames++],"%s/%s",path,d->d_name) < 0)
-	abort();
-    }
-    closedir(dir);
-    if(nnames > 0)
-      qsort(names,nnames,sizeof *names,name_compare);
-    for(size_t i = 0; i < nnames; i++){
-      if(load_file(names[i]) != 0)
-	fprintf(stderr,"Can't read %s: %s\n",names[i],strerror(errno));
-      free(names[i]);
-    }
-    free(names);
-  }
+  size_t const general = find_table("",true);
+  if(S_ISDIR(st.st_mode) ? load_directory(path,general,true) != 0 : load_file(path,general) != 0)
+    return -1;
   // Sorted by number; of a number listed twice, keep the first loaded
-  if(Ntalkgroups > 1){
+  size_t total = 0;
+  for(size_t k = 0; k < Ntables; k++){
+    struct table * const t = &Tables[k];
     // An insertion sort keeps the order loaded (qsort needn't), and the
     // lists are short and mostly sorted already
-    for(size_t i = 1; i < Ntalkgroups; i++){
-      struct talkgroup const t = Talkgroups[i];
+    for(size_t i = 1; i < t->n; i++){
+      struct talkgroup const tg = t->talkgroups[i];
       size_t j = i;
-      for(; j > 0 && compare(&Talkgroups[j-1],&t) > 0; j--)
-	Talkgroups[j] = Talkgroups[j-1];
-      Talkgroups[j] = t;
+      for(; j > 0 && compare(&t->talkgroups[j-1],&tg) > 0; j--)
+	t->talkgroups[j] = t->talkgroups[j-1];
+      t->talkgroups[j] = tg;
     }
-    size_t kept = 1;
-    for(size_t i = 1; i < Ntalkgroups; i++){
-      if(Talkgroups[i].id == Talkgroups[kept-1].id){
-	free(Talkgroups[i].tag);
-	free(Talkgroups[i].description);
-	free(Talkgroups[i].category);
+    size_t kept = t->n > 0 ? 1 : 0;
+    for(size_t i = 1; i < t->n; i++){
+      if(t->talkgroups[i].id == t->talkgroups[kept-1].id){
+	free(t->talkgroups[i].tag);
+	free(t->talkgroups[i].description);
+	free(t->talkgroups[i].category);
       } else
-	Talkgroups[kept++] = Talkgroups[i];
+	t->talkgroups[kept++] = t->talkgroups[i];
     }
-    Ntalkgroups = kept;
+    t->n = kept;
+    total += kept;
   }
-  return (int)Ntalkgroups;
+  return (int)total;
 }
 
-struct talkgroup const *lookup_talkgroup(char const *mode, char const *dest){
-  if(Ntalkgroups == 0 || mode == NULL || dest == NULL || strcmp(mode,"P25") != 0)
+struct talkgroup const *lookup_talkgroup(char const *system, char const *mode, char const *dest){
+  if(Ntables == 0 || dest == NULL)
     return NULL;
-  if(dest[0] < '0' || dest[0] > '9')
+  // A system with its own table uses that alone, whatever its mode. Any
+  // other call uses the general table, and only if it's P25: the numbers
+  // of other kinds of system are small and collide
+  size_t k = system != NULL && system[0] != '\0' ? find_table(system,false) : SIZE_MAX;
+  if(k == SIZE_MAX){
+    if(mode == NULL || strcmp(mode,"P25") != 0)
+      return NULL;
+    k = 0;
+  }
+  struct table const * const t = &Tables[k];
+  if(t->n == 0 || dest[0] < '0' || dest[0] > '9')
     return NULL;
   char *end = NULL;
   errno = 0;
@@ -237,5 +288,5 @@ struct talkgroup const *lookup_talkgroup(char const *mode, char const *dest){
   if(*end != '\0' || errno != 0 || id > UINT32_MAX)
     return NULL;
   struct talkgroup const key = {.id = (uint32_t)id};
-  return bsearch(&key,Talkgroups,Ntalkgroups,sizeof *Talkgroups,compare);
+  return bsearch(&key,t->talkgroups,t->n,sizeof *t->talkgroups,compare);
 }

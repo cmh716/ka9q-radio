@@ -35,6 +35,7 @@ static int Fd, Pt;
 static struct sockaddr_in Data, Stat;
 static uint32_t const Ssrc = 851912;
 
+static char const *System = ""; // CALL_SYSTEM, when set
 static void status(char const *dest, char const *src, unsigned id, uint32_t ts){
   uint8_t buf[512], *bp = buf;
   *bp++ = STATUS;
@@ -42,7 +43,9 @@ static void status(char const *dest, char const *src, unsigned id, uint32_t ts){
   encode_int(&bp,OUTPUT_CHANNELS,1); encode_int(&bp,OUTPUT_ENCODING,S16BE);
   encode_double(&bp,RADIO_FREQUENCY,851912500.0); encode_int(&bp,DEMOD_TYPE,6);
   encode_string(&bp,CALL_DEST,dest,strlen(dest)); encode_string(&bp,CALL_SOURCE,src,strlen(src));
-  encode_string(&bp,CALL_MODE,"P25",3); encode_int32(&bp,CALL_ID,id);
+  encode_string(&bp,CALL_MODE,System[0] != '\0' ? "NXDN" : "P25",System[0] != '\0' ? 4 : 3); encode_int32(&bp,CALL_ID,id);
+  if(System[0] != '\0')
+    encode_string(&bp,CALL_SYSTEM,System,strlen(System));
   encode_double(&bp,CALL_FREQUENCY,851912500.0); encode_int(&bp,CALL_SLOT,-1);
   encode_int32(&bp,CALL_TIMESTAMP,ts); encode_eol(&bp);
   sendto(Fd,buf,(size_t)(bp - buf),0,(struct sockaddr *)&Stat,sizeof Stat);
@@ -96,7 +99,9 @@ static void send_scenarios(void){
   status("","",0,160 * 315);
   usleep(400000);
   // TG 600 (440 Hz, 0.5 s), then TG 700 (660 Hz): 0.5 s of its audio in a
-  // burst, its status only 100 ms later (Codex's case)
+  // burst, its status only 100 ms later (Codex's case). These two on a
+  // named system, which has its own talkgroup names
+  System = "County Bus";
   status("600","6",7,160 * 330);
   for(int k = 330; k < 355; k++) pkt(k,440,1);
   for(int k = 355; k < 380; k++) pkt(k,660,0);
@@ -171,7 +176,17 @@ int main(int argc, char **argv){
   snprintf(file,sizeof file,"%s/b.csv",names);
   tf = fopen(file,"w");
   if(tf == NULL){ perror(file); return 2; }
-  fputs("\xef\xbb\xbf" "alpha tag,decimal\r\nnobody,\r\nWrong,200\r\nOps 3,300\r\n",tf);
+  fputs("\xef\xbb\xbf" "alpha tag,decimal\r\nnobody,\r\nWrong,200\r\nOps 3,300\r\nNot this system,700\r\n",tf);
+  fclose(tf);
+  // A system's own names, in a subdirectory named for it (case ignored):
+  // TG 600 there, TG 700 only in the general table (so it has no name),
+  // and TG 100, which is the other system's call here
+  snprintf(file,sizeof file,"%s/county bus",names);
+  mkdir(file,0777);
+  snprintf(file,sizeof file,"%s/county bus/c.csv",names);
+  tf = fopen(file,"w");
+  if(tf == NULL){ perror(file); return 2; }
+  fputs("Decimal,Alpha Tag\n600,Route 6\n100,Not this system\n",tf);
   fclose(tf);
   pid_t const pid = fork();
   if(pid == 0){
@@ -193,12 +208,12 @@ int main(int argc, char **argv){
   kill(pid,SIGTERM);
   waitpid(pid,NULL,0);
 
-  // Each call log line: start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description
+  // Each call log line: start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description,system
   static int const want_hz[] = {440,880,660,550,770,770,440,660};
   static int const want_frames[] = {50,50,50,50,50,25,25,25};
   static char const *const want_tg[] = {"100","200","300","400","500","500","600","700"};
-  static char const *const want_dir[] = {"/100/","/200_Fire_DispEast/","/300_Ops_3/","/400/","/500/","/500/","/600/","/700/"};
-  static char const *const want_name[] = {",","Fire Disp/East,\"Fire, Dispatch\"","Ops 3,",",",",",",",",",","};
+  static char const *const want_dir[] = {"/rec/100/","/rec/200_Fire_DispEast/","/rec/300_Ops_3/","/rec/400/","/rec/500/","/rec/500/","/County_Bus/600_Route_6/","/County_Bus/700/"};
+  static char const *const want_name[] = {",,","Fire Disp/East,\"Fire, Dispatch\",","Ops 3,,",",,",",,",",,","Route 6,,County Bus",",,County Bus"};
   int const ncalls = sizeof want_tg / sizeof want_tg[0];
   FILE *f = fopen(log,"r");
   char line[8192];
@@ -211,13 +226,13 @@ int main(int argc, char **argv){
 	fields[i] = strsep(&p,",");
       if(fields[8] == NULL || p == NULL)
 	continue;
-      p[strcspn(p,"\n")] = '\0'; // name,description
+      p[strcspn(p,"\n")] = '\0'; // name,description,system
       if(strstr(fields[8],want_dir[calls]) == NULL){
 	printf("FAIL: call %d filed as %s, want a folder %s\n",calls + 1,fields[8],want_dir[calls]);
 	Failures++;
       }
       if(strcmp(p,want_name[calls]) != 0){
-	printf("FAIL: call %d logged with name and description %s, want %s\n",calls + 1,p,want_name[calls]);
+	printf("FAIL: call %d logged with name, description and system %s, want %s\n",calls + 1,p,want_name[calls]);
 	Failures++;
       }
       if(strcmp(fields[2],want_tg[calls]) != 0){

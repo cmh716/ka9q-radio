@@ -558,9 +558,9 @@ void *statproc(void *arg){
 	strlcat(sp->id, id->state, sizeof sp->id);
       sp->distance = id->sort == SORT_INPUT ? 0 : id->distance;
     }
-    // A P25 call to a talkgroup with a name: show that, and leave it up
+    // A call to a talkgroup with a name: show that, and leave it up
     // after the call (with its age) until another call takes its place
-    struct talkgroup const * const tg = lookup_talkgroup(sp->chan.dv.call_mode,sp->chan.dv.call_dest);
+    struct talkgroup const * const tg = lookup_talkgroup(sp->chan.dv.system,sp->chan.dv.call_mode,sp->chan.dv.call_dest);
     if(tg != NULL){
       strlcpy(sp->callsign, tg->tag, sizeof sp->callsign);
       if(tg->description[0] != '\0' && tg->category[0] != '\0')

@@ -380,6 +380,24 @@ a CSV file with "Decimal" and "Alpha Tag" columns, such as a talkgroup
 download from radioreference.com, in /var/lib/ka9q-radio/talkgroups.d (see
 pcmrecord(1), **--talkgroups**).
 
+### system
+
+With more than one trunked system the same talkgroup number means different
+things on each. **system** names the system a channel is on; radiod sends
+the name with each call. monitor and pcmrecord then take that system's
+talkgroup names from the subdirectory of that name in
+/var/lib/ka9q-radio/talkgroups.d, and pcmrecord files its recordings under
+a folder of that name. It works in any digital voice mode, and is needed for
+talkgroup names on anything but P25. For example, with the system's
+talkgroup download in /var/lib/ka9q-radio/talkgroups.d/schools/:
+
+    [Buses]
+    mode = nxdn
+    follow = yes
+    system = schools
+    freq = "153m4925"
+    data = buses.local
+
 To test without a receiver, the **iq_file** front end plays a recorded IQ file
 (complex 32-bit float) into radiod in real time; see the top of src/iq_file.c.
 

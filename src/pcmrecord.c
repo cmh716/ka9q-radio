@@ -39,7 +39,8 @@ Command-line options:
  --call-log <file>: with --by-talkgroup, append a CSV line for each call recorded
  --talkgroups <file or directory>: talkgroup names for --by-talkgroup, from a CSV file with "Decimal" and "Alpha Tag"
         columns (a radioreference.com talkgroup download) or a directory of them; default /var/lib/ka9q-radio/talkgroups.d.
-        A named P25 talkgroup is filed as <number>_<name>/...
+        A subdirectory holds the files of the system radiod's "system" setting names; other files name P25 talkgroups.
+        A named talkgroup is filed as <number>_<name>/..., and a named system's calls under <system>/...
 @endverbatim
  */
 
@@ -141,6 +142,7 @@ struct call_info {
   char dest[sizeof ((chan_t *)0)->dv.call_dest];
   char src[sizeof ((chan_t *)0)->dv.call_src];
   char mode[sizeof ((chan_t *)0)->dv.call_mode];
+  char system[sizeof ((chan_t *)0)->dv.system];
   double freq;
   int slot;
 };
@@ -206,6 +208,7 @@ struct session {
   char file_dest[sizeof ((chan_t *)0)->dv.call_dest];
   char file_src[sizeof ((chan_t *)0)->dv.call_src];
   char file_mode[sizeof ((chan_t *)0)->dv.call_mode];
+  char file_system[sizeof ((chan_t *)0)->dv.system];
   struct call_info stream_call; // the call at the point the stream has been written to
   struct call_change changes[CALL_CHANGES]; // reported, waiting for their timestamp
   int nchanges;
@@ -522,7 +525,7 @@ int main(int argc,char *argv[]){
     }
     setlinebuf(Call_log);
     if(ftell(Call_log) == 0)
-      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description\n");
+      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description,system\n");
   }
   if(By_talkgroup){
     // Read before the chdir, like the call log. The default directory is optional
@@ -686,6 +689,7 @@ static void process_status(int fd){
     strlcpy(call.dest,chan.dv.call_dest,sizeof call.dest);
     strlcpy(call.src,chan.dv.call_src,sizeof call.src);
     strlcpy(call.mode,chan.dv.call_mode,sizeof call.mode);
+    strlcpy(call.system,chan.dv.system,sizeof call.system);
     struct call_info const *last = sp->nchanges > 0 ? &sp->changes[sp->nchanges-1].call : &sp->stream_call;
     if(call.id != last->id || strcmp(call.dest,last->dest) != 0 || strcmp(call.src,last->src) != 0){
       if(sp->nchanges == CALL_CHANGES){
@@ -704,6 +708,7 @@ static void process_status(int fd){
     strlcpy(sp->stream_call.dest,chan.dv.call_dest,sizeof sp->stream_call.dest);
     strlcpy(sp->stream_call.src,chan.dv.call_src,sizeof sp->stream_call.src);
     strlcpy(sp->stream_call.mode,chan.dv.call_mode,sizeof sp->stream_call.mode);
+    strlcpy(sp->stream_call.system,chan.dv.system,sizeof sp->stream_call.system);
     sp->stream_call.freq = chan.dv.call_freq;
     sp->stream_call.slot = chan.dv.call_slot;
   }
@@ -1678,7 +1683,7 @@ static int session_file_init(struct session *sp,struct sockaddr const *sender,in
     return -1;
   }
   sp->can_seek = true; // Ordinary file
-  sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = '\0';
+  sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = sp->file_system[0] = '\0';
   sp->file_call = 0;
   sp->file_freq = 0;
   sp->file_slot = -1;
@@ -1843,7 +1848,7 @@ static int close_file(struct session *sp,char const *reason){
   sp->fp = NULL;
   //  FREE(sp->iobuffer);
   sp->filename[0] = '\0';
-  sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = '\0';
+  sp->file_dest[0] = sp->file_src[0] = sp->file_mode[0] = sp->file_system[0] = '\0';
   sp->file_call = 0;
   sp->file_freq = 0;
   sp->file_slot = -1;
@@ -1868,6 +1873,8 @@ static void call_adopt(struct session *sp){
     strlcpy(sp->file_src,c->src,sizeof sp->file_src);
   if(sp->file_mode[0] == '\0')
     strlcpy(sp->file_mode,c->mode,sizeof sp->file_mode);
+  if(sp->file_system[0] == '\0')
+    strlcpy(sp->file_system,c->system,sizeof sp->file_system);
 }
 
 // The stream has reached a call change: a different call (or none) closes
@@ -1993,7 +2000,7 @@ static void csv_field(char *out,size_t len,char const *in){
 // A talkgroup with a name is filed as number_name
 static void call_file(struct session *sp,char const *tempfile){
   int const fd = fileno(sp->fp);
-  struct talkgroup const * const tg = lookup_talkgroup(sp->file_mode,sp->file_dest);
+  struct talkgroup const * const tg = lookup_talkgroup(sp->file_system,sp->file_mode,sp->file_dest);
   if(sp->file_dest[0] != '\0')
     attrprintf(fd,"talkgroup","%s",sp->file_dest);
   if(tg != NULL){
@@ -2003,6 +2010,8 @@ static void call_file(struct session *sp,char const *tempfile){
     if(tg->category[0] != '\0')
       attrprintf(fd,"talkgroup category","%s",tg->category);
   }
+  if(sp->file_system[0] != '\0')
+    attrprintf(fd,"system","%s",sp->file_system);
   if(sp->file_src[0] != '\0')
     attrprintf(fd,"call source","%s",sp->file_src);
   if(sp->file_mode[0] != '\0')
@@ -2028,8 +2037,15 @@ static void call_file(struct session *sp,char const *tempfile){
   time_t const seconds = sp->file_time / BILLION;
   struct tm tm;
   gmtime_r(&seconds,&tm);
-  char dir[128];
-  snprintf(dir,sizeof dir,"%s/%d/%02d/%02d",dest,tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday);
+  // A named system's calls go in its own folder: two systems use the same numbers
+  char system[2 * sizeof sp->file_system] = "";
+  if(sp->file_system[0] != '\0'){
+    path_safe(system,sizeof system - 1,sp->file_system,"");
+    if(system[0] != '\0')
+      strlcat(system,"/",sizeof system);
+  }
+  char dir[256];
+  snprintf(dir,sizeof dir,"%s%s/%d/%02d/%02d",system,dest,tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday);
   char suffix[16] = "";
   {
     char const *dot = strrchr(sp->filename,'.');
@@ -2096,10 +2112,12 @@ static void call_file(struct session *sp,char const *tempfile){
       csv_field(name,sizeof name,tg->tag);
       csv_field(description,sizeof description,tg->description);
     }
-    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s,%s,%s\n",
+    char sysname[2 * sizeof sp->file_system + 4];
+    csv_field(sysname,sizeof sysname,sp->file_system);
+    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s,%s,%s,%s\n",
 	    tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,(int)(r.rem / 100000000),
 	    sp->samprate != 0 ? (float)sp->samples_written / sp->samprate : 0.0f,
-	    dest,src,mode,freq,slot,sp->ssrc,qpath,name,description);
+	    dest,src,mode,freq,slot,sp->ssrc,qpath,name,description,sysname);
   }
 }
 
