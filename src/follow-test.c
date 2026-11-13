@@ -186,6 +186,31 @@ int main(void){
     check(ok,c->what);
   }
 
+  // Fable: an encrypted call is left even when some frames were played
+  dv_follow_destroy(F);
+  memset(&Voice_stats,0,sizeof Voice_stats);
+  F = dv_follow_create(&Chan,NULL,NULL);
+  grant(DV_EVENT_UPDATE,852362500,10003,3421116,40); // learned from updates: no service options
+  run(2,false);
+  run(10,true);
+  Voice_stats.m17_encrypted = true;                  // its LDU2 says encrypted
+  run(1,false);
+  check(F->voice == NULL,"leaves an encrypted call even after frames were played");
+
+  // Fable: until the control channel names the network (WACN), a Phase 2
+  // grant can't be followed, and mustn't keep a Phase 1 call from being
+  dv_follow_destroy(F);
+  memset(&Voice_stats,0,sizeof Voice_stats);
+  F = dv_follow_create(&Chan,NULL,NULL);
+  uint32_t const wacn = Cc.wacn;
+  Cc.wacn = 0;
+  grant(DV_EVENT_GRANT,851912500,10003,3421116,50);  // TDMA (slot 0)
+  dv_event fdma = { .type = DV_EVENT_GRANT, .freq_hz = 852812500, .slot = -1, .group = 10029, .source = 9989125, .transmission = 51 };
+  dv_follow_event(F,&fdma);
+  run(2,false);
+  check(following() == 852812500,"follows a Phase 1 call while a Phase 2 grant waits for the WACN");
+  Cc.wacn = wacn;
+
   dv_follow_destroy(F);
   printf(Failures ? "follower tests FAILED\n" : "Follower tests passed\n");
   return Failures ? 1 : 0;

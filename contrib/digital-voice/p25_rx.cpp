@@ -48,10 +48,10 @@ private:
 
 class p25_decoder : public dv_decoder {
 public:
-  p25_decoder(bool cqpsk, uint16_t nac, dv_pcm_callback callback, void *user_data)
+  p25_decoder(bool cqpsk, uint16_t nac, bool wait_clear, dv_pcm_callback callback, void *user_data)
     : cqpsk_(cqpsk),
       frontend_(cqpsk ? 250.0f : 350.0f),
-      voice_(nac, callback, user_data),
+      voice_(nac, wait_clear, callback, user_data),
       fsk4_(DV_P25_C4FM_RX_TAPS)
   {
   }
@@ -117,7 +117,7 @@ private:
 
 } // namespace
 
-dv_decoder *dv_create_p25(bool cqpsk, uint16_t nac, dv_pcm_callback callback, void *user_data)
+dv_decoder *dv_create_p25(bool cqpsk, uint16_t nac, bool wait_clear, dv_pcm_callback callback, void *user_data)
 {
-  return new p25_decoder(cqpsk, nac, callback, user_data);
+  return new p25_decoder(cqpsk, nac, wait_clear, callback, user_data);
 }

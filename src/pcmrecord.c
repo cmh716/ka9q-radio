@@ -1945,6 +1945,27 @@ static int mkdirs(char const *path){
   return 0;
 }
 
+// One CSV field (RFC 4180): quoted, with quotes doubled, when it holds a
+// comma, quote or line break; a leading = + @ or tab gets an apostrophe so
+// a spreadsheet shows it rather than evaluating it
+static void csv_field(char *out,size_t len,char const *in){
+  bool const formula = in[0] == '=' || in[0] == '+' || in[0] == '@' || in[0] == '\t';
+  bool const quote = formula || strpbrk(in,",\"\r\n") != NULL;
+  size_t n = 0;
+  if(quote && n + 1 < len)
+    out[n++] = '"';
+  if(formula && n + 1 < len)
+    out[n++] = '\'';
+  for(char const *p = in; *p != '\0' && n + 3 < len; p++){
+    if(*p == '"')
+      out[n++] = '"';
+    out[n++] = *p;
+  }
+  if(quote && n + 1 < len)
+    out[n++] = '"';
+  out[n] = '\0';
+}
+
 // --by-talkgroup: label the finished file with its call, move it to
 // talkgroup/yyyy/mm/dd/yyyymmddThhmmssZ_<MHz>_<source><suffix> and log it
 static void call_file(struct session *sp,char const *tempfile){
@@ -2020,10 +2041,20 @@ static void call_file(struct session *sp,char const *tempfile){
     char slot[16] = "";
     if(sp->file_slot >= 0)
       snprintf(slot,sizeof slot,"%d",sp->file_slot);
-    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s/%s\n",
+    // IDs come off the air (a D-STAR or YSF callsign can hold any printable
+    // character): quote the text fields
+    char path[PATH_MAX + 600];
+    snprintf(path,sizeof path,"%s/%s",Recordings,final);
+    char dest[2 * sizeof sp->file_dest + 4],src[2 * sizeof sp->file_src + 4],mode[2 * sizeof sp->file_mode + 4];
+    char qpath[2 * sizeof path + 4];
+    csv_field(dest,sizeof dest,sp->file_dest);
+    csv_field(src,sizeof src,sp->file_src);
+    csv_field(mode,sizeof mode,sp->file_mode);
+    csv_field(qpath,sizeof qpath,path);
+    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s\n",
 	    tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,(int)(r.rem / 100000000),
 	    sp->samprate != 0 ? (float)sp->samples_written / sp->samprate : 0.0f,
-	    sp->file_dest,sp->file_src,sp->file_mode,freq,slot,sp->ssrc,Recordings,final);
+	    dest,src,mode,freq,slot,sp->ssrc,qpath);
   }
 }
 

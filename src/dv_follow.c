@@ -67,6 +67,7 @@ struct dv_follow {
   uint32_t skip_source;
   uint32_t skip_transmission;
   uint32_t last_group;       // talkgroup of the call last followed: the conversation
+  bool tdma_ready;           // the control channel has named the network (WACN): Phase 2 can be followed
   uint64_t calls;            // calls followed
 };
 
@@ -202,6 +203,8 @@ static struct follow_grant const *best_grant(struct dv_follow const *f){
       continue;
     if(g->freq == f->skip_freq && g->slot == f->skip_slot && g->group == f->skip_group)
       continue;
+    if(g->slot >= 0 && !f->tdma_ready)
+      continue; // can't descramble it yet: don't let it stand in the way of other calls
     int const p = priority(f,g);
     if(p < 0)
       continue;
@@ -245,6 +248,9 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
     .p25_wacn = cc->wacn,
     .p25_sysid = cc->sysid,
     .p25_slot = g->slot < 0 ? 0 : g->slot,
+    // A followed Phase 1 call is often joined late, without its HDU: play
+    // nothing until an LDU2 says it's clear, rather than an LDU1 of ciphertext
+    .p25_wait_clear = true,
   };
   dv_mode mode;
   if(g->slot >= 0){
@@ -313,6 +319,7 @@ static float complex const *tune_block(struct dv_follow *f, double freq, int *co
 
 void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
   f->now += (uint64_t)count;
+  f->tdma_ready = cc->wacn != 0;
   double const freq = f->voice != NULL ? (double)f->cur.freq : f->chan->tune.freq;
   int n = 0;
   float complex const *iq = tune_block(f,freq,&n);
@@ -330,8 +337,8 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     }
     struct follow_grant const *b = best_grant(f);
     struct follow_grant const *r = NULL;
-    if(st.m17_encrypted && st.voice_decoded == 0)
-      release(f,"encrypted");
+    if(st.m17_encrypted)
+      release(f,"encrypted"); // (Phase 1 waits for a clear ALGID before it plays anything)
     else if(st.call_serial != f->voice_serial){
       if(f->pending != 0){
 	// Our channel was granted again during this transmission and the

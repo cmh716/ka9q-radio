@@ -68,13 +68,13 @@ int main(void){
 
   // Definitive end during a short gap, versus uncertain ID loss in a fade.
   struct dv_call none = {.freq=chan.tune.freq,.slot=-1,.serial=2};
-  track_call(&chan,&current,&none,&q,true);
+  track_call(&chan,&current,&none,&q,960);
   check(current.id == 0,"terminator ends call immediately");
   frame(&q,"200","2",2,44);
   uint32_t const rekey = current.id;
   none.serial = 2;
   for(int i=0;i<10;i++)
-    track_call(&chan,&current,&none,&q,true);
+    track_call(&chan,&current,&none,&q,960);
   check(current.id == rekey,"200 ms fade preserves call");
   frame(&q,"200","2",2,55);
   check(current.id == rekey,"IDs return after fade without splitting call");

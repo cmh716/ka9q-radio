@@ -31,6 +31,8 @@ typedef enum {
 
 typedef struct {
   uint16_t p25_nac;  // P25: NAC to accept, 0 = any; Phase 2: the system's NAC (for descrambling)
+  bool p25_wait_clear; // P25 Phase 1: play nothing until an HDU or LDU2 says the call is clear
+                       // (a late join otherwise plays its first LDU1 before encryption is known)
   uint32_t p25_wacn; // P25 Phase 2: WACN and system ID (for descrambling)
   uint16_t p25_sysid;
   int p25_slot;      // P25 Phase 2: TDMA slot 0 or 1

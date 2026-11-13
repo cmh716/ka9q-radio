@@ -18,7 +18,7 @@ extern "C" dv_decoder *dv_create(dv_mode mode, dv_config const *config,
     case DV_P25_CQPSK:
       if (config->p25_nac > 0xfff)
         return nullptr;
-      return dv_create_p25(mode == DV_P25_CQPSK, config->p25_nac, callback, user_data);
+      return dv_create_p25(mode == DV_P25_CQPSK, config->p25_nac, config->p25_wait_clear, callback, user_data);
     case DV_DMR:
       if (config->dmr_slot < 0 || config->dmr_slot > 2)
         return nullptr;

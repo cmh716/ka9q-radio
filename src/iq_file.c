@@ -111,13 +111,17 @@ int iq_file_setup(struct frontend * const frontend, dictionary const * const dic
 // Read up to n samples, looping or padding with zeros at the end
 static void read_samples(struct iq_file *f,float complex *out,long n){
   long got = 0;
+  bool rewound = false; // looping: a rewind must bring samples, or the file has none
   while(got < n){
     size_t const r = f->ended ? 0 : fread(out + got,sizeof *out,(size_t)(n - got),f->fp);
     got += (long)r;
     if(got == n)
       break;
-    if(!f->ended && f->loop){
+    if(r > 0)
+      rewound = false;
+    if(!f->ended && f->loop && !rewound){
       rewind(f->fp);
+      rewound = true;
       continue;
     }
     if(!f->ended){

@@ -45,7 +45,8 @@
 #define DV_FM_DECIM 6               // 48 kHz -> 8 kHz
 #define DV_FM_DEVIATION 5000.0f     // Hz at full scale
 #define DV_FM_DELAY 12              // frames (240 ms)
-#define DV_FM_CLOSE_FRAMES 3        // below the close threshold this long to close
+#define DV_FM_SLACK 16              // more frames room: a long blocktime makes several per block
+#define DV_FM_CLOSE_TIME 0.06f      // seconds below the close threshold to close
 #define DV_DIGITAL_HOLD (DV_IQ_SAMPRATE_RADIOD / 2) // FM stays muted 500 ms after digital activity
 
 // Carrier gate: the decoders run only while there is something to decode
@@ -101,8 +102,8 @@ struct dv_fm {
   int below;                          // frames below the close threshold
   float frame[DV_PCM_SAMPLES];        // 8 kHz audio being collected
   int frame_len;
-  float delay[DV_FM_DELAY + 1][DV_PCM_SAMPLES]; // delay line of finished frames
-  bool delay_open[DV_FM_DELAY + 1];
+  float delay[DV_FM_DELAY + DV_FM_SLACK][DV_PCM_SAMPLES]; // delay line of finished frames
+  bool delay_open[DV_FM_DELAY + DV_FM_SLACK];
   int delay_count;
 };
 
@@ -142,7 +143,9 @@ static void dv_fm_block(struct dv_fm *fm,chan_t const *chan,float complex const 
   if(snr >= open_at){
     fm->open = true;
     fm->below = 0;
-  } else if(fm->open && snr < close_at && ++fm->below > DV_FM_CLOSE_FRAMES + chan->squelch.tail){
+  } else if(fm->open && snr < close_at
+	    && ++fm->below > (int)ceilf(DV_FM_CLOSE_TIME / (float)Blocktime) + chan->squelch.tail){
+    // (the tail, as in fm.c, is in blocks)
     fm->open = false;
   }
   for(int i = 0; i < n; i++){
@@ -169,7 +172,7 @@ static void dv_fm_block(struct dv_fm *fm,chan_t const *chan,float complex const 
     fm->frame[fm->frame_len++] = out;
     if(fm->frame_len == DV_PCM_SAMPLES){
       fm->frame_len = 0;
-      if(fm->delay_count <= DV_FM_DELAY){
+      if(fm->delay_count < DV_FM_DELAY + DV_FM_SLACK){
         memcpy(fm->delay[fm->delay_count],fm->frame,sizeof fm->frame);
         fm->delay_open[fm->delay_count] = fm->open;
         fm->delay_count++;
@@ -253,7 +256,7 @@ struct dv_audio_queue {
   dv_decoder const *decoder;
   dv_mode mode;
   struct dv_follow const *follow;
-  int absent; // IQ blocks without IDs, independent of the number of PCM frames
+  int absent; // samples without IDs, independent of the number of PCM frames
 };
 
 // P25 control channel events (site, band plan, voice grants), logged with -v
@@ -312,8 +315,9 @@ static void push_status(chan_t *chan){
 // when the destination, the talker or the mode changes; it ends when the IDs
 // go. A talker or destination that fills in later is the same call
 static uint32_t Call_seq; // ids across all channels, so they never repeat on one
-#define DV_CALL_GONE 25 // blocks (0.5 s) without IDs that end a call
-static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,bool tick){
+#define DV_CALL_GONE (DV_IQ_SAMPRATE_RADIOD / 2) // samples (0.5 s) without IDs that end a call
+// samples: how much signal this observation covers (0 inside a block: a PCM frame)
+static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call const *seen,struct dv_audio_queue *queue,int samples){
   // A terminator is definitive, even when the next key-up has identical
   // IDs, or both calls occur within a single input block. Only uncertain
   // loss of IDs gets the fade grace period below.
@@ -326,7 +330,7 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
   bool const has_ids = seen->dest[0] != '\0' || seen->src[0] != '\0';
   if(!has_ids){
     // Gone for a moment (a fade, a slot glitch) is still the same call
-    if(cur->id != 0 && tick && ++queue->absent >= DV_CALL_GONE){
+    if(cur->id != 0 && samples > 0 && (queue->absent += samples) >= DV_CALL_GONE){
       if(Verbose > 1)
 	fprintf(stderr,"%s call %u ended\n",chan->name,cur->id);
       memset(cur,0,sizeof *cur); // ended
@@ -398,7 +402,7 @@ static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   dv_get_stats(queue->decoder,&st);
   struct dv_call seen;
   call_ids(&st,queue->mode,queue->follow,queue->chan,&seen);
-  track_call(queue->chan,queue->current,&seen,queue,false);
+  track_call(queue->chan,queue->current,&seen,queue,0);
   if(queue->count == DV_AUDIO_QUEUE_DEPTH){
     queue->dropped++;
     return;
@@ -465,7 +469,11 @@ int demod_dv(void *arg){
     : chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK
     : chan->p25.modulation == P25_PHASE2 ? DV_P25P2 : DV_P25_C4FM;
   bool const is_p25p2 = mode == DV_P25P2;
-  dv_decoder * const decoder = dv_create(mode,&config,queue_pcm,&audio_queue);
+  // A following channel plays only the calls it follows: its control channel
+  // decoder's own speech (should the control channel move and this frequency
+  // carry voice) would bypass the talkgroup list
+  bool const following = chan->p25.follow && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK);
+  dv_decoder * const decoder = dv_create(mode,&config,following ? NULL : queue_pcm,&audio_queue);
   if(decoder == NULL){
     fprintf(stderr,"%s: couldn't create %s decoder\n",chan->name,label);
     chan->demod_type = INVALID_DEMOD;
@@ -475,7 +483,7 @@ int demod_dv(void *arg){
   audio_queue.mode = mode;
   // A P25 Phase 1 control channel can follow its voice grants
   struct dv_events events = { .chan = chan };
-  if(chan->p25.follow && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK)){
+  if(following){
     events.follow = dv_follow_create(chan,queue_pcm,&audio_queue);
     if(events.follow == NULL)
       fprintf(stderr,"%s: couldn't create the P25 voice channel follower\n",chan->name);
@@ -583,7 +591,7 @@ int demod_dv(void *arg){
       // Labels for what the decoders produce next; published as it plays
       struct dv_call seen;
       call_ids(&st,mode,events.follow,chan,&seen);
-      track_call(chan,&decoding,&seen,&audio_queue,true);
+      track_call(chan,&decoding,&seen,&audio_queue,count);
     }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);

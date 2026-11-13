@@ -50,9 +50,10 @@ int demod_fm(void *arg){
     // Set up PL tone squelch
     init_goertzel(&tone_detect,chan->fm.tone_freq/samprate);
   }
+  // Always initialised: a PRESET command can set a DCS code without
+  // restarting this demodulator
   struct dcs_decoder dcs;
-  if(chan->fm.dcs_code != 0)
-    init_dcs_decoder(&dcs,(float)samprate);
+  init_dcs_decoder(&dcs,(float)samprate);
   float const alpha = -(float)expm1(-Blocktime / 1.0); // Smoothing for estimated frequency offset
   assert(isfinite(alpha) && alpha > 0.0f && alpha <= 1.0f);
   float deemph_state = 0;

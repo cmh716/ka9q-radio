@@ -58,7 +58,7 @@ void receive(void *,int16_t const pcm[DV_PCM_SAMPLES]) {
 }
 
 // Only P25 emits frames; the other factories provide silent competitors.
-dv_decoder *dv_create_p25(bool,uint16_t,dv_pcm_callback cb,void *u) { return new scripted_decoder(true,cb,u); }
+dv_decoder *dv_create_p25(bool,uint16_t,bool,dv_pcm_callback cb,void *u) { return new scripted_decoder(true,cb,u); }
 dv_decoder *dv_create_dmr(int,dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
 dv_decoder *dv_create_ysf(dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
 dv_decoder *dv_create_dstar(dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }

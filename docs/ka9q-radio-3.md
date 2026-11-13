@@ -71,6 +71,9 @@ daemon may be used to decode multiplexed stereo from the single
 channel composite baseband output of a regular FM demodulator with
 appropriate bandwidth and sample rates, but the one built into the WFM demodulator is
 more convenient.)
+The digital voice modes (P25, DMR, M17, YSF, DSTAR, NXDN, DIGITAL) are built into radiod by
+default and need g++ and libcodec2; **make ENABLE_DV=0** builds radiod without them (their
+channels are then refused).
 "P25" decodes APCO Project 25 Phase 1 digital voice (C4FM or CQPSK) and
 always produces mono 8 kHz audio; encrypted calls are muted.
 Tuned to a trunked system's control channel, it also decodes the trunking

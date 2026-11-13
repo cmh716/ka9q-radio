@@ -37,7 +37,7 @@ public:
       tap_[i] = {this, i};
       dv_decoder *d = nullptr;
       switch (kModes[i]) {
-      case DV_P25_C4FM: d = dv_create_p25(false, config.p25_nac, &auto_decoder::collect, &tap_[i]); break;
+      case DV_P25_C4FM: d = dv_create_p25(false, config.p25_nac, config.p25_wait_clear, &auto_decoder::collect, &tap_[i]); break;
       case DV_DMR: d = dv_create_dmr(config.dmr_slot, &auto_decoder::collect, &tap_[i]); break;
       case DV_YSF: d = dv_create_ysf(&auto_decoder::collect, &tap_[i]); break;
       case DV_DSTAR: d = dv_create_dstar(&auto_decoder::collect, &tap_[i]); break;

@@ -24,7 +24,13 @@ automatically.
     upstream/        code taken from OP25; upstream/libm17 from the M17 Foundation
 
 P25 audio is assumed clear until the HDU or an LDU2 ESS carries a non-clear
-ALGID, as OP25 does; encrypted voice is muted until the next TDU.
+ALGID, as OP25 does; encrypted voice is muted until the next TDU. An LDU2
+read as encrypted with more than 2 RS corrections must be confirmed by the
+next (RS(24,16,9) can mis-correct a clear call to a bogus ALGID). With
+dv_config.p25_wait_clear (radiod's grant follower sets it) nothing plays
+until the ALGID is known, so a late join can't play an LDU1 of ciphertext.
+
+radiod builds this library in unless ENABLE_DV=0 (src/Makefile).
 
 P25 control channel TSDUs carry up to three TSBKs. Their block interleave,
 trellis code and CRC follow OP25's p25p1_fdma.cc, but the rate-1/2 trellis

@@ -10,7 +10,8 @@
 
 class p25_voice {
 public:
-  p25_voice(uint16_t nac, dv_pcm_callback callback, void *user_data);
+  // wait_clear: mute a call until its HDU or an LDU2 says it is clear
+  p25_voice(uint16_t nac, bool wait_clear, dv_pcm_callback callback, void *user_data);
   ~p25_voice();
   p25_voice(const p25_voice&) = delete;
   p25_voice& operator=(const p25_voice&) = delete;

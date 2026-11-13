@@ -61,6 +61,9 @@ struct p25_voice::impl {
   dv_stats stats{};
   // Assume clear (as OP25 does) until an HDU or LDU2 says otherwise
   bool encrypted = false;
+  bool wait_clear = false;    // mute until the ALGID is known (see dv_config.p25_wait_clear)
+  bool algid_known = false;   // this call's HDU or an LDU2 has given its ALGID
+  int weak_algid = -1;        // a non-clear ALGID from an LDU2 decoded with many corrections
 
   uint64_t last_frame = 0;    // symbol count of the last frame
 
@@ -69,10 +72,16 @@ struct p25_voice::impl {
   {
     stats.call_serial++;
     encrypted = false;
+    algid_known = false;
+    weak_algid = -1;
     stats.src_call[0] = stats.dst_call[0] = '\0';
   }
 
-  void set_algid(uint8_t algid) { encrypted = algid != ALGID_CLEAR; }
+  void set_algid(uint8_t algid)
+  {
+    encrypted = algid != ALGID_CLEAR;
+    algid_known = true;
+  }
 
   void read_hdu(bit_vector const& frame)
   {
@@ -113,7 +122,17 @@ struct p25_voice::impl {
     if (errors < 0 || errors > 4)
       return;
     // MI is hexbits 39-50; ALGID follows
-    set_algid(static_cast<uint8_t>((hb[51] << 2) + (hb[52] >> 4)));
+    uint8_t const algid = static_cast<uint8_t>((hb[51] << 2) + (hb[52] >> 4));
+    // RS(24,16,9) at its 4-correction limit can mis-correct (a clear call
+    // read as ALGID 0x1c): encryption read with more than 2 corrections
+    // counts only when a second LDU2 agrees. (Clear readings, and the HDU's
+    // much stronger code, are taken as they come)
+    if (algid != ALGID_CLEAR && errors > 2 && algid != weak_algid) {
+      weak_algid = algid;
+      return;
+    }
+    weak_algid = -1;
+    set_algid(algid);
   }
 
   // LDU1 link control: the talkgroup (or target unit) and source of the call
@@ -143,7 +162,7 @@ struct p25_voice::impl {
 
   void decode_voice(bit_vector const& frame)
   {
-    if (encrypted) {
+    if (encrypted || (wait_clear && !algid_known)) {
       stats.voice_muted += nof_voice_codewords;
       return;
     }
@@ -200,9 +219,10 @@ struct p25_voice::impl {
   }
 };
 
-p25_voice::p25_voice(uint16_t nac, dv_pcm_callback callback, void *user_data)
+p25_voice::p25_voice(uint16_t nac, bool wait_clear, dv_pcm_callback callback, void *user_data)
   : impl_(new impl)
 {
+  impl_->wait_clear = wait_clear;
   impl_->callback = callback;
   impl_->user_data = user_data;
   impl_->framer.set_nac(nac);
@@ -233,6 +253,7 @@ void p25_voice::get_stats(dv_stats *stats) const
   stats->voice_muted = impl_->stats.voice_muted;
   stats->last_nac = impl_->stats.last_nac;
   stats->last_bch_errors = impl_->stats.last_bch_errors;
+  stats->m17_encrypted = impl_->encrypted; // (the field M17 and DMR share)
   memcpy(stats->src_call, impl_->stats.src_call, sizeof stats->src_call);
   memcpy(stats->dst_call, impl_->stats.dst_call, sizeof stats->dst_call);
   impl_->trunk.get_stats(stats);
