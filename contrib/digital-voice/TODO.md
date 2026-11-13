@@ -9,9 +9,11 @@ Capacity Max (going encrypted).
 - [x] P25 grant following (`p25-follow`) and Phase 2 voice on the live
       system: working well with the 800 MHz Yagi (2026-11-13).
 - [ ] Talkgroup names (`talkgroups.d`): live test in monitor and pcmrecord.
-- [ ] Control channel search (`p25-control-channels`, broadcast
-      secondaries): live test, e.g. by tuning the channel to a dead
-      frequency. Tune the 5 s wait and 2 s dwell.
+- [x] Control channel search (`p25-control-channels`, broadcast
+      secondaries): works live (2026-11-13), started on a frequency with no
+      control channel: found it on the first hop after 5 s, and the site's
+      broadcast secondaries match RadioReference. Not yet seen: a real
+      control channel change, and a search past several dead frequencies.
 - [ ] P25 Phase 1 trunked system one county over: live test. Following
       Phase 1 (FDMA) voice grants is implemented and tested on recordings,
       but has never run on a live Phase 1 system.
