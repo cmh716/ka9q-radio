@@ -9,6 +9,12 @@ Capacity Max (going encrypted).
 - [x] P25 grant following (`p25-follow`) and Phase 2 voice on the live
       system: working well with the 800 MHz Yagi (2026-11-13).
 - [ ] Talkgroup names (`talkgroups.d`): live test in monitor and pcmrecord.
+- [ ] Control channel search (`p25-control-channels`, broadcast
+      secondaries): live test, e.g. by tuning the channel to a dead
+      frequency. Tune the 5 s wait and 2 s dwell.
+- [ ] P25 Phase 1 trunked system one county over: live test. Following
+      Phase 1 (FDMA) voice grants is implemented and tested on recordings,
+      but has never run on a live Phase 1 system.
 - [ ] Mixed FM + digital channel (`analog = yes`): live test.
 - [ ] M17: live test once an M17 radio or hotspot is available.
 
@@ -32,6 +38,15 @@ Capacity Max (going encrypted).
       system is Type-C (a control channel, like P25) or Type-D (distributed,
       each repeater announces its own traffic). Then decode its control
       messages and follow calls with the existing NXDN96 receiver.
+- [x] Backup control channels: on losing the control channel the follower
+      searches the listed and broadcast control channel frequencies. The
+      search (a list of candidates, a wait, a dwell) isn't specific to P25:
+      move it out of `dv_follow.c` when a second trunking type arrives.
+- [ ] Control channel search across sites (a neighbouring site's control
+      channel when this one is gone): needs the band plan and NAC reset.
+- [ ] **Two-tone paging (fire/EMS) detection**: recognise a department's
+      two-tone sequential page on an analog (or decoded) channel; log it,
+      and use it to start or tag a recording or run a command.
 - [ ] **P25 multi-call following** (`p25-voice-channels = N`): one
       control-channel decode, N tuners, one output stream each.
 - [ ] P25: decode multi-block trunking messages (PDU, DUID 12), which some
@@ -48,6 +63,11 @@ Capacity Max (going encrypted).
 
 ## Conventional (non-trunked) systems
 
+- [ ] Recording: optionally notch the CTCSS tone out of analog recordings
+      (pcmrecord or radiod option), as monitor does for playback.
+- [ ] Even out digital voice levels: decoded audio from different modes,
+      radios and talkers varies in loudness; normalise it (optionally).
+
 - [ ] A master frequency list for non-trunked analog and digital systems:
       one CSV that both names the channels in monitor (as `repeaters.d`
       does for RepeaterBook data) and generates the channel definitions for
@@ -63,6 +83,11 @@ Capacity Max (going encrypted).
 - [ ] Text and data from ham digital voice, shown in monitor:
       D-STAR slow-data messages, DMR talker alias, YSF and M17 text.
 - [ ] GPS positions carried in D-STAR, DMR and YSF transmissions.
+
+## User interface
+
+- [ ] A better TUI for monitor: a layout meant for scanning (state, current
+      and recent calls, names), not just the wide table.
 
 ## Housekeeping
 

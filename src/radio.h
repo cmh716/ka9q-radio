@@ -185,6 +185,8 @@ struct channel {
     bool follow;                  // control channel: play the calls it grants
     int ntalkgroups;              // follow only these, in priority order (0: all)
     uint32_t talkgroups[32];
+    int ncontrol;                 // p25-control-channels: where else to look for the control channel
+    double control[16];           // Hz
     uint16_t last_nac;            // NAC of the last frame received
     bool have_nac;                // last_nac is valid
   } p25;

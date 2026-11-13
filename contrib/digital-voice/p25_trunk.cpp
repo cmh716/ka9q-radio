@@ -256,6 +256,27 @@ void p25_trunk::set_iden(uint8_t opcode, uint8_t const t[12])
   }
 }
 
+void p25_trunk::secondary(uint16_t ch)
+{
+  int slot;
+  uint64_t const hz = channel_hz(ch, &slot);
+  if (hz == 0 || slot >= 0) // band plan not known yet, or a TDMA control channel (not decoded)
+    return;
+  for (uint64_t const known : secondaries_)
+    if (known == hz)
+      return;
+  if (secondaries_.size() >= 32)
+    return;
+  secondaries_.push_back(hz);
+  dv_event e{};
+  e.type = DV_EVENT_CONTROL;
+  e.channel = ch;
+  e.freq_hz = hz;
+  e.slot = -1;
+  snprintf(e.text, sizeof e.text, "secondary control channel %.4f MHz", hz / 1e6);
+  emit(e);
+}
+
 void p25_trunk::tsbk(uint8_t const t[12], uint16_t nac)
 {
   (void)nac;
@@ -295,6 +316,13 @@ void p25_trunk::tsbk(uint8_t const t[12], uint16_t nac)
   case 0x34: // IDEN_UP_VU
   case 0x3d: // IDEN_UP
     set_iden(opcode, t);
+    break;
+  case 0x39: // SCCB: RFSS, site, then two channels each with its service class
+    secondary(be16(t + 4));
+    secondary(be16(t + 7));
+    break;
+  case 0x29: // SCCB_EXP: RFSS, site, transmit channel, receive channel
+    secondary(be16(t + 4));
     break;
   case 0x3a: { // RFSS_STS_BCST
     uint16_t const sysid = be16(t + 3) & 0xfff;

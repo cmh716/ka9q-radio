@@ -102,8 +102,9 @@ pcmrecord(1). After the call the name stays, with the time since the call
 ended, until another call takes its place.
 .PP
 Between calls a P25 trunking follower (radiod's p25-follow) shows "CC" and
-the NAC while it is decoding the control channel, and "no CC" when it has
-decoded nothing for two seconds.
+the NAC while it is decoding the control channel, "no CC" when it has
+decoded nothing for two seconds, and "CC search" while it tries the site's
+other control channel frequencies (the frequency shown changes as it does).
 .SH NOTES
 A session may not appear until data arrives, particularly when receiver
 squelch suppresses output. Missing metadata can prevent interpretation of

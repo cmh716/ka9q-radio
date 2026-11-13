@@ -28,6 +28,9 @@ extern int Overlap; // fast convolution overlap factor (radio.c)
 #define FOLLOW_LISTEN (DV_IQ_SAMPRATE_RADIOD * 3)      // give a new channel this long to produce voice
 #define FOLLOW_LINGER (DV_IQ_SAMPRATE_RADIOD)          // after an end with such a grant unplaced: wait for voice this long
 #define FOLLOW_CC_LOST (DV_IQ_SAMPRATE_RADIOD * 2)     // no good control message this long: the control channel is gone
+#define FOLLOW_CC_SEARCH (DV_IQ_SAMPRATE_RADIOD * 5)   // gone this long: look for it on the site's other control channels
+#define FOLLOW_CC_DWELL (DV_IQ_SAMPRATE_RADIOD * 2)    // give each this long to produce a control message
+#define FOLLOW_CONTROLS 32
 
 struct follow_grant {
   bool valid;
@@ -74,7 +77,53 @@ struct dv_follow {
   uint64_t cc_seen;          // when that count last rose
   bool cc_ever;              // it has risen at all
   uint16_t cc_nac;           // the control channel's NAC
+  // Where the control channel has been or may be: p25-control-channels,
+  // the secondaries the site broadcasts, and wherever it has been received
+  uint64_t controls[FOLLOW_CONTROLS];
+  int ncontrols;
+  bool searching;            // the control channel went: trying the others in turn
+  uint64_t tried_at;         // when the current one was tuned
 };
+
+static void add_control(struct dv_follow *f, uint64_t hz){
+  if(hz == 0)
+    return;
+  for(int i = 0; i < f->ncontrols; i++)
+    if(f->controls[i] == hz)
+      return;
+  if(f->ncontrols < FOLLOW_CONTROLS)
+    f->controls[f->ncontrols++] = hz;
+}
+
+// Tune the control channel to the next frequency it might be on, among those
+// the front end covers as it is tuned now (never moving it: other channels
+// depend on where it is). Nothing happens if there is no other
+static void try_next_control(struct dv_follow *f){
+  chan_t * const chan = f->chan;
+  uint64_t const here = (uint64_t)llrint(chan->tune.freq);
+  if(here == 0)
+    return; // the channel is switched off
+  pthread_mutex_lock(&Frontend.status_mutex);
+  double const lo = Frontend.frequency + Frontend.min_IF - chan->filter.min_IF;
+  double const hi = Frontend.frequency + Frontend.max_IF - chan->filter.max_IF;
+  pthread_mutex_unlock(&Frontend.status_mutex);
+  int at = -1;
+  for(int i = 0; i < f->ncontrols; i++)
+    if(f->controls[i] == here)
+      at = i;
+  for(int n = 1; n <= f->ncontrols; n++){
+    uint64_t const hz = f->controls[(at + n) % f->ncontrols];
+    if(hz == here || (double)hz < lo || (double)hz > hi)
+      continue;
+    if(Verbose > 0)
+      fprintf(stderr,"%s P25 no control channel on %.4f MHz: trying %.4f MHz\n",chan->name,here * 1e-6,hz * 1e-6);
+    set_freq(chan,(double)hz);
+    f->searching = true;
+    break;
+  }
+  f->tried_at = f->now; // even with nowhere to go: look again after a dwell
+}
+
 
 // Position in the talkgroup list (lower is better), or -1 if not wanted
 static int priority(struct dv_follow const *f, struct follow_grant const *g){
@@ -103,6 +152,8 @@ struct dv_follow *dv_follow_create(chan_t *chan, dv_pcm_callback pcm, void *pcm_
     return NULL;
   }
   f->have_out = true;
+  for(int i = 0; i < chan->p25.ncontrol; i++)
+    add_control(f,(uint64_t)llrint(chan->p25.control[i]));
   // Same response as the control channel's
   int const samprate = DV_IQ_SAMPRATE_RADIOD;
   float const nyquist = samprate / 2.0f;
@@ -149,7 +200,13 @@ void dv_follow_destroy(struct dv_follow *f){
 }
 
 void dv_follow_event(struct dv_follow *f, dv_event const *e){
-  if(f == NULL || (e->type != DV_EVENT_GRANT && e->type != DV_EVENT_UPDATE))
+  if(f == NULL)
+    return;
+  if(e->type == DV_EVENT_CONTROL){
+    add_control(f,e->freq_hz);
+    return;
+  }
+  if(e->type != DV_EVENT_GRANT && e->type != DV_EVENT_UPDATE)
     return;
   if(e->freq_hz == 0 || e->encrypted)
     return; // band plan unknown yet, or nothing to hear
@@ -331,7 +388,13 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     f->cc_seen = f->now;
     f->cc_ever = true;
     f->cc_nac = cc->last_nac;
-  }
+    if(f->searching && Verbose > 0)
+      fprintf(stderr,"%s P25 control channel found on %.4f MHz\n",f->chan->name,f->chan->tune.freq * 1e-6);
+    f->searching = false;
+    add_control(f,(uint64_t)llrint(f->chan->tune.freq)); // somewhere to come back to
+  } else if(f->searching ? f->now - f->tried_at > FOLLOW_CC_DWELL
+	    : f->now - (f->cc_seen > f->tried_at ? f->cc_seen : f->tried_at) > FOLLOW_CC_SEARCH)
+    try_next_control(f);
   double const freq = f->voice != NULL ? (double)f->cur.freq : f->chan->tune.freq;
   int n = 0;
   float complex const *iq = tune_block(f,freq,&n);
@@ -416,6 +479,8 @@ bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
     snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
   else if(f->cc_ever && f->now - f->cc_seen <= FOLLOW_CC_LOST)
     snprintf(buf,len,"CC N%03X",f->cc_nac);
+  else if(f->searching)
+    snprintf(buf,len,"CC search");
   else
     snprintf(buf,len,"no CC");
   return true;

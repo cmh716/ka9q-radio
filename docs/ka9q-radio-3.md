@@ -318,7 +318,7 @@ P25 modulation: **c4fm** for conventional and most trunked systems,
 
 P25 Network Access Code to accept, decimal or 0x-prefixed hex. 0 (default) accepts any NAC.
 
-### p25-follow = no, p25-talkgroups
+### p25-follow = no, p25-talkgroups, p25-control-channels
 
 On a P25 Phase 1 control channel, **p25-follow = yes** makes the channel
 play the calls the control channel grants: a second downconverter in the
@@ -338,20 +338,36 @@ voice channel again during the transmission, the follower can't tell whether
 that was the transmission re-announced or a quick re-key there, so after the
 end it stays up to 1 second: voice then is followed as the next transmission,
 silence means a re-announcement. A re-key whose voice starts later than that
-is missed. For example:
+is missed.
+
+A site can move its control channel to another of its frequencies. When the
+follower has decoded no control message for 5 seconds it retunes the channel
+to each of the other control channel frequencies it knows in turn, 2 seconds
+on each, until it decodes one, and stays there. It knows those listed in
+**p25-control-channels** (frequencies separated by spaces or commas), the
+secondary control channels the site itself broadcasts, and every frequency
+it has received the control channel on. Calls go on being followed during
+the search. Only frequencies within the front end's present coverage are
+tried: the front end is never retuned. What the site broadcasts is forgotten
+when radiod restarts, so list the frequencies if radiod may start while the
+usual control channel is off the air. With neither a list nor a broadcast
+there is nowhere to look and the channel stays put. Set **p25-nac** as well
+if another system could be heard on one of the frequencies. For example:
 
     [Trunked]
     mode = p25
     p25-demod = cqpsk
     p25-follow = yes
     p25-talkgroups = "10003 10157"
+    p25-control-channels = "851m2875 851m9125 852m3625 852m8125 853m0375"
     freq = "851m4625"
     data = trunk.local
 
 With **-v**, radiod logs each call it follows and leaves. In monitor the
 channel shows the talkgroup and voice channel during a call; between calls
-it shows **CC** and the NAC while the control channel is being decoded, and
-**no CC** when nothing has been decoded for two seconds.
+it shows **CC** and the NAC while the control channel is being decoded,
+**no CC** when nothing has been decoded for two seconds, and **CC search**
+while it tries the site's other control channels.
 
 To record the calls by talkgroup, use pcmrecord's **--by-talkgroup** option
 (see pcmrecord(1)): for every digital voice mode radiod numbers each call and

@@ -21,6 +21,8 @@ int compute_tuning(int N, double samprate, int *shift, double *remainder, double
   (void)N; (void)samprate; (void)freq; *shift = 0; *remainder = 0; return 0;
 }
 uint64_t mixdown(float complex *b, int n, uint64_t phase, uint64_t inc){ (void)b; (void)n; (void)inc; return phase; }
+static int Tunes;
+double set_freq(chan_t *chan, double f){ chan->tune.freq = f; Tunes++; return f; }
 
 // --- a scripted voice decoder: the test sets what it reports
 struct dv_decoder { int unused; };
@@ -228,6 +230,59 @@ int main(void){
   check(following() == 852812500,"follows a Phase 1 call while a Phase 2 grant waits for the WACN");
   Cc.wacn = wacn;
 
+  dv_follow_destroy(F);
+
+  // The control channel goes: search the site's other control channels.
+  // Listed in the config: 851.2875 and 853.0375 (and 860.0, outside the
+  // front end's coverage); the site broadcasts 852.3625 as a secondary
+  Frontend.frequency = 852000000;
+  Frontend.min_IF = -2000000;
+  Frontend.max_IF = 2000000;
+  Chan.tune.freq = 851462500;
+  Chan.p25.ncontrol = 3;
+  Chan.p25.control[0] = 851287500;
+  Chan.p25.control[1] = 860000000;
+  Chan.p25.control[2] = 853037500;
+  Cc.tsbks = Cc.tsbk_errors = 0;
+  F = dv_follow_create(&Chan,NULL,NULL);
+  Tunes = 0;
+  Cc.tsbks = 1;
+  run(10,false);
+  { dv_event e = { .type = DV_EVENT_CONTROL, .freq_hz = 852362500, .slot = -1 }; dv_follow_event(F,&e); }
+  run(240,false); // 4.8 s since the last control message
+  check(Tunes == 0 && Chan.tune.freq == 851462500,"a control channel silent under 5 s is left alone");
+  run(20,false);
+  check(Tunes == 1 && Chan.tune.freq == 852362500,"silent for 5 s: tries the next known, the secondary the site broadcast");
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"CC search") == 0,"and says \"CC search\"");
+  run(101,false);
+  check(Tunes == 2 && Chan.tune.freq == 851287500,"nothing there in 2 s: the first listed");
+  run(101,false);
+  check(Tunes == 3 && Chan.tune.freq == 853037500,"then the next listed that the front end covers");
+  run(101,false);
+  check(Tunes == 4 && Chan.tune.freq == 851462500,"then back where it was first heard");
+  run(101,false);
+  check(Tunes == 5 && Chan.tune.freq == 852362500,"and round again");
+  run(30,false);
+  Cc.tsbks = 2; // control messages here
+  run(1,false);
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"CC N469") == 0,"a control message ends the search");
+  run(200,false);
+  check(Tunes == 5 && Chan.tune.freq == 852362500,"and it stays there, through 4 s of silence too");
+  // Calls go on being followed during a search
+  run(60,false);
+  check(Tunes == 6,"searching again after 5 s of silence");
+  grant(DV_EVENT_GRANT,851912500,10003,3451001,90);
+  run(2,false);
+  check(following() == 851912500,"a grant is still followed while searching");
+  dv_follow_destroy(F);
+
+  // Nowhere else to look: stay put
+  Chan.tune.freq = 851462500;
+  Chan.p25.ncontrol = 0;
+  F = dv_follow_create(&Chan,NULL,NULL);
+  Tunes = 0;
+  run(1000,false);
+  check(Tunes == 0 && dv_follow_source(F,text,sizeof text) && strcmp(text,"no CC") == 0,"with no other control channel known it stays put: \"no CC\"");
   dv_follow_destroy(F);
   printf(Failures ? "follower tests FAILED\n" : "Follower tests passed\n");
   return Failures ? 1 : 0;

@@ -166,6 +166,7 @@ char const *Channel_keys[] = {
   "p25-slot",
   "p25-follow",
   "p25-talkgroups",
+  "p25-control-channels",
   "dmr-slot",
   "m17-can",
   "nxdn-rate",
@@ -323,6 +324,25 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	chan->p25.talkgroups[chan->p25.ntalkgroups++] = (uint32_t)tg;
 	p = end;
       }
+    }
+    cp = config_getstring(table,sname,"p25-control-channels",NULL);
+    if(cp != NULL){
+      // The site's control channel frequencies, separated by spaces or commas
+      chan->p25.ncontrol = 0;
+      char *copy = strdup(cp), *save = NULL;
+      for(char *tok = copy != NULL ? strtok_r(copy," ,\t",&save) : NULL; tok != NULL; tok = strtok_r(NULL," ,\t",&save)){
+	double const f = fabs(parse_frequency(tok,true));
+	if(!isfinite(f) || f <= 0){
+	  fprintf(stderr,"%s: invalid frequency '%s' in p25-control-channels, ignored\n",sname,tok);
+	  continue;
+	}
+	if(chan->p25.ncontrol >= (int)(sizeof chan->p25.control / sizeof chan->p25.control[0])){
+	  fprintf(stderr,"%s: too many p25-control-channels, '%s' on ignored\n",sname,tok);
+	  break;
+	}
+	chan->p25.control[chan->p25.ncontrol++] = f;
+      }
+      free(copy);
     }
     cp = config_getstring(table,sname,"dmr-slot",NULL);
     if(cp != NULL){

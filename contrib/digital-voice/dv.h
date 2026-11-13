@@ -89,6 +89,7 @@ typedef enum {
   DV_EVENT_GRANT = 0,   // a new call on a voice channel (or a new talkgroup on it)
   DV_EVENT_SITE = 1,    // site identity or band plan changed
   DV_EVENT_UPDATE = 2,  // a call already granted is still going (fields as GRANT; text empty)
+  DV_EVENT_CONTROL = 3, // the site named another of its control channels (freq_hz), once each
 } dv_event_type;
 
 typedef struct {

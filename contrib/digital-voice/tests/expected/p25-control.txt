@@ -9,6 +9,9 @@
    0.44 event network: WACN BEE00 system 445
    0.66 event band plan 0: base 851.00625 MHz, spacing 6.25 kHz, FDMA, 12500 Hz wide
    0.66 event band plan 1: base 762.00625 MHz, spacing 6.25 kHz, FDMA, 12500 Hz wide
+   0.96 event secondary control channel 858.9875 MHz
+   0.96 event secondary control channel 855.2375 MHz
+   1.42 event secondary control channel 855.4625 MHz
    4.86 event grant TG 11025 from 1103315 on 770.4688 MHz TDMA slot 0 encrypted
    7.12 event grant TG 11031 from 1104118 on 774.2812 MHz TDMA slot 0 encrypted
    9.66 event grant TG 11033 from 1102848 on 774.2812 MHz TDMA slot 1 encrypted

@@ -48,6 +48,8 @@ private:
 
   void tsbk(uint8_t const t[12], uint16_t nac);
   void set_iden(uint8_t opcode, uint8_t const t[12]);
+  // A secondary control channel the site broadcasts
+  void secondary(uint16_t ch);
   // explicit: a channel grant message (a new transmission), not an update
   void grant(uint16_t ch, uint32_t group, uint32_t source, uint8_t opts, bool unit, bool explicit_grant);
   // Channel number to (downlink frequency, TDMA slot); 0 Hz if its band plan isn't known yet
@@ -56,6 +58,7 @@ private:
 
   std::array<iden, 16> idens_{};
   std::map<uint16_t, call> calls_; // by channel
+  std::vector<uint64_t> secondaries_; // secondary control channels reported, Hz
   dv_event_callback callback_ = nullptr;
   void *user_data_ = nullptr;
   uint64_t now_ = 0;
