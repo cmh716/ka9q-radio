@@ -40,13 +40,14 @@ Capacity Max (going encrypted).
       (site, control channel, neighbours; checked live on the VHF system,
       RadioReference 10105, Attica site, 153.4925 MHz) and `follow = yes`
       follows voice assignments made by direct frequency assignment.
+      Following works live (2026-11-13): seven assignments on three
+      talkgroups, all followed to the right frequency, six with clear speech
+      and one muted (encrypted), including moves between frequencies within
+      a conversation.
       Still to do:
-      - follow a voice call live. One assignment has been received and its
-        frequency confirmed, but that call lasted 0.4 s; its five frames on
-        the traffic channel carried LICH values 1b 15 13 13 11 (RF type 0
-        with the functional types of a traffic channel) and neither their
-        SACCH nor FACCH1 decoded, where the site's data bursts there carry
-        the expected 29 (RTCH). Needs a longer call's recording;
+      - an earlier 0.4 s call's five frames on the traffic channel carried
+        LICH values 1b 15 13 13 11 and didn't decode: unexplained, not seen
+        since;
       - sites that assign channel numbers: a channel plan option;
       - the UHF system (RadioReference 8099) and the NXDN96 one;
       - Type-D (no control channel) if a local system uses it.
