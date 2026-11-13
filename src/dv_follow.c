@@ -42,6 +42,10 @@ struct follow_grant {
   uint64_t seen;             // sample count of the last grant or update
   uint64_t granted;          // sample count of the last grant (not update): a new transmission
   uint32_t transmission;     // the control channel's number for its explicit grant, 0 if unseen
+  // A transmission we followed and left: not rejoined while it's only re-announced
+  bool left;
+  uint32_t left_source;
+  uint32_t left_transmission;
 };
 
 struct dv_follow {
@@ -66,11 +70,6 @@ struct dv_follow {
   uint64_t pending_at;       // when it came
   bool lingering;            // stayed past an end to see whether that grant brings voice
   uint64_t voice_serial;     // the voice decoder's call_serial when we joined
-  uint64_t skip_freq;        // the call we last left: don't rejoin it while it's re-announced
-  int skip_slot;
-  uint32_t skip_group;
-  uint32_t skip_source;
-  uint32_t skip_transmission;
   uint32_t last_group;       // talkgroup of the call last followed: the conversation
   bool tdma_ready;           // the control channel has named the network (WACN): Phase 2 can be followed
   uint64_t calls;            // calls followed
@@ -187,14 +186,29 @@ static void release(struct dv_follow *f, char const *why){
   f->voice = NULL;
   f->last_group = f->cur.group;
   if(strcmp(why,"preempted") != 0){ // a preempted call may be rejoined later
-    f->skip_freq = f->cur.freq;
-    f->skip_slot = f->cur.slot;
-    f->skip_group = f->cur.group;
-    f->skip_source = f->cur.source;
-    // A grant of this channel still unplaced when we leave for another
-    // reason (the reply elsewhere, a preemption) re-announced this
-    // transmission as far as we can know: don't let its updates call us back
-    f->skip_transmission = f->pending > f->cur.transmission ? f->pending : f->cur.transmission;
+    // Marked on the channel's own entry, so each transmission left stays
+    // left (a conversation leaves several within the time grants stay fresh)
+    struct follow_grant *g = NULL;
+    int oldest = 0;
+    for(int i = 0; i < FOLLOW_GRANTS && g == NULL; i++){
+      struct follow_grant * const o = &f->grants[i];
+      if(o->valid && o->freq == f->cur.freq && o->slot == f->cur.slot)
+	g = o;
+      else if(!o->valid || (f->grants[oldest].valid && o->seen < f->grants[oldest].seen))
+	oldest = i;
+    }
+    if(g == NULL){
+      g = &f->grants[oldest];
+      *g = f->cur;
+    }
+    if(g->group == f->cur.group){
+      g->left = true;
+      g->left_source = f->cur.source;
+      // A grant of this channel still unplaced when we leave for another
+      // reason (the reply elsewhere, a preemption) re-announced this
+      // transmission as far as we can know: don't let its updates call us back
+      g->left_transmission = f->pending > f->cur.transmission ? f->pending : f->cur.transmission;
+    }
   }
 }
 
@@ -225,12 +239,6 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
   };
   if(priority(f,&g) < 0)
     return;
-  // A new grant of the call we left (even to the same talker on the same
-  // channel), or another talker on it, is a new transmission
-  if(g.freq == f->skip_freq && g.slot == f->skip_slot && g.group == f->skip_group
-     && (e->type == DV_EVENT_GRANT || g.transmission > f->skip_transmission
-	 || (g.source != 0 && g.source != f->skip_source)))
-    f->skip_freq = 0;
   // One entry per voice channel and slot
   int slot = -1, oldest = 0;
   for(int i = 0; i < FOLLOW_GRANTS; i++){
@@ -245,6 +253,19 @@ void dv_follow_event(struct dv_follow *f, dv_event const *e){
   // An update keeps the time of the grant it repeats
   if(slot >= 0 && e->type == DV_EVENT_UPDATE && f->grants[slot].group == g.group)
     g.granted = f->grants[slot].granted;
+  // The same call as one we left, still being announced, stays left. A new
+  // grant of it (even to the same talker on the same channel), or another
+  // talker on it, is a new transmission
+  if(slot >= 0){
+    struct follow_grant const * const o = &f->grants[slot];
+    if(o->left && o->group == g.group && f->now - o->seen <= FOLLOW_FRESH
+       && !(e->type == DV_EVENT_GRANT || g.transmission > o->left_transmission
+	    || (g.source != 0 && g.source != o->left_source))){
+      g.left = true;
+      g.left_source = o->left_source;
+      g.left_transmission = o->left_transmission;
+    }
+  }
   f->grants[slot >= 0 ? slot : oldest] = g;
   // The call we follow: still live, and perhaps a new talker (the voice
   // channel's own source ID takes precedence when it has one)
@@ -271,7 +292,7 @@ static struct follow_grant const *best_grant(struct dv_follow const *f){
     struct follow_grant const *g = &f->grants[i];
     if(!g->valid || f->now - g->seen > FOLLOW_FRESH)
       continue;
-    if(g->freq == f->skip_freq && g->slot == f->skip_slot && g->group == f->skip_group)
+    if(g->left)
       continue;
     if(g->slot >= 0 && !f->tdma_ready)
       continue; // can't descramble it yet: don't let it stand in the way of other calls
@@ -465,18 +486,6 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     struct follow_grant const *g = best_grant(f);
     if(g != NULL)
       join(f,g,cc);
-  }
-  if(f->skip_freq != 0){
-    // Forget the skip once its call is gone from the control channel
-    bool live = false;
-    for(int i = 0; i < FOLLOW_GRANTS; i++){
-      struct follow_grant const *g = &f->grants[i];
-      if(g->valid && g->freq == f->skip_freq && g->slot == f->skip_slot && g->group == f->skip_group
-	 && f->now - g->seen <= FOLLOW_FRESH)
-	live = true;
-    }
-    if(!live)
-      f->skip_freq = 0;
   }
 }
 

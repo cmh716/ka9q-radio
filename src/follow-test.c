@@ -151,8 +151,9 @@ int main(void){
   check(following() == 851287500,"moves to the reply despite an unrelated grant");
 
   // Codex: a reply granted in the very block after joining (the same
-  // sample count as the join) is still a later transmission
-  run(10,true);
+  // sample count as the join) is still a later transmission. (The
+  // unrelated call is gone by then: its grant isn't repeated for 1.6 s)
+  run(80,true);
   Voice_stats.call_serial++;
   run(1,false);
   grant(DV_EVENT_GRANT,852362500,10003,3421116,8);
@@ -230,6 +231,26 @@ int main(void){
   check(following() == 852812500,"follows a Phase 1 call while a Phase 2 grant waits for the WACN");
   Cc.wacn = wacn;
 
+  dv_follow_destroy(F);
+
+  int const created_before = Created;
+  // Codex: a transmission left for its reply stays left when the reply ends
+  // too, while the control channel still announces both
+  F = dv_follow_create(&Chan,NULL,NULL);
+  grant(DV_EVENT_GRANT,852362500,10003,3421116,60);
+  run(50,true);
+  grant(DV_EVENT_GRANT,851912500,10003,9989123,61);  // the reply
+  run(2,true);
+  check(following() == 851912500,"moves to the reply");
+  for(int i = 0; i < 12; i++){ // 3 s: the reply's voice stops after 0.5 s; both still announced
+    grant(DV_EVENT_UPDATE,852362500,10003,3421116,0);
+    grant(DV_EVENT_UPDATE,851912500,10003,9989123,0);
+    run(12,i < 2);
+  }
+  check(following() == 0 && Created == created_before + 2,"doesn't go back to the transmission it left for the reply");
+  grant(DV_EVENT_GRANT,852362500,10003,3421116,62);
+  run(2,true);
+  check(following() == 852362500,"a new grant of that channel is followed");
   dv_follow_destroy(F);
 
   // The control channel goes: search the site's other control channels.
