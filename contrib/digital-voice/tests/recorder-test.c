@@ -5,6 +5,8 @@
 // after its call's first audio, a preemption with the audio sent in a
 // burst, the same talker keying up again 0.3 s after a call ends, and a
 // call's audio in a burst with its status 100 ms behind.
+// Talkgroup names (--talkgroups): TG 200 and 300 have names, from two files
+// in a directory; the others are filed by number alone.
 //
 //   recorder-test path/to/pcmrecord work-directory
 //
@@ -148,15 +150,32 @@ int main(int argc, char **argv){
     fprintf(stderr,"usage: %s pcmrecord workdir\n",argv[0]);
     return 2;
   }
-  char rec[4096], log[4096];
+  char rec[4096], log[4096], names[4096], file[4200];
   snprintf(rec,sizeof rec,"%s/rec",argv[2]);
   snprintf(log,sizeof log,"%s/calls.csv",argv[2]);
+  snprintf(names,sizeof names,"%s/talkgroups.d",argv[2]);
   mkdir(argv[2],0777);
   mkdir(rec,0777);
+  mkdir(names,0777);
   unlink(log);
+  // Columns in the order of a radioreference.com download, with a quoted
+  // comma and a name that isn't safe in a path; then a second file with its
+  // columns in another order, a byte order mark, a line with no number and
+  // TG 200 again (the first file's wins)
+  snprintf(file,sizeof file,"%s/a.csv",names);
+  FILE *tf = fopen(file,"w");
+  if(tf == NULL){ perror(file); return 2; }
+  fputs("Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category\n"
+	"200,c8,\"Fire Disp/East\",\"D\",\"Fire, Dispatch\",\"Fire Dispatch\",\"Test County\"\n",tf);
+  fclose(tf);
+  snprintf(file,sizeof file,"%s/b.csv",names);
+  tf = fopen(file,"w");
+  if(tf == NULL){ perror(file); return 2; }
+  fputs("\xef\xbb\xbf" "alpha tag,decimal\r\nnobody,\r\nWrong,200\r\nOps 3,300\r\n",tf);
+  fclose(tf);
   pid_t const pid = fork();
   if(pid == 0){
-    execl(argv[1],argv[1],"--by-talkgroup","--call-log",log,"-d",rec,GROUP,(char *)NULL);
+    execl(argv[1],argv[1],"--by-talkgroup","--call-log",log,"--talkgroups",names,"-d",rec,GROUP,(char *)NULL);
     _exit(127);
   }
   sleep(1);
@@ -174,10 +193,12 @@ int main(int argc, char **argv){
   kill(pid,SIGTERM);
   waitpid(pid,NULL,0);
 
-  // Each call log line: start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file
+  // Each call log line: start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description
   static int const want_hz[] = {440,880,660,550,770,770,440,660};
   static int const want_frames[] = {50,50,50,50,50,25,25,25};
   static char const *const want_tg[] = {"100","200","300","400","500","500","600","700"};
+  static char const *const want_dir[] = {"/100/","/200_Fire_DispEast/","/300_Ops_3/","/400/","/500/","/500/","/600/","/700/"};
+  static char const *const want_name[] = {",","Fire Disp/East,\"Fire, Dispatch\"","Ops 3,",",",",",",",",",","};
   int const ncalls = sizeof want_tg / sizeof want_tg[0];
   FILE *f = fopen(log,"r");
   char line[8192];
@@ -188,9 +209,17 @@ int main(int argc, char **argv){
       char *p = line;
       for(int i = 0; i < 9 && p != NULL; i++)
 	fields[i] = strsep(&p,",");
-      if(fields[8] == NULL)
+      if(fields[8] == NULL || p == NULL)
 	continue;
-      fields[8][strcspn(fields[8],"\n")] = '\0';
+      p[strcspn(p,"\n")] = '\0'; // name,description
+      if(strstr(fields[8],want_dir[calls]) == NULL){
+	printf("FAIL: call %d filed as %s, want a folder %s\n",calls + 1,fields[8],want_dir[calls]);
+	Failures++;
+      }
+      if(strcmp(p,want_name[calls]) != 0){
+	printf("FAIL: call %d logged with name and description %s, want %s\n",calls + 1,p,want_name[calls]);
+	Failures++;
+      }
       if(strcmp(fields[2],want_tg[calls]) != 0){
 	printf("FAIL: call %d filed under %s, want %s\n",calls + 1,fields[2],want_tg[calls]);
 	Failures++;

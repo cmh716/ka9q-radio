@@ -73,7 +73,23 @@ Supersedes --subdirs; superseded by --jt and pipe modes.
 .TP
 .B "\-\-call\-log file"
 With --by-talkgroup, append one CSV line per recorded call: start time,
-seconds, talkgroup, source, mode, frequency, TDMA slot, SSRC and file name. A relative
+seconds, talkgroup, source, mode, frequency, TDMA slot, SSRC, file name, and
+the talkgroup's name and description where known (see --talkgroups). A relative
+name is relative to the current directory, not --directory.
+.TP
+.B "\-\-talkgroups file|directory"
+With --by-talkgroup, take talkgroup names from a CSV file, or from every
+.csv file in a directory (in name order; the first entry for a number
+wins). The first line names the columns: "Decimal" (the talkgroup number)
+and "Alpha Tag" (its short name) are needed, "Description" and "Category"
+are used if present, and other columns are ignored, so a talkgroup download
+from radioreference.com works as it comes. Default:
+/var/lib/ka9q-radio/talkgroups.d, if it exists. A P25 call to a named
+talkgroup is filed under
+.IR number _ name
+(e.g. 4002_OC_FD_E_Resp) rather than the number alone, and its name,
+description and category are written as file attributes (user.talkgroup
+name, user.talkgroup description, user.talkgroup category). A relative
 name is relative to the current directory, not --directory.
 .TP
 .B "\-p, \-\-prefix\-source"

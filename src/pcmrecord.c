@@ -37,6 +37,9 @@ Command-line options:
  --by-talkgroup: one file per digital voice call, filed by talkgroup (or destination callsign) as
         talkgroup/year/month/day/yyyymmddThhmmssZ_<MHz>_<source>.wav; a new talkgroup or talker starts a new file
  --call-log <file>: with --by-talkgroup, append a CSV line for each call recorded
+ --talkgroups <file or directory>: talkgroup names for --by-talkgroup, from a CSV file with "Decimal" and "Alpha Tag"
+        columns (a radioreference.com talkgroup download) or a directory of them; default /var/lib/ka9q-radio/talkgroups.d.
+        A named P25 talkgroup is filed as <number>_<name>/...
 @endverbatim
  */
 
@@ -71,6 +74,7 @@ Command-line options:
 #include "multicast.h"
 #include "radio.h"
 #include "timing.h"
+#include "talkgroup.h"
 
 // size of stdio buffer for disk I/O. 8K is probably the default, but we have this for possible tuning
 #define BUFFERSIZE (8192) // probably the same as default
@@ -240,6 +244,7 @@ static bool Padding = false;
 static bool Reset_time = false;
 static bool By_talkgroup = false; // File digital voice calls by talkgroup
 static char const *Call_log_name; // CSV log of calls recorded, with By_talkgroup
+static char const *Talkgroups_name; // CSV file or directory of talkgroup names, with By_talkgroup
 static FILE *Call_log;
 // With --by-talkgroup, audio waits this long after it arrives before it's
 // written, so a call change reported a little late still lands before the
@@ -284,6 +289,7 @@ enum {
   OPT_REACQUIRE = 256,
   OPT_BY_TALKGROUP,
   OPT_CALL_LOG,
+  OPT_TALKGROUPS,
 };
 
 static struct option Options[] = {
@@ -306,6 +312,7 @@ static struct option Options[] = {
   {"reacquire", no_argument, NULL, OPT_REACQUIRE},
   {"by-talkgroup", no_argument, NULL, OPT_BY_TALKGROUP},
   {"call-log", required_argument, NULL, OPT_CALL_LOG},
+  {"talkgroups", required_argument, NULL, OPT_TALKGROUPS},
   {"subdirectories", no_argument, NULL, 's'},
   {"subdirs", no_argument, NULL, 's'},
   {"timeout", required_argument, NULL, 't'},
@@ -393,6 +400,9 @@ int main(int argc,char *argv[]){
     case OPT_CALL_LOG:
       Call_log_name = optarg;
       break;
+    case OPT_TALKGROUPS:
+      Talkgroups_name = optarg;
+      break;
     case 'S':
       if(optarg){
 	char *ptr = NULL;
@@ -427,7 +437,7 @@ int main(int argc,char *argv[]){
       VERSION();
       exit(EX_OK);
     default:
-      fprintf(stderr,"Usage: %s [-c|--catmode|--stdout] [--reacquire] [-r|--raw] [-e|--exec command] [-f|--flush] [-s] [-d directory] [-l locale] [-L maxtime] [-t timeout] [-j|--jt] [-v] [-m sec] [-x|--max_length max_file_time, no sync, oneshot] [-o|--source <source-name-or-address>] [--by-talkgroup [--call-log file]] PCM_multicast_address\n",argv[0]);
+      fprintf(stderr,"Usage: %s [-c|--catmode|--stdout] [--reacquire] [-r|--raw] [-e|--exec command] [-f|--flush] [-s] [-d directory] [-l locale] [-L maxtime] [-t timeout] [-j|--jt] [-v] [-m sec] [-x|--max_length max_file_time, no sync, oneshot] [-o|--source <source-name-or-address>] [--by-talkgroup [--call-log file] [--talkgroups file|directory]] PCM_multicast_address\n",argv[0]);
       exit(EX_USAGE);
       break;
     }
@@ -468,6 +478,8 @@ int main(int argc,char *argv[]){
     fprintf(stderr,"--by-talkgroup supersedes --subdirs\n");
     Subdirs = false;
   }
+  if(Talkgroups_name != NULL && !By_talkgroup)
+    fprintf(stderr,"--talkgroups requires --by-talkgroup\n");
   if(Call_log_name != NULL && !By_talkgroup){
     fprintf(stderr,"--call-log requires --by-talkgroup\n");
     Call_log_name = NULL;
@@ -510,7 +522,17 @@ int main(int argc,char *argv[]){
     }
     setlinebuf(Call_log);
     if(ftell(Call_log) == 0)
-      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file\n");
+      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description\n");
+  }
+  if(By_talkgroup){
+    // Read before the chdir, like the call log. The default directory is optional
+    int const n = load_talkgroups(Talkgroups_name != NULL ? Talkgroups_name : TALKGROUPS);
+    if(n < 0 && Talkgroups_name != NULL){
+      fprintf(stderr,"Can't read talkgroups from %s: %s\n",Talkgroups_name,strerror(errno));
+      exit(EX_NOINPUT);
+    }
+    if(Verbose && n >= 0)
+      fprintf(stderr,"%d talkgroup names\n",n);
   }
   if(strlen(Recordings) > 0 && chdir(Recordings) != 0){
     fprintf(stderr,"Can't change to directory %s: %s\n",Recordings,strerror(errno));
@@ -1967,11 +1989,20 @@ static void csv_field(char *out,size_t len,char const *in){
 }
 
 // --by-talkgroup: label the finished file with its call, move it to
-// talkgroup/yyyy/mm/dd/yyyymmddThhmmssZ_<MHz>_<source><suffix> and log it
+// talkgroup/yyyy/mm/dd/yyyymmddThhmmssZ_<MHz>_<source><suffix> and log it.
+// A talkgroup with a name is filed as number_name
 static void call_file(struct session *sp,char const *tempfile){
   int const fd = fileno(sp->fp);
+  struct talkgroup const * const tg = lookup_talkgroup(sp->file_mode,sp->file_dest);
   if(sp->file_dest[0] != '\0')
     attrprintf(fd,"talkgroup","%s",sp->file_dest);
+  if(tg != NULL){
+    attrprintf(fd,"talkgroup name","%s",tg->tag);
+    if(tg->description[0] != '\0')
+      attrprintf(fd,"talkgroup description","%s",tg->description);
+    if(tg->category[0] != '\0')
+      attrprintf(fd,"talkgroup category","%s",tg->category);
+  }
   if(sp->file_src[0] != '\0')
     attrprintf(fd,"call source","%s",sp->file_src);
   if(sp->file_mode[0] != '\0')
@@ -1984,6 +2015,15 @@ static void call_file(struct session *sp,char const *tempfile){
 
   char dest[64],src[64];
   path_safe(dest,sizeof dest,sp->file_dest,"unknown");
+  if(tg != NULL){
+    // The number first: folders sort by it and stay distinct whatever the names
+    char name[32];
+    path_safe(name,sizeof name,tg->tag,"");
+    if(name[0] != '\0'){
+      strlcat(dest,"_",sizeof dest);
+      strlcat(dest,name,sizeof dest);
+    }
+  }
   path_safe(src,sizeof src,sp->file_src,"unknown");
   time_t const seconds = sp->file_time / BILLION;
   struct tm tm;
@@ -2051,10 +2091,15 @@ static void call_file(struct session *sp,char const *tempfile){
     csv_field(src,sizeof src,sp->file_src);
     csv_field(mode,sizeof mode,sp->file_mode);
     csv_field(qpath,sizeof qpath,path);
-    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s\n",
+    char name[256] = "",description[512] = "";
+    if(tg != NULL){
+      csv_field(name,sizeof name,tg->tag);
+      csv_field(description,sizeof description,tg->description);
+    }
+    fprintf(Call_log,"%4d-%02d-%02dT%02d:%02d:%02d.%01dZ,%.1f,%s,%s,%s,%.0lf,%s,%u,%s,%s,%s\n",
 	    tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,(int)(r.rem / 100000000),
 	    sp->samprate != 0 ? (float)sp->samples_written / sp->samprate : 0.0f,
-	    dest,src,mode,freq,slot,sp->ssrc,qpath);
+	    dest,src,mode,freq,slot,sp->ssrc,qpath,name,description);
   }
 }
 

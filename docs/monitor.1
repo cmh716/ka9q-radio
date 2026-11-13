@@ -93,6 +93,12 @@ on all sessions. r resets the selected playout buffer and R resets all
 buffers. + and - changes volume; left/right arrows changes stereo position.
 Uppercase Q exits; lowercase q toggles quiet display. The 'h' key toggles
 a help screen.
+.SH TALKGROUP NAMES
+During a P25 call, monitor shows the talkgroup's name and description if
+the talkgroup number is listed in a .csv file in
+/var/lib/ka9q-radio/talkgroups.d. The files need "Decimal" and "Alpha Tag"
+columns, as in a talkgroup download from radioreference.com; see
+pcmrecord(1).
 .SH NOTES
 A session may not appear until data arrives, particularly when receiver
 squelch suppresses output. Missing metadata can prevent interpretation of

@@ -6,9 +6,9 @@ Capacity Max (going encrypted).
 
 ## Waiting on hardware or live testing
 
-- [ ] P25 grant following (`p25-follow`): first live test, after the new
-      800 MHz antenna. Tune the 2 s hang and 3 s listen timeouts.
-- [ ] P25 Phase 2 voice quality on the live system (simulcast fading).
+- [x] P25 grant following (`p25-follow`) and Phase 2 voice on the live
+      system: working well with the 800 MHz Yagi (2026-11-13).
+- [ ] Talkgroup names (`talkgroups.d`): live test in monitor and pcmrecord.
 - [ ] Mixed FM + digital channel (`analog = yes`): live test.
 - [ ] M17: live test once an M17 radio or hotspot is available.
 
@@ -17,8 +17,11 @@ Capacity Max (going encrypted).
 - [x] **Call recording with metadata**: `pcmrecord --by-talkgroup`, with
       `--call-log`; radiod sends CALL_DEST/CALL_SOURCE/CALL_MODE status.
       Needs a live test with p25-follow.
-- [ ] Recording: talkgroup names from a list (e.g. a RadioReference CSV) for
-      the folder names.
+- [x] Talkgroup names from CSV files (a RadioReference download) in
+      `/var/lib/ka9q-radio/talkgroups.d`: monitor's display, pcmrecord's
+      folders, attributes and call log. One table for all systems: to keep
+      two systems' numbers apart radiod would have to send the WACN and
+      system ID.
 - [ ] P25 Phase 2: about 0.4 s of an encrypted call can play before the ESS
       says it is encrypted, when the MAC_PTT is missed.
 - [ ] **LTR Standard**: decode the 300 bps sub-audible data on each repeater's

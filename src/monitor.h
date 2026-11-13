@@ -107,8 +107,9 @@ struct session {
   uint64_t plcs;       // Opus packet loss conceals
   uint64_t drops;
 
-  char callsign[16]; // What's the longest possible?
+  char callsign[24]; // What's the longest possible? (or a talkgroup's name)
   char id[64];
+  bool talkgroup_named;  // callsign and id are the current call's talkgroup, not a repeater
   float distance;     // meters, if known
   bool notch_enable;         // Enable PL removal notch
   struct iir iir_left;       // State for PL removal filter

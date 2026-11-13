@@ -32,6 +32,7 @@
 #include "monitor.h"
 #include "sched.h"
 #include "database.h"
+#include "talkgroup.h"
 #include "timing.h"
 
 // Could be (obscure) config file parameters
@@ -356,6 +357,7 @@ int main(int argc,char * const argv[]){
   //static degree_t const Mylongit = -76.631600;
 
   load_databases(REPEATERS,Mylat,Mylongit);
+  load_talkgroups(TALKGROUPS); // optional
   // Callback continuously scans sessions, merging their audio
   // if active into the output stream
   // This allows multiple streams to be played on hosts that only support one
@@ -555,6 +557,21 @@ void *statproc(void *arg){
       if(id->state && strlen(id->state) > 0)
 	strlcat(sp->id, id->state, sizeof sp->id);
       sp->distance = id->sort == SORT_INPUT ? 0 : id->distance;
+    }
+    // A P25 call to a talkgroup with a name: show that while the call lasts
+    struct talkgroup const * const tg = lookup_talkgroup(sp->chan.dv.call_mode,sp->chan.dv.call_dest);
+    if(tg != NULL){
+      strlcpy(sp->callsign, tg->tag, sizeof sp->callsign);
+      if(tg->description[0] != '\0' && tg->category[0] != '\0')
+	snprintf(sp->id, sizeof sp->id, "%s (%s)", tg->description, tg->category);
+      else
+	strlcpy(sp->id, tg->description[0] != '\0' ? tg->description : tg->category[0] != '\0' ? tg->category : tg->tag, sizeof sp->id);
+      sp->distance = 0;
+      sp->talkgroup_named = true;
+    } else if(sp->talkgroup_named){
+      sp->talkgroup_named = false;
+      if(!id) // a repeater's entry was put back above
+	sp->callsign[0] = sp->id[0] = '\0';
     }
     // Update SNR calculation (not sent explicitly)
     float const noise_bandwidth = fabsf(sp->chan.filter.max_IF - sp->chan.filter.min_IF);

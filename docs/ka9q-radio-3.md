@@ -356,6 +356,11 @@ sends its talkgroup, source, mode, frequency and slot in the stream's status
 exactly as the call's audio starts, and marks its end, so each call is a file.
 With **-v -v** radiod logs each call's start and end.
 
+For talkgroup names in monitor and in pcmrecord's folders and call log, put
+a CSV file with "Decimal" and "Alpha Tag" columns, such as a talkgroup
+download from radioreference.com, in /var/lib/ka9q-radio/talkgroups.d (see
+pcmrecord(1), **--talkgroups**).
+
 To test without a receiver, the **iq_file** front end plays a recorded IQ file
 (complex 32-bit float) into radiod in real time; see the top of src/iq_file.c.
 

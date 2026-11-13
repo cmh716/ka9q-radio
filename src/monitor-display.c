@@ -528,8 +528,9 @@ static void update_monitor_display(void){
     int session = First_session;
     int i = 0;
     bool enable = false;
+    bool repeaters = false;
 
-    snprintf(scratch[i++],COLS,"repeaterbook.com data");
+    i++; // the heading depends on what's below it
     for(;i < LINES && session < NSESSIONS; i++,session++){
       sess_t const *sp = Sess_ptr[session];
       if(!inuse(sp)) break;
@@ -537,8 +538,11 @@ static void update_monitor_display(void){
       if(strlen(sp->id) > 0){
 	snprintf(scratch[i],COLS,"%s",sp->id);
 	enable = true;
+	if(!sp->talkgroup_named)
+	  repeaters = true;
       }
     }
+    snprintf(scratch[0],COLS,"%s",repeaters ? "repeaterbook.com data" : "talkgroup");
     if(enable){
       col++; col += render_left(header_line,col,scratch,i);
     }

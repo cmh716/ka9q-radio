@@ -143,7 +143,7 @@ RADIOD_OBJECTS = main.o audio.o avahi.o modes.o fm.o $(DV_OBJECTS) wfm.o linear.
 # header-change rebuild dependencies even for optional drivers
 # (bladerf, fobos, hackrf, hydrasdr, sdrplay, ...) whose targets
 # are gated by ENABLE_*.
-CFILES = airspy.c airspyhf.c iq_file.c aprs.c aprsfeed.c attr.c audio.c avahi.c avahi_browse.c ax25.c bandplan.c bladerf.c config.c control.c cwd.c decimate.c decode_status.c dump.c ezusb.c fcd.c fft-gen.c filter.c fm.c fobos.c funcube.c hackrf.c hid-libusb.c hydrasdr.c iir.c jt-decoded.c linear.c main.c makesine.c metadump.c misc.c modes.c monitor.c monitor-data.c monitor-display.c monitor-repeater.c morse.c multicast.c n0.c opusd.c opussend.c osc.c packetd.c dv.c dv_follow.c dv_none.c pcmcat.c pcmrecord.c pcmsend.c pcmspawn.c pll.c rv.c ctcss.c powers.c radio.c radio_status.c rdsd.c rtcp.c rtlsdr.c rtp.c rx888.c rx888_boot.c sdrplay.c set_xcvr.c setfilt.c show-pkt.c show-sig.c si5351.c sig_gen.c sine.c spectrum.c status.c stereod.c sincospi.c sincospif.c tune.c wd-record.c wfm.c window.c dcs.c
+CFILES = airspy.c airspyhf.c iq_file.c aprs.c aprsfeed.c attr.c audio.c avahi.c avahi_browse.c ax25.c bandplan.c bladerf.c config.c control.c cwd.c decimate.c decode_status.c dump.c ezusb.c fcd.c fft-gen.c filter.c fm.c fobos.c funcube.c hackrf.c hid-libusb.c hydrasdr.c iir.c jt-decoded.c linear.c main.c makesine.c metadump.c misc.c modes.c monitor.c monitor-data.c monitor-display.c monitor-repeater.c morse.c multicast.c n0.c opusd.c opussend.c osc.c packetd.c dv.c dv_follow.c dv_none.c pcmcat.c pcmrecord.c pcmsend.c pcmspawn.c pll.c rv.c ctcss.c powers.c radio.c radio_status.c rdsd.c rtcp.c rtlsdr.c rtp.c rx888.c rx888_boot.c sdrplay.c set_xcvr.c setfilt.c show-pkt.c show-sig.c si5351.c sig_gen.c sine.c spectrum.c status.c stereod.c sincospi.c sincospif.c talkgroup.c tune.c wd-record.c wfm.c window.c dcs.c
 
 HFILES = attr.h ax25.h bandplan.h conf.h config.h decimate.h defaults.h dcs.h ezusb.h fcd.h fcdhidcmd.h filter.h hidapi.h iir.h misc.h monitor.h morse.h multicast.h nco.h osc.h pll.h radio.h rational.h rx888.h si5351.h status.h timing.h config_paths.h
 
@@ -287,7 +287,7 @@ makesine: makesine.o
 metadump: metadump.o dump.o libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-monitor: monitor.o monitor-data.o monitor-display.o monitor-repeater.o morse.o database.o libdsp.a libstatus.a libradio.a
+monitor: monitor.o monitor-data.o monitor-display.o monitor-repeater.o morse.o database.o talkgroup.o libdsp.a libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lopus -lportaudio `pkg-config --silence-errors --libs alsa` -lsamplerate -liniparser  -lncursesw -lcsv $(LDLIBS)
 
 opusd: opusd.o avahi.o libradio.a
@@ -305,8 +305,8 @@ pcmcat: pcmcat.o libradio.a
 pcmspawn: pcmspawn.o libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-pcmrecord: pcmrecord.o attr.o libstatus.a libradio.a
-	$(CC) $(LDFLAGS) -o $@ $^ -lopus -logg $(LDLIBS)
+pcmrecord: pcmrecord.o attr.o talkgroup.o libstatus.a libradio.a
+	$(CC) $(LDFLAGS) -o $@ $^ -lopus -logg -lcsv $(LDLIBS)
 
 pcmsend: pcmsend.o libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lportaudio $(LDLIBS)
