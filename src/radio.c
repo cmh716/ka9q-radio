@@ -1313,7 +1313,13 @@ int downconvert(chan_t * const chan){
       chan->sig.n0 += N0_alpha * (estimate_noise(chan,shift) - chan->sig.n0);
     }
     // set fine tuning frequency & phase
-    // Use the rate actually coming out of the filter: it differs from the output (audio) rate in WFM and digital voice
+    // The fine tuning oscillator runs on the filter's output samples, so its step
+    // must use their period, Blocktime / olen. That is not 1/output.samprate in
+    // every mode: WFM filters at 256 kHz for its composite but outputs 48 kHz
+    // audio, and digital voice filters at 48 kHz but outputs 8 kHz. With
+    // 1/output.samprate, WFM's sub-bin correction came out 256/48 = 5.33 times
+    // too big, leaving it off by 4.33 times the remainder (up to ~87 Hz with
+    // 40 Hz bins). Linear and FM filter at their output rate: unchanged for them.
     double const samptime = Blocktime / olen;
     double const slope = chan->tune.sweep_rate * samptime * samptime; // turns/sample
     uint64_t const sweep_increment = set_nco(-slope);
