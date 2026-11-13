@@ -469,11 +469,31 @@ private:
         emit(e);
       }
       break;
+    case 0x17: { // DST_ID_INFO: the station's identity (its callsign), as text
+      char id[16];
+      int n = 0;
+      for (int k = 2; k < 18 && n < 15; k++) {
+        if (!((o[k] >= '0' && o[k] <= '9') || (o[k] >= 'A' && o[k] <= 'Z')))
+          break;
+        id[n++] = static_cast<char>(o[k]);
+      }
+      id[n] = '\0';
+      if (n < 3 || std::strcmp(id, station_) == 0)
+        break;
+      std::strcpy(station_, id);
+      dv_event e{};
+      e.type = DV_EVENT_SITE;
+      std::snprintf(e.text, sizeof e.text, "station ID %s", id);
+      emit(e);
+      break;
+    }
     case 0x04:   // VCALL_ASSGN: a voice call is given a traffic channel
     case 0x05: { // VCALL_ASSGN_DUP: the same, repeated while it lasts
       // CC option, call type (3 bits) and call option, source, destination,
       // call timer (6 bits), then the channel: 10 bits, or with direct
-      // frequency assignment 2 spare bits and the outbound and inbound numbers
+      // frequency assignment 2 spare bits and the outbound and inbound
+      // numbers (as received live: 04 00 20 0ff5 00b7 00 a53e bafa, a group
+      // call from 4085 to 183 on 152.8775 MHz, where a carrier then came up)
       int const call_type = o[2] >> 5;
       unsigned const source = be16(3);
       unsigned const destination = be16(5);
@@ -617,6 +637,7 @@ private:
   unsigned system_ = 0, site_ = 0;
   int site_ran_ = -1;
   bool dfa_ = false;          // the site assigns frequencies directly (CCH_INFO says)
+  char station_[16]{};
   std::vector<uint64_t> controls_;
   std::map<uint32_t, uint64_t> neighbours_; // location ID -> control channel, Hz
   std::map<unsigned, assigned> calls_;      // by channel

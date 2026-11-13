@@ -430,10 +430,10 @@ are not supported. For example:
     freq = "153m4925"
     data = trunk-nxdn.local
 
-The control channel decoding has been checked against a live site. The
-call assignment message has not: none had been received when this was
-written, so its layout follows the standard as remembered and may need
-correcting.
+The control channel decoding, including a voice call assignment, has been
+checked against a live site: the assigned frequency was the site's, and a
+carrier came up there at that moment. Following a call through to its
+speech has not been seen live yet.
 
 ### p25-wacn, p25-sysid, p25-slot
 

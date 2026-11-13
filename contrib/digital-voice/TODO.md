@@ -41,8 +41,12 @@ Capacity Max (going encrypted).
       RadioReference 10105, Attica site, 153.4925 MHz) and `follow = yes`
       follows voice assignments made by direct frequency assignment.
       Still to do:
-      - verify the VCALL_ASSGN layout against a real call (none received
-        yet) and follow one live;
+      - follow a voice call live. One assignment has been received and its
+        frequency confirmed, but that call lasted 0.4 s; its five frames on
+        the traffic channel carried LICH values 1b 15 13 13 11 (RF type 0
+        with the functional types of a traffic channel) and neither their
+        SACCH nor FACCH1 decoded, where the site's data bursts there carry
+        the expected 29 (RTCH). Needs a longer call's recording;
       - sites that assign channel numbers: a channel plan option;
       - the UHF system (RadioReference 8099) and the NXDN96 one;
       - Type-D (no control channel) if a local system uses it.
