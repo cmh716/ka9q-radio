@@ -284,6 +284,21 @@ int main(void){
   run(1000,false);
   check(Tunes == 0 && dv_follow_source(F,text,sizeof text) && strcmp(text,"no CC") == 0,"with no other control channel known it stays put: \"no CC\"");
   dv_follow_destroy(F);
+
+  // An NXDN Type-C control channel: the same follower, an NXDN voice decoder
+  Chan.demod_type = NXDN_DEMOD;
+  Chan.tune.freq = 153492500;
+  Cc.wacn = 0;
+  Cc.last_nac = 31; // the RAN
+  Cc.tsbks = 100;
+  F = dv_follow_create(&Chan,NULL,NULL);
+  run(2,false);
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"CC R31") == 0,"NXDN: idle shows the RAN, \"CC R31\"");
+  { dv_event e = { .type = DV_EVENT_GRANT, .freq_hz = 152877500, .slot = -1, .group = 59, .source = 1234, .transmission = 1 }; dv_follow_event(F,&e); }
+  run(2,false);
+  check(following() == 152877500,"NXDN: follows a grant without waiting for a WACN");
+  dv_follow_destroy(F);
+  Chan.demod_type = P25_DEMOD;
   printf(Failures ? "follower tests FAILED\n" : "Follower tests passed\n");
   return Failures ? 1 : 0;
 }

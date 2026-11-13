@@ -36,10 +36,19 @@ Capacity Max (going encrypted).
       FM channel (area, go-to repeater, home repeater, group ID, free
       repeater); play the repeaters carrying chosen IDs. No control channel:
       each repeater channel carries its own status.
-- [ ] **NXDN NEXEDGE trunking**: first check on RadioReference whether the
-      system is Type-C (a control channel, like P25) or Type-D (distributed,
-      each repeater announces its own traffic). Then decode its control
-      messages and follow calls with the existing NXDN96 receiver.
+- [ ] **NXDN NEXEDGE trunking** (Type-C): the control channel is decoded
+      (site, control channel, neighbours; checked live on the VHF system,
+      RadioReference 10105, Attica site, 153.4925 MHz) and `follow = yes`
+      follows voice assignments made by direct frequency assignment.
+      Still to do:
+      - verify the VCALL_ASSGN layout against a real call (none received
+        yet) and follow one live;
+      - sites that assign channel numbers: a channel plan option;
+      - the UHF system (RadioReference 8099) and the NXDN96 one;
+      - Type-D (no control channel) if a local system uses it.
+- [ ] Talkgroup names per system: `talkgroups.d` is one table and is used
+      for P25 calls only, since the NXDN and P25 systems here reuse the
+      same small numbers. radiod should say which system a call is on.
 - [x] Backup control channels: on losing the control channel the follower
       searches the listed and broadcast control channel frequencies. The
       search (a list of candidates, a wait, a dwell) isn't specific to P25:

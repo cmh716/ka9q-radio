@@ -1,12 +1,14 @@
-// NXDN (NXDN48 / NXDN96) conventional voice receiver: 4FSK demodulation,
-// frame sync, descrambling, LICH, SACCH / FACCH1 (VCALL: who, cipher) and
-// AMBE+2 voice
+// NXDN (NXDN48 / NXDN96) receiver: 4FSK demodulation, frame sync,
+// descrambling, LICH, SACCH / FACCH1 (VCALL: who, cipher) and AMBE+2 voice;
+// and a Type-C trunked site's control channel (outbound CAC: the site, its
+// control channels, its neighbours and the voice channel assignments)
 // Framing and channel coding follow trunk-recorder-pro's nxdn module
 // (TrunkRecorder/trunk-recorder-pro, GPL-3.0-or-later; NXDN Forum TS 1-A)
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <vector>
 
 #include "dv_ambe.h"
@@ -69,6 +71,12 @@ struct coding {
 };
 constexpr coding kSacch = {26, 6, 0x27, 12, {5, 11}, 2, 12};   // SR 8 + 18 data -> 60 air bits
 constexpr coding kFacch1 = {80, 12, 0x80f, 4, {1, 0}, 1, 16};  // 80 bits layer 3 -> 144 air bits
+// Outbound CAC (control channel): SR 8 + 144 bits layer 3 + 3 null -> 300 air
+// bits. The puncturing and interleaving were confirmed against a live site
+// (every one of 1851 frames passes its CRC)
+constexpr coding kCac = {155, 16, 0x1021, 14, {3, 11}, 2, 12};
+constexpr int kCacAt = 16;
+constexpr int kCallHoldFrames = 40;        // a channel assignment not repeated this long is over
 constexpr int kSacchAt = 16;               // body bit offsets
 constexpr int kHalfAt[2] = {76, 220};      // FACCH1 or two VCHs
 constexpr int kVchAt = 38;                 // body dibit of the first VCH (36 dibits each)
@@ -171,6 +179,18 @@ public:
     std::memcpy(stats->dst_call, dst_, sizeof dst_);
     stats->m17_can = -1;
     stats->error_rate = ambe_.error_rate();
+    // The control channel, in the fields the P25 one uses
+    stats->tsbks = cacs_;
+    stats->tsbk_errors = cac_errors_;
+    stats->sysid = static_cast<uint16_t>(system_);
+    stats->site = static_cast<uint8_t>(site_);
+    stats->last_nac = static_cast<uint16_t>(ran_ < 0 ? 0 : ran_);
+  }
+
+  void set_event_callback(dv_event_callback callback, void *user_data) override
+  {
+    event_callback_ = callback;
+    event_user_ = user_data;
   }
 
 private:
@@ -271,8 +291,11 @@ private:
   void frame(int lich, uint8_t const *body)
   {
     int const rf = lich >> 5, fct = (lich >> 3) & 3, option = (lich >> 1) & 3;
-    if (rf == 0)
-      return; // control channel (CAC)
+    if (rf == 0) {
+      if ((lich & 1) != 0) // outbound: the site's control channel
+        control(body);
+      return;
+    }
     if (rf == 3 && fct == 0)
       return; // Type-D single frame: FACCH1s only
     if (fct == 1)
@@ -332,6 +355,176 @@ private:
         voice(body + kVchAt + 36 * (2 * h + 1));
       }
     }
+  }
+
+  // --- Type-C control channel
+
+  void emit(dv_event& e)
+  {
+    if (event_callback_ != nullptr)
+      event_callback_(event_user_, &e);
+  }
+
+  // A location ID: category (2 bits), then system and site codes whose
+  // split depends on it (10/12 global, 14/8 regional, 17/5 local)
+  static void location(uint32_t id, unsigned *system, unsigned *site)
+  {
+    unsigned const category = id >> 22;
+    int const site_bits = category == 0 ? 12 : category == 2 ? 8 : 5;
+    *site = id & ((1u << site_bits) - 1);
+    *system = (id & 0x3fffff) >> site_bits;
+  }
+
+  // A direct frequency assignment number: 1.25 kHz steps from 100 MHz
+  // (checked against this site's and a neighbour's licensed frequencies)
+  static uint64_t dfa_hz(unsigned number)
+  {
+    return number == 0 ? 0 : 100000000ull + 1250ull * number;
+  }
+
+  void control(uint8_t const *body)
+  {
+    uint8_t bits[2 * kBodySymbols];
+    for (int k = 0; k < kBodySymbols; k++) {
+      bits[2 * k] = body[k] >> 1;
+      bits[2 * k + 1] = body[k] & 1;
+    }
+    uint8_t info[155];
+    if (!decode_channel(&viterbi_, kCac, bits + kCacAt, info)) {
+      cac_errors_++;
+      return;
+    }
+    cacs_++;
+    cac_frame_++;
+    int ran = 0;
+    for (int k = 2; k < 8; k++)
+      ran = (ran << 1) | info[k];
+    ran_ = ran;
+    uint8_t o[18];
+    for (int k = 0; k < 18; k++) {
+      o[k] = 0;
+      for (int b = 0; b < 8; b++)
+        o[k] = static_cast<uint8_t>((o[k] << 1) | info[8 + 8 * k + b]);
+    }
+    auto const be16 = [&o](int at) { return static_cast<unsigned>((o[at] << 8) | o[at + 1]); };
+    auto const be24 = [&o](int at) { return static_cast<uint32_t>((o[at] << 16) | (o[at + 1] << 8) | o[at + 2]); };
+    switch (o[0] & 0x3f) {
+    case 0x18:   // SITE_INFO
+    case 0x19: { // SRV_INFO: both start with this site's location ID
+      unsigned system, site;
+      location(be24(1), &system, &site);
+      if (!site_known_ || system != system_ || site != site_ || ran != site_ran_) {
+        site_known_ = true;
+        system_ = system;
+        site_ = site;
+        site_ran_ = ran;
+        dv_event e{};
+        e.type = DV_EVENT_SITE;
+        std::snprintf(e.text, sizeof e.text, "site: system %u site %u RAN %d", system, site, ran);
+        emit(e);
+      }
+      break;
+    }
+    case 0x1a: { // CCH_INFO: location, status, then a control channel
+      // Direct frequency assignment: status (6 bits, 2 spare) and 16-bit
+      // outbound and inbound frequency numbers. Otherwise two 10-bit channel
+      // numbers, which only the system's own channel plan can turn into
+      // frequencies; the inbound number tells the forms apart
+      dfa_ = o[7] != 0 || o[8] != 0;
+      if (!dfa_)
+        break;
+      uint64_t const hz = dfa_hz(be16(5));
+      if (hz == 0)
+        break;
+      for (uint64_t const known : controls_)
+        if (known == hz)
+          return;
+      if (controls_.size() >= 16)
+        break;
+      controls_.push_back(hz);
+      dv_event e{};
+      e.type = DV_EVENT_CONTROL;
+      e.freq_hz = hz;
+      e.slot = -1;
+      std::snprintf(e.text, sizeof e.text, "control channel %.4f MHz", hz / 1e6);
+      emit(e);
+      break;
+    }
+    case 0x1b: // ADJ_SITE_INFO: up to two neighbours (location, option, control channel)
+      if (!dfa_)
+        break;
+      for (int at = 1; at + 6 <= 15; at += 6) {
+        uint32_t const id = be24(at);
+        uint64_t const hz = dfa_hz(be16(at + 4));
+        if (id == 0 || hz == 0)
+          continue;
+        unsigned system, site;
+        location(id, &system, &site);
+        if (neighbours_.size() >= 64 || neighbours_.count(id) != 0)
+          continue;
+        neighbours_[id] = hz;
+        dv_event e{};
+        e.type = DV_EVENT_SITE;
+        std::snprintf(e.text, sizeof e.text, "adjacent site %u: control channel %.4f MHz", site, hz / 1e6);
+        emit(e);
+      }
+      break;
+    case 0x04:   // VCALL_ASSGN: a voice call is given a traffic channel
+    case 0x05: { // VCALL_ASSGN_DUP: the same, repeated while it lasts
+      // CC option, call type (3 bits) and call option, source, destination,
+      // call timer (6 bits), then the channel: 10 bits, or with direct
+      // frequency assignment 2 spare bits and the outbound and inbound numbers
+      int const call_type = o[2] >> 5;
+      unsigned const source = be16(3);
+      unsigned const destination = be16(5);
+      unsigned const channel = dfa_ ? be16(8) : ((o[7] & 3u) << 8) | o[8];
+      assign(channel, dfa_ ? dfa_hz(channel) : 0, destination, source, call_type != 1, (o[0] & 0x3f) == 0x04);
+      break;
+    }
+    default:
+      break;
+    }
+  }
+
+  // explicit_grant: the assignment itself (a new transmission), not a repeat
+  void assign(unsigned channel, uint64_t hz, unsigned group, unsigned source, bool unit, bool explicit_grant)
+  {
+    for (auto it = calls_.begin(); it != calls_.end();) {
+      if (cac_frame_ - it->second.seen > kCallHoldFrames)
+        it = calls_.erase(it);
+      else
+        ++it;
+    }
+    auto it = calls_.find(channel);
+    bool const known = it != calls_.end() && it->second.group == group;
+    uint32_t const transmission = explicit_grant ? ++transmissions_ : 0;
+    if (known) {
+      it->second.seen = cac_frame_;
+      if (source != 0)
+        it->second.source = source;
+      if (transmission != 0)
+        it->second.transmission = transmission;
+    } else {
+      calls_[channel] = assigned{group, source, cac_frame_, transmission};
+    }
+    dv_event e{};
+    e.type = known ? DV_EVENT_UPDATE : DV_EVENT_GRANT;
+    e.transmission = calls_[channel].transmission;
+    e.channel = static_cast<uint16_t>(channel);
+    e.freq_hz = hz;
+    e.slot = -1;
+    e.group = group;
+    e.source = calls_[channel].source;
+    e.unit = unit;
+    if (!known) {
+      char where[32];
+      if (hz != 0)
+        std::snprintf(where, sizeof where, "%.4f MHz", hz / 1e6);
+      else
+        std::snprintf(where, sizeof where, "ch %u", channel);
+      std::snprintf(e.text, sizeof e.text, "grant %s %u from %u on %s", unit ? "unit" : "TG", group, source, where);
+    }
+    emit(e);
   }
 
   // Layer 3 (layer3.rs): VCALL says who is talking to whom, and the cipher;
@@ -408,6 +601,26 @@ private:
   bool encrypted_ = false;
   char src_[12]{};
   char dst_[12]{};
+
+  // Control channel
+  struct assigned {
+    unsigned group, source;
+    uint64_t seen;            // cac_frame_ when last mentioned
+    uint32_t transmission;
+  };
+  dv_event_callback event_callback_ = nullptr;
+  void *event_user_ = nullptr;
+  uint64_t cacs_ = 0, cac_errors_ = 0;
+  uint64_t cac_frame_ = 0;
+  int ran_ = -1;
+  bool site_known_ = false;
+  unsigned system_ = 0, site_ = 0;
+  int site_ran_ = -1;
+  bool dfa_ = false;          // the site assigns frequencies directly (CCH_INFO says)
+  std::vector<uint64_t> controls_;
+  std::map<uint32_t, uint64_t> neighbours_; // location ID -> control channel, Hz
+  std::map<unsigned, assigned> calls_;      // by channel
+  uint32_t transmissions_ = 0;
 
   uint64_t syncs_ = 0;
   uint64_t frames_ = 0;

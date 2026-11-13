@@ -259,16 +259,17 @@ struct dv_audio_queue {
   int absent; // samples without IDs, independent of the number of PCM frames
 };
 
-// P25 control channel events (site, band plan, voice grants), logged with -v
+// Control channel events (site, band plan, voice grants), logged with -v
 // and passed to the grant follower, if any
 struct dv_events {
   struct channel const *chan;
   struct dv_follow *follow;
+  char const *system; // "P25" or "NXDN"
 };
 static void log_event(void *user_data,dv_event const *event){
   struct dv_events const *ev = user_data;
   if(Verbose > 0 && event->text[0] != '\0')
-    fprintf(stderr,"%s P25 %s\n",ev->chan->name,event->text);
+    fprintf(stderr,"%s %s %s\n",ev->chan->name,ev->system,event->text);
   dv_follow_event(ev->follow,event);
 }
 
@@ -281,7 +282,7 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
   if(follow != NULL){
     if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src,
 		      &call->freq,&call->slot,&call->generation,&call->serial))
-      strlcpy(call->mode,"P25",sizeof call->mode);
+      strlcpy(call->mode,mode == DV_NXDN48 || mode == DV_NXDN96 ? "NXDN" : "P25",sizeof call->mode);
     return;
   }
   int const m = mode == DV_AUTO ? st->active_mode : (int)mode;
@@ -472,7 +473,8 @@ int demod_dv(void *arg){
   // A following channel plays only the calls it follows: its control channel
   // decoder's own speech (should the control channel move and this frequency
   // carry voice) would bypass the talkgroup list
-  bool const following = chan->p25.follow && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK);
+  bool const following = chan->p25.follow
+    && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK || mode == DV_NXDN48 || mode == DV_NXDN96);
   dv_decoder * const decoder = dv_create(mode,&config,following ? NULL : queue_pcm,&audio_queue);
   if(decoder == NULL){
     fprintf(stderr,"%s: couldn't create %s decoder\n",chan->name,label);
@@ -481,12 +483,12 @@ int demod_dv(void *arg){
   }
   audio_queue.decoder = decoder;
   audio_queue.mode = mode;
-  // A P25 Phase 1 control channel can follow its voice grants
-  struct dv_events events = { .chan = chan };
+  // A P25 Phase 1 or NXDN Type-C control channel can follow its voice grants
+  struct dv_events events = { .chan = chan, .system = is_nxdn ? "NXDN" : "P25" };
   if(following){
     events.follow = dv_follow_create(chan,queue_pcm,&audio_queue);
     if(events.follow == NULL)
-      fprintf(stderr,"%s: couldn't create the P25 voice channel follower\n",chan->name);
+      fprintf(stderr,"%s: couldn't create the voice channel follower\n",chan->name);
   }
   dv_set_event_callback(decoder,log_event,&events);
   audio_queue.follow = events.follow;
@@ -670,6 +672,11 @@ int demod_dv(void *arg){
 		  chan->name,stats.samples,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  chan->dv.source[0] ? chan->dv.source : "-",stats.freq_offset);
+	else if(is_nxdn && stats.tsbks + stats.tsbk_errors != 0)
+	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
+		  " control=%" PRIu64 "/%" PRIu64 " RAN=%u offset=%+.1f Hz\n",
+		  chan->name,label,stats.samples,stats.syncs,stats.frames,
+		  stats.tsbks,stats.tsbks + stats.tsbk_errors,stats.last_nac,stats.freq_offset);
 	else if(is_ysf || is_dstar || is_nxdn)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s offset=%+.1f Hz\n",

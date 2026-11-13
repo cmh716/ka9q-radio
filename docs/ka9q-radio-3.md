@@ -406,6 +406,35 @@ much as any other P25 channel. For example:
     freq = "851m4625"
     data = trunk-police.local
 
+### follow, talkgroups, control-channels (NXDN trunking)
+
+On the control channel of an NXDN Type-C trunked site (NEXEDGE), with
+**mode = nxdn** or **nxdn96**, **follow = yes** plays the calls the control
+channel assigns, as **p25-follow** does for P25. **talkgroups** and
+**control-channels** are **p25-talkgroups** and **p25-control-channels**
+under other names (each pair is one setting; either name works in either
+mode). With **-v** radiod logs the site (system and site codes, RAN), its
+control channel, the neighbouring sites' control channels and each call
+assigned. Between calls monitor shows **CC R** and the RAN.
+
+Only sites that assign frequencies directly (the control channel then
+gives frequencies, as 1.25 kHz steps above 100 MHz) can be followed. A site
+that assigns channel numbers is decoded and logged (the grants show as
+"ch N"), but not followed: the numbers' frequencies are in the radios'
+programming, not on the air. Type-D systems, which have no control channel,
+are not supported. For example:
+
+    [Business]
+    mode = nxdn
+    follow = yes
+    freq = "153m4925"
+    data = trunk-nxdn.local
+
+The control channel decoding has been checked against a live site. The
+call assignment message has not: none had been received when this was
+written, so its layout follows the standard as remembered and may need
+correcting.
+
 ### p25-wacn, p25-sysid, p25-slot
 
 P25 Phase 2 (**p25-demod = phase2**) voice channels are scrambled with a

@@ -1,6 +1,7 @@
-// P25 trunking: a control channel's grants steer a second downconverter and
-// voice decoder (Phase 1 FDMA or Phase 2 TDMA) on the same channel thread,
-// so one radiod channel plays whichever permitted call is up
+// Trunking (P25, NXDN Type-C): a control channel's grants steer a second
+// downconverter and voice decoder (P25 Phase 1 FDMA or Phase 2 TDMA, or
+// NXDN) on the same channel thread, so one radiod channel plays whichever
+// permitted call is up
 // Copyright 2026 ka9q-radio contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE 1
@@ -85,6 +86,13 @@ struct dv_follow {
   uint64_t tried_at;         // when the current one was tuned
 };
 
+static bool is_nxdn(chan_t const *chan){
+  return chan->demod_type == NXDN_DEMOD;
+}
+static char const *system_name(chan_t const *chan){
+  return is_nxdn(chan) ? "NXDN" : "P25";
+}
+
 static void add_control(struct dv_follow *f, uint64_t hz){
   if(hz == 0)
     return;
@@ -116,7 +124,7 @@ static void try_next_control(struct dv_follow *f){
     if(hz == here || (double)hz < lo || (double)hz > hi)
       continue;
     if(Verbose > 0)
-      fprintf(stderr,"%s P25 no control channel on %.4f MHz: trying %.4f MHz\n",chan->name,here * 1e-6,hz * 1e-6);
+      fprintf(stderr,"%s %s no control channel on %.4f MHz: trying %.4f MHz\n",chan->name,system_name(chan),here * 1e-6,hz * 1e-6);
     set_freq(chan,(double)hz);
     f->searching = true;
     break;
@@ -172,8 +180,8 @@ static void release(struct dv_follow *f, char const *why){
     double const mhz = f->cur.freq * 1e-6;
     dv_stats st;
     dv_get_stats(f->voice,&st);
-    fprintf(stderr,"%s P25 leaving TG %" PRIu32 " on %.4f MHz (%s; %" PRIu64 " voice frames, %" PRIu64 " muted)\n",
-	    name,group,mhz,why,st.voice_decoded,st.voice_muted);
+    fprintf(stderr,"%s %s leaving TG %" PRIu32 " on %.4f MHz (%s; %" PRIu64 " voice frames, %" PRIu64 " muted)\n",
+	    name,system_name(f->chan),group,mhz,why,st.voice_decoded,st.voice_muted);
   }
   dv_destroy(f->voice);
   f->voice = NULL;
@@ -315,7 +323,9 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
     .p25_wait_clear = true,
   };
   dv_mode mode;
-  if(g->slot >= 0){
+  if(is_nxdn(chan))
+    mode = chan->nxdn.nxdn96 ? DV_NXDN96 : DV_NXDN48; // the traffic channels are as the control channel
+  else if(g->slot >= 0){
     if(cc->wacn == 0)
       return; // can't descramble until the control channel names the network
     mode = DV_P25P2;
@@ -339,7 +349,7 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
     char where[24] = "";
     if(g->slot >= 0)
       snprintf(where,sizeof where," slot %d",g->slot);
-    fprintf(stderr,"%s P25 following %s %" PRIu32 " on %.4f MHz%s\n",chan->name,
+    fprintf(stderr,"%s %s following %s %" PRIu32 " on %.4f MHz%s\n",chan->name,system_name(chan),
 	    g->unit ? "unit" : "TG",g->group,g->freq * 1e-6,where);
   }
 }
@@ -389,7 +399,7 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     f->cc_ever = true;
     f->cc_nac = cc->last_nac;
     if(f->searching && Verbose > 0)
-      fprintf(stderr,"%s P25 control channel found on %.4f MHz\n",f->chan->name,f->chan->tune.freq * 1e-6);
+      fprintf(stderr,"%s %s control channel found on %.4f MHz\n",f->chan->name,system_name(f->chan),f->chan->tune.freq * 1e-6);
     f->searching = false;
     add_control(f,(uint64_t)llrint(f->chan->tune.freq)); // somewhere to come back to
   } else if(f->searching ? f->now - f->tried_at > FOLLOW_CC_DWELL
@@ -478,7 +488,7 @@ bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
   if(f->voice != NULL)
     snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
   else if(f->cc_ever && f->now - f->cc_seen <= FOLLOW_CC_LOST)
-    snprintf(buf,len,"CC N%03X",f->cc_nac);
+    snprintf(buf,len,is_nxdn(f->chan) ? "CC R%u" : "CC N%03X",f->cc_nac);
   else if(f->searching)
     snprintf(buf,len,"CC search");
   else
@@ -491,9 +501,9 @@ void dv_follow_print(struct dv_follow const *f){
     return;
   dv_stats st;
   dv_get_stats(f->voice,&st);
-  fprintf(stderr,"%s P25 voice %.4f MHz TG %" PRIu32 " src %s syncs=%" PRIu64 " frames=%" PRIu64
+  fprintf(stderr,"%s %s voice %.4f MHz TG %" PRIu32 " src %s syncs=%" PRIu64 " frames=%" PRIu64
 	  " voice=%" PRIu64 " muted=%" PRIu64 "%s errors=%.1f%% offset=%+.1f Hz\n",
-	  f->chan->name,f->cur.freq * 1e-6,f->cur.group,st.src_call[0] ? st.src_call : "-",
+	  f->chan->name,system_name(f->chan),f->cur.freq * 1e-6,f->cur.group,st.src_call[0] ? st.src_call : "-",
 	  st.syncs,st.frames,st.voice_decoded,st.voice_muted,st.m17_encrypted ? " encrypted" : "",
 	  100.0f * st.error_rate,st.freq_offset);
 }

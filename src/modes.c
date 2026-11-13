@@ -167,6 +167,9 @@ char const *Channel_keys[] = {
   "p25-follow",
   "p25-talkgroups",
   "p25-control-channels",
+  "follow",
+  "talkgroups",
+  "control-channels",
   "dmr-slot",
   "m17-can",
   "nxdn-rate",
@@ -304,8 +307,12 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
       else
 	chan->p25.nac = (uint16_t)nac;
     }
+    // Trunking: the same settings under names that aren't P25's, for NXDN
     chan->p25.follow = config_getboolean(table,sname,"p25-follow",chan->p25.follow);
+    chan->p25.follow = config_getboolean(table,sname,"follow",chan->p25.follow);
     cp = config_getstring(table,sname,"p25-talkgroups",NULL);
+    if(cp == NULL)
+      cp = config_getstring(table,sname,"talkgroups",NULL);
     if(cp != NULL){
       // Talkgroups in priority order, separated by spaces or commas
       chan->p25.ntalkgroups = 0;
@@ -326,6 +333,8 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
       }
     }
     cp = config_getstring(table,sname,"p25-control-channels",NULL);
+    if(cp == NULL)
+      cp = config_getstring(table,sname,"control-channels",NULL);
     if(cp != NULL){
       // The site's control channel frequencies, separated by spaces or commas
       chan->p25.ncontrol = 0;
