@@ -75,7 +75,10 @@ Supersedes --subdirs; superseded by --jt and pipe modes.
 With --by-talkgroup, append one CSV line per recorded call: start time,
 seconds, talkgroup, source, mode, frequency, TDMA slot, SSRC, file name, and
 the talkgroup's name and description where known (see --talkgroups) and the
-system's name, if radiod's configuration gives it one. A relative
+system's name, if radiod's configuration gives it one. An existing log
+written by an earlier version, with other columns, is kept as
+.IR file .old1
+(or the next free number) and a new one begun. A relative
 name is relative to the current directory, not --directory.
 .TP
 .B "\-\-talkgroups file|directory"

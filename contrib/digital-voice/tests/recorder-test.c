@@ -163,6 +163,17 @@ int main(int argc, char **argv){
   mkdir(rec,0777);
   mkdir(names,0777);
   unlink(log);
+  // Codex: a call log left by an earlier version (other columns) is set
+  // aside, not appended to under its old header
+  char oldlog[4200];
+  snprintf(oldlog,sizeof oldlog,"%s.old1",log);
+  unlink(oldlog);
+  {
+    FILE *lf = fopen(log,"w");
+    if(lf == NULL){ perror(log); return 2; }
+    fputs("start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file\n2026-01-01T00:00:00.0Z,1.0,1,2,P25,851000000,,1,x.wav\n",lf);
+    fclose(lf);
+  }
   // Columns in the order of a radioreference.com download, with a quoted
   // comma and a name that isn't safe in a path; then a second file with its
   // columns in another order, a byte order mark, a line with no number and
@@ -215,10 +226,24 @@ int main(int argc, char **argv){
   static char const *const want_dir[] = {"/rec/100/","/rec/200_Fire_DispEast/","/rec/300_Ops_3/","/rec/400/","/rec/500/","/rec/500/","/County_Bus/600_Route_6/","/County_Bus/700/"};
   static char const *const want_name[] = {",,","Fire Disp/East,\"Fire, Dispatch\",","Ops 3,,",",,",",,",",,","Route 6,,County Bus",",,County Bus"};
   int const ncalls = sizeof want_tg / sizeof want_tg[0];
-  FILE *f = fopen(log,"r");
+  FILE *f = fopen(oldlog,"r");
   char line[8192];
+  int oldlines = 0;
+  while(f != NULL && fgets(line,sizeof line,f) != NULL)
+    oldlines++;
+  if(f != NULL)
+    fclose(f);
+  if(oldlines != 2){
+    printf("FAIL: the earlier version's call log wasn't kept whole as %s (%d lines, want 2)\n",oldlog,oldlines);
+    Failures++;
+  }
+  f = fopen(log,"r");
   int calls = 0;
   if(f != NULL && fgets(line,sizeof line,f) != NULL){
+    if(strcmp(line,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description,system\n") != 0){
+      printf("FAIL: the call log's header is %s",line);
+      Failures++;
+    }
     while(fgets(line,sizeof line,f) != NULL && calls < ncalls){
       char *fields[9] = {0};
       char *p = line;

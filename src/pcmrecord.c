@@ -518,6 +518,32 @@ int main(int argc,char *argv[]){
   atexit(cleanup);
   if(Call_log_name != NULL){
     // Opened before the chdir, so a relative name is relative to where we started
+    static char const header[] = "start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description,system\n";
+    {
+      // A log begun by an earlier version has other columns: set it aside
+      // rather than append lines its header doesn't describe
+      char first[sizeof header + 1] = "";
+      FILE * const old = fopen(Call_log_name,"r");
+      if(old != NULL){
+	bool const differs = fgets(first,sizeof first,old) != NULL && strcmp(first,header) != 0;
+	fclose(old);
+	bool moved = !differs;
+	char aside[PATH_MAX];
+	for(int n = 1; n < 1000 && !moved; n++){
+	  snprintf(aside,sizeof aside,"%s.old%d",Call_log_name,n);
+	  if(link(Call_log_name,aside) == 0){ // never replaces a file
+	    unlink(Call_log_name);
+	    moved = true;
+	    fprintf(stderr,"Call log %s has an earlier version's columns: kept as %s, starting a new one\n",Call_log_name,aside);
+	  } else if(errno != EEXIST)
+	    break;
+	}
+	if(!moved){
+	  fprintf(stderr,"Call log %s has an earlier version's columns and can't be set aside: %s\n",Call_log_name,strerror(errno));
+	  exit(EX_CANTCREAT);
+	}
+      }
+    }
     Call_log = fopen(Call_log_name,"a");
     if(Call_log == NULL){
       fprintf(stderr,"Can't open call log %s: %s\n",Call_log_name,strerror(errno));
@@ -525,7 +551,7 @@ int main(int argc,char *argv[]){
     }
     setlinebuf(Call_log);
     if(ftell(Call_log) == 0)
-      fprintf(Call_log,"start,seconds,talkgroup,source,mode,frequency,slot,ssrc,file,name,description,system\n");
+      fputs(header,Call_log);
   }
   if(By_talkgroup){
     // Read before the chdir, like the call log. The default directory is optional
