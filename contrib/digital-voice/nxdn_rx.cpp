@@ -267,13 +267,22 @@ private:
       unlock(); // a 20-bit FSW is short: a lock off noise doesn't survive its LICH
       return;
     }
-    // The LICH has no error correction. Within a voice call it doesn't
-    // change, so when this one fails but the sync was where it belonged,
-    // carry the last good one forward (only ever a voice LICH)
-    if (lich >= 0)
+    // The LICH has no error correction. Within a voice call it either stays
+    // the same (NXDN48) or alternates frame by frame (NXDN96 with the half
+    // rate vocoder: four voice frames, then two FACCH1s). So when this one
+    // fails but the sync was where it belonged, take the one this frame
+    // should have: that of two frames ago if the last two differed, else
+    // the last (only ever within a voice call's superframe)
+    bool const read = lich >= 0;
+    if (!read && sync && last_lich_ >= 0 && ((last_lich_ >> 3) & 3) >= 2) {
+      int const expected = previous_lich_ >= 0 && previous_lich_ != last_lich_ ? previous_lich_ : last_lich_;
+      if (((expected >> 3) & 3) >= 2)
+        lich = expected;
+    }
+    if (lich >= 0) {
+      previous_lich_ = last_lich_;
       last_lich_ = lich;
-    else if (sync && last_lich_ >= 0 && ((last_lich_ >> 3) & 3) >= 2)
-      lich = last_lich_;
+    }
     if (sync || lich >= 0) {
       bad_ = 0;
     } else if (++bad_ >= kUnlockFrames) {
@@ -602,7 +611,7 @@ private:
   // not its identity, which radiod holds through a brief fade
   void end_call()
   {
-    last_lich_ = -1;
+    last_lich_ = previous_lich_ = -1;
     encrypted_ = false;
     sacch_have_ = 0;
     src_[0] = dst_[0] = '\0';
@@ -627,6 +636,7 @@ private:
   bool fresh_ = false;
   int bad_ = 0;
   int last_lich_ = -1;
+  int previous_lich_ = -1;     // the one before it
 
   uint32_t sacch_parts_[4]{};
   unsigned sacch_have_ = 0;
