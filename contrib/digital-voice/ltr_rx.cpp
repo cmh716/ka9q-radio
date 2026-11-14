@@ -43,9 +43,10 @@ constexpr int kWordHoldBits = 6 * kWordBits; // a call whose words stop this lon
 constexpr int kRecent = 6;
 constexpr int kPhases = 4;
 constexpr int kHold = 3200;               // 0.4 s of audio
+constexpr int kHighSections = 4;
 constexpr uint64_t kRecentBits = 600;      // two seconds
 constexpr uint64_t kIdleBits = 18000;      // a minute: an idle repeater sends a word or two every ten seconds
-constexpr float kAudioGain = 26.0f;        // 1 kHz at 1.5 kHz deviation: about a quarter of full scale
+constexpr float kAudioGain = 32.0f;        // 1 kHz at 1.5 kHz deviation: about 10000
 
 std::vector<float> lowpass(int ntaps, float cutoff, float rate)
 {
@@ -94,9 +95,11 @@ public:
       audio_taps_(lowpass(73, 3200.0f, kInRate)), audio_history_(audio_taps_.size(), 0.0f),
       data_taps_(lowpass(121, 220.0f, kRate)), data_history_(data_taps_.size(), 0.0f)
   {
-    // Fourth order at 300 Hz: the data is 40 dB down at 150 Hz
-    high_[0].highpass(300.0f, kRate, 0.5412f);
-    high_[1].highpass(300.0f, kRate, 1.3066f);
+    // Eighth order Butterworth at 300 Hz: the data's energy is below 150 Hz,
+    // where this is 48 dB down (the de-emphasis that follows favours it by 10)
+    static constexpr float q[kHighSections] = {0.5098f, 0.6013f, 0.9000f, 2.5629f};
+    for (int k = 0; k < kHighSections; k++)
+      high_[k].highpass(300.0f, kRate, q[k]);
   }
 
   void process(cfloat const *samples, size_t count) override
@@ -140,7 +143,18 @@ public:
   {
     open_ = false;
     above_ = below_ = 0;
-    end_call();
+    // Nothing more will be played: the call ends now, not when its held
+    // audio would have gone out
+    if (here_ || ending_ > 0) {
+      call_serial_++;
+      dst_[0] = '\0';
+    }
+    here_ = false;
+    current_ = 0;
+    ending_ = 0;
+    std::fill(std::begin(hold_play_), std::end(hold_play_), false);
+    since_open_ = 0;
+    was_wanted_ = false;
   }
 
 private:
@@ -318,10 +332,8 @@ private:
     if (go_to == kTurnOff) {
       // The transmission is over
       granted_.erase(tg);
-      if (here_ && current_ == tg) {
-        call_serial_++;
+      if (here_ && current_ == tg)
         end_call();
-      }
       return;
     }
     if (go_to < 1 || go_to > 20)
@@ -349,8 +361,9 @@ private:
     if (own_ < 0 || static_cast<int>(go_to) == own_) {
       since_word_ = 0;
       if (!here_ || current_ != tg) {
-        if (here_)
-          call_serial_++;
+        if (here_ || ending_ > 0)
+          call_serial_++; // the next call is here before the last has played out
+        ending_ = 0;
         here_ = true;
         current_ = tg;
         std::snprintf(dst_, sizeof dst_, "%u", tg);
@@ -358,13 +371,14 @@ private:
     }
   }
 
+  // The call's audio is still on its way out (see audio()): the call's
+  // identity, as get_stats() gives it, ends when its last sample has gone
   void end_call()
   {
     if (here_)
-      call_serial_++;
+      ending_ = kHold;
     here_ = false;
     current_ = 0;
-    dst_[0] = '\0';
   }
 
   // The voice: the data filtered off, de-emphasised. It is played only
@@ -372,9 +386,15 @@ private:
   // audio runs that much behind, so a transmission is heard from its start
   void audio(float hz)
   {
-    float v = high_[1].process(high_[0].process(hz));
+    float v = hz;
+    for (biquad& section : high_)
+      v = section.process(v);
     deemphasis_ += 0.1535f * (v - deemphasis_); // 750 microseconds
     v = deemphasis_ * kAudioGain;
+    if (ending_ > 0 && --ending_ == 0) {
+      call_serial_++;
+      dst_[0] = '\0';
+    }
     bool const wanted = open_ && here_ && (only_ == 0 || current_ == only_);
     if (wanted && !was_wanted_) {
       // Everything held since the carrier came up belongs to this call
@@ -453,13 +473,14 @@ private:
   char dst_[12]{};
 
   // Voice
-  biquad high_[2];
+  biquad high_[kHighSections];
   float deemphasis_ = 0;
   int16_t hold_[kHold]{};
   bool hold_play_[kHold]{};
   int hold_at_ = 0;
   int since_open_ = 0;
   bool was_wanted_ = false;
+  int ending_ = 0;               // samples until the call that ended has played out
   int16_t pcm_[DV_PCM_SAMPLES]{};
   int pcm_n_ = 0;
   bool played_ = false;
