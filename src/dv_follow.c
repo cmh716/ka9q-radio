@@ -221,9 +221,29 @@ void dv_follow_destroy(struct dv_follow *f){
   free(f);
 }
 
-void dv_follow_event(struct dv_follow *f, dv_event const *e){
+// A channel number's frequency in the system's channel plan
+// (nxdn-channels), 0 if it isn't there
+static uint64_t nxdn_channel_hz(chan_t const *chan,unsigned number){
+  for(int i = 0; i < chan->nxdn.nchannels; i++)
+    if(chan->nxdn.channels[i].number == number)
+      return (uint64_t)llrint(chan->nxdn.channels[i].freq);
+  return 0;
+}
+
+void dv_follow_event(struct dv_follow *f, dv_event const *event){
   if(f == NULL)
     return;
+  // An NXDN site that assigns channel numbers: only the channel plan knows
+  // their frequencies
+  dv_event numbered;
+  dv_event const *e = event;
+  if((e->type == DV_EVENT_GRANT || e->type == DV_EVENT_UPDATE) && e->freq_hz == 0 && is_nxdn(f->chan)){
+    numbered = *event;
+    numbered.freq_hz = nxdn_channel_hz(f->chan,e->channel);
+    e = &numbered;
+    if(e->freq_hz == 0 && e->type == DV_EVENT_GRANT && Verbose > 0)
+      fprintf(stderr,"%s NXDN ch %u isn't in nxdn-channels: not followed\n",f->chan->name,(unsigned)e->channel);
+  }
   if(e->type == DV_EVENT_CONTROL){
     add_control(f,e->freq_hz);
     return;

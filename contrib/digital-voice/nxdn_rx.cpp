@@ -431,8 +431,20 @@ private:
       // numbers, which only the system's own channel plan can turn into
       // frequencies; the inbound number tells the forms apart
       dfa_ = o[7] != 0 || o[8] != 0;
-      if (!dfa_)
+      if (!dfa_) {
+        // The layout here is taken from the assignment's (10 bits, right
+        // justified); the octets are logged until a site has confirmed it
+        unsigned const number = ((o[4] & 3u) << 8) | o[5];
+        if (number != 0 && number != control_number_) {
+          control_number_ = number;
+          dv_event e{};
+          e.type = DV_EVENT_SITE;
+          std::snprintf(e.text, sizeof e.text, "control channel ch %u (channel numbers: %02x %02x %02x %02x %02x)",
+                        number, o[4], o[5], o[6], o[7], o[8]);
+          emit(e);
+        }
         break;
+      }
       uint64_t const hz = dfa_hz(be16(5));
       if (hz == 0)
         break;
@@ -637,6 +649,7 @@ private:
   unsigned system_ = 0, site_ = 0;
   int site_ran_ = -1;
   bool dfa_ = false;          // the site assigns frequencies directly (CCH_INFO says)
+  unsigned control_number_ = 0; // otherwise: the control channel's number, once logged
   char station_[16]{};
   std::vector<uint64_t> controls_;
   std::map<uint32_t, uint64_t> neighbours_; // location ID -> control channel, Hz

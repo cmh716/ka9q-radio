@@ -492,6 +492,24 @@ radio ID; the color code and talkgroup are in radiod's -v log.
 NXDN variant: **48** is NXDN48 (2400 baud, 6.25 kHz channels), **96** is NXDN96 (4800 baud, 12.5 kHz).
 The **nxdn** and **nxdn96** presets set it, with a channel filter to suit.
 
+### nxdn-channels
+
+An NXDN trunked site assigns each call either a frequency or a channel
+number. Numbers mean whatever the system's own channel plan says, so a
+following channel (**follow = yes**) on such a site needs the plan:
+**nxdn-channels** lists it as number:frequency pairs (the repeater's
+transmit frequency), separated by spaces or commas. With **-v** radiod logs
+each assignment with its channel number ("grant TG 4 from 12 on ch 11"), the
+control channel's own number, and any number that isn't in the list.
+Assignments to unlisted numbers aren't followed. For example:
+
+    [Trunked]
+    mode = nxdn96
+    follow = yes
+    nxdn-channels = "10:454m55 11:464m7125"
+    freq = "454m55"
+    data = trunk.local
+
 ### m17-can = -1
 
 M17 Channel Access Number to play, 0-15. -1 (default) plays any CAN.

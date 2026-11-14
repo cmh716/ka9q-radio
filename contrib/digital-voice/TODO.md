@@ -46,8 +46,12 @@ Capacity Max (going encrypted).
       - an earlier 0.4 s call's five frames on the traffic channel carried
         LICH values 1b 15 13 13 11 and didn't decode: unexplained, not seen
         since;
-      - sites that assign channel numbers: a channel plan option;
-      - the UHF system (RadioReference 8099) and the NXDN96 one;
+      - sites that assign channel numbers: `nxdn-channels` gives the plan
+        (number:frequency). Needs a live test on the UHF system
+        (RadioReference 8099, NXDN96, Attica site 454.550 MHz, RAN 1), whose
+        control channel decodes and which assigns channel numbers ("ch 11"):
+        the numbers' frequencies are still to be found, and the control
+        channel's own number as logged is unconfirmed;
       - Type-D (no control channel) if a local system uses it.
 - [x] Talkgroup names per system: `system = name` on the channel, and that
       system's CSV files in `talkgroups.d/name/`; pcmrecord files its calls

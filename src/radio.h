@@ -198,6 +198,11 @@ struct channel {
   } m17;
   struct {
     bool nxdn96;                  // NXDN96 (4800 baud) rather than NXDN48 (2400)
+    int nchannels;                // nxdn-channels: the system's channel plan, for sites that assign channel numbers
+    struct {
+      uint16_t number;            // 1-1023
+      double freq;                // outbound (repeater transmit), Hz
+    } channels[64];
   } nxdn;
   struct {
     bool analog;                  // "digital" also plays analog FM when no digital mode is on the air
