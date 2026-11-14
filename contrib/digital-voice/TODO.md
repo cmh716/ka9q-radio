@@ -30,10 +30,21 @@ Capacity Max (going encrypted).
       folders, attributes and call log.
 - [ ] P25 Phase 2: about 0.4 s of an encrypted call can play before the ESS
       says it is encrypted, when the MAC_PTT is missed.
-- [ ] **LTR Standard**: decode the 300 bps sub-audible data on each repeater's
-      FM channel (area, go-to repeater, home repeater, group ID, free
-      repeater); play the repeaters carrying chosen IDs. No control channel:
-      each repeater channel carries its own status.
+- [ ] **LTR Standard**: `mode = ltr` decodes the 300 bit/s sub-audible data
+      on a repeater's FM channel (area, go-to repeater, home repeater, group,
+      free repeater), plays its calls with the data filtered out and reports
+      each call's talkgroup; `follow = yes` on a home repeater follows its
+      talkgroups to the repeaters their calls are sent to (`ltr-repeaters`
+      gives the numbers' frequencies). The decoder was written against an
+      eleven minute capture of three local systems (RadioReference 4643,
+      4704, 4705: nine repeaters identified, one call decoded from start to
+      end). Not yet run live in radiod, and following has only its unit
+      test. Still to do:
+      - a live test, and of following;
+      - `talkgroups` on a channel that doesn't follow;
+      - words for several calls interleaved on one repeater weren't in the
+        capture;
+      - voice inversion (some talkgroups scramble with it).
 - [ ] **NXDN NEXEDGE trunking** (Type-C): the control channel is decoded
       (site, control channel, neighbours; checked live on the VHF system,
       RadioReference 10105, Attica site, 153.4925 MHz) and `follow = yes`

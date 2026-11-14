@@ -19,6 +19,7 @@ automatically.
     dstar_rx.cpp     D-STAR: GMSK (M&M timing), frame sync, slow-data header, AMBE voice
     nxdn_rx.cpp      NXDN48/96: frame sync, descrambling, LICH, SACCH/FACCH1 (VCALL), AMBE+2 voice
     dv_ambe.cpp      AMBE+2 voice decoding shared by DMR and NXDN
+    ltr_rx.cpp       LTR Standard (analog FM trunking): the 300 bit/s sub-audible words, the voice with them filtered out
     dv_auto.cpp      "digital": every receiver on the same IQ, the first to decode voice wins
     dv_api.cpp       C API
     upstream/        code taken from OP25; upstream/libm17 from the M17 Foundation

@@ -318,7 +318,39 @@ int main(void){
   { dv_event e = { .type = DV_EVENT_GRANT, .freq_hz = 152877500, .slot = -1, .group = 59, .source = 1234, .transmission = 1 }; dv_follow_event(F,&e); }
   run(2,false);
   check(following() == 152877500,"NXDN: follows a grant without waiting for a WACN");
+  // A site that assigns channel numbers: the channel plan gives the frequency
+  Chan.nxdn.nchannels = 1;
+  Chan.nxdn.channels[0].number = 11;
+  Chan.nxdn.channels[0].freq = 464712500;
   dv_follow_destroy(F);
+  F = dv_follow_create(&Chan,NULL,NULL);
+  { dv_event e = { .type = DV_EVENT_GRANT, .channel = 8, .slot = -1, .group = 60, .source = 1234, .transmission = 2 }; dv_follow_event(F,&e); }
+  run(2,false);
+  check(following() == 0,"NXDN: a channel number that isn't in the plan isn't followed");
+  { dv_event e = { .type = DV_EVENT_GRANT, .channel = 11, .slot = -1, .group = 61, .source = 1234, .transmission = 3 }; dv_follow_event(F,&e); }
+  run(2,false);
+  check(following() == 464712500,"NXDN: a channel number in the plan is followed to its frequency");
+  dv_follow_destroy(F);
+
+  // An LTR home repeater: its words say which repeater each call is on
+  Chan.demod_type = LTR_DEMOD;
+  Chan.tune.freq = 463950000;
+  Chan.nxdn.nchannels = 2;
+  Chan.nxdn.channels[0].number = 1;
+  Chan.nxdn.channels[0].freq = 463950000;
+  Chan.nxdn.channels[1].number = 5;
+  Chan.nxdn.channels[1].freq = 461825000;
+  Cc.last_nac = 1; // the repeater's number
+  Cc.tsbks = 200;
+  F = dv_follow_create(&Chan,NULL,NULL);
+  run(2,false);
+  run(400,false); // an idle repeater sends a word only every ten seconds
+  check(dv_follow_source(F,text,sizeof text) && strcmp(text,"LTR R1") == 0,"LTR: idle shows the repeater, \"LTR R1\"");
+  { dv_event e = { .type = DV_EVENT_GRANT, .channel = 5, .slot = -1, .group = 1099, .transmission = 1 }; dv_follow_event(F,&e); }
+  run(2,false);
+  check(following() == 461825000,"LTR: follows a group to the repeater its call is on");
+  dv_follow_destroy(F);
+  Chan.nxdn.nchannels = 0;
   Chan.demod_type = P25_DEMOD;
   printf(Failures ? "follower tests FAILED\n" : "Follower tests passed\n");
   return Failures ? 1 : 0;

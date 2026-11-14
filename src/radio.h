@@ -198,7 +198,8 @@ struct channel {
   } m17;
   struct {
     bool nxdn96;                  // NXDN96 (4800 baud) rather than NXDN48 (2400)
-    int nchannels;                // nxdn-channels: the system's channel plan, for sites that assign channel numbers
+    int nchannels;                // nxdn-channels, ltr-repeaters: the system's channel plan (NXDN sites that
+                                  // assign channel numbers; an LTR system's repeater numbers)
     struct {
       uint16_t number;            // 1-1023
       double freq;                // outbound (repeater transmit), Hz
@@ -379,7 +380,7 @@ typedef struct channel chan_t;
 
 static inline bool is_dv_demod(enum demod_type type){
   return type == P25_DEMOD || type == DMR_DEMOD || type == M17_DEMOD || type == YSF_DEMOD
-    || type == DSTAR_DEMOD || type == NXDN_DEMOD || type == DIGITAL_DEMOD;
+    || type == DSTAR_DEMOD || type == NXDN_DEMOD || type == DIGITAL_DEMOD || type == LTR_DEMOD;
 }
 static inline int channel_input_samprate(chan_t const *chan){
   return is_dv_demod(chan->demod_type) ? DV_IQ_SAMPRATE_RADIOD : chan->output.samprate;

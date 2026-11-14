@@ -15,7 +15,7 @@ Each section configures one or more channels with the same mode,
 output multicast stream and sample rate, differing only in frequency. What follows
 is a list of parameter settings with their default values:
 
-### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn | nxdn96 | digital | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
+### mode = pm | npm | fm | nfm | wfm | p25 | dmr | m17 | ysf | dstar | nxdn | nxdn96 | ltr | digital | am | cam | ame | iq | cwu | cwl | usb | lsb | dsb | amsq | wspr | spectrum
 
 No default. Required unless specified in [global].
 
@@ -509,6 +509,38 @@ Assignments to unlisted numbers aren't followed. For example:
     nxdn-channels = "10:454m55 11:464m7125"
     freq = "454m55"
     data = trunk.local
+
+### mode = ltr, ltr-repeaters
+
+LTR Standard is trunked analog FM with no control channel: every repeater
+sends 300 bit/s data under the voice, saying which talkgroup's call it is
+carrying and, for the talkgroups whose home repeater it is, which repeater
+each of their calls is on. **mode = ltr** plays a repeater's calls with the
+data filtered out, and gives each call's talkgroup to monitor and pcmrecord
+as the other digital voice modes do. A talkgroup is numbered as
+radioreference.com does: the area (0 or 1), the home repeater (two digits)
+and the group (three digits) as one number, so area 0, home repeater 1,
+group 99 is 1099 and area 1, home repeater 2, group 7 is 102007. Idle
+repeaters aren't played. With **-v** radiod logs each repeater's own number
+(it sends it every ten seconds) and each call.
+
+With **follow = yes** the channel is a home repeater, and plays the calls of
+the talkgroups homed on it wherever they are sent, as a mobile radio does,
+so a conversation is heard through its moves from repeater to repeater.
+**ltr-repeaters** lists the system's repeaters as number:frequency pairs,
+separated by spaces or commas; **talkgroups** limits it to those listed, in
+priority order. One following channel is needed for each home repeater of
+interest. All the repeaters must lie within the front end's coverage. For
+example, for talkgroups 1099 and 1022, whose home is repeater 1:
+
+    [Taxis]
+    mode = ltr
+    follow = yes
+    system = tonawanda
+    ltr-repeaters = "1:463m95 4:464m175 5:461m825"
+    talkgroups = "1099 1022"
+    freq = "463m95"
+    data = taxis.local
 
 ### m17-can = -1
 

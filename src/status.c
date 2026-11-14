@@ -26,6 +26,7 @@ struct demodtab const Demodtab[] = {
       {DSTAR_DEMOD,    "dstar", },
       {NXDN_DEMOD,     "nxdn", },
       {DIGITAL_DEMOD,  "digital", },
+      {LTR_DEMOD,      "ltr", },
 };
 
 // Encode 64-bit integer, big endian, leading zeroes suppressed

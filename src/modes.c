@@ -175,6 +175,7 @@ char const *Channel_keys[] = {
   "m17-can",
   "nxdn-rate",
   "nxdn-channels",
+  "ltr-repeaters",
   "analog",
   "dv-gate",
   "pl", // do these too (sigh)
@@ -386,6 +387,8 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	fprintf(stderr,"%s: invalid nxdn-rate '%s' (expected 48 or 96), ignored\n",sname,cp);
     }
     cp = config_getstring(table,sname,"nxdn-channels",NULL);
+    if(cp == NULL)
+      cp = config_getstring(table,sname,"ltr-repeaters",NULL);
     if(cp != NULL){
       // The system's channel plan, number:frequency, separated by spaces or commas
       chan->nxdn.nchannels = 0;
@@ -395,11 +398,11 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
 	unsigned long const number = strtoul(tok,&end,10);
 	double const f = end != tok && *end == ':' ? fabs(parse_frequency(end + 1,true)) : NAN;
 	if(number < 1 || number > 1023 || !isfinite(f) || f <= 0){
-	  fprintf(stderr,"%s: invalid nxdn-channels entry '%s' (expected number:frequency, number 1-1023), ignored\n",sname,tok);
+	  fprintf(stderr,"%s: invalid nxdn-channels or ltr-repeaters entry '%s' (expected number:frequency, number 1-1023), ignored\n",sname,tok);
 	  continue;
 	}
 	if(chan->nxdn.nchannels >= (int)(sizeof chan->nxdn.channels / sizeof chan->nxdn.channels[0])){
-	  fprintf(stderr,"%s: too many nxdn-channels, '%s' on ignored\n",sname,tok);
+	  fprintf(stderr,"%s: too many nxdn-channels or ltr-repeaters, '%s' on ignored\n",sname,tok);
 	  break;
 	}
 	chan->nxdn.channels[chan->nxdn.nchannels].number = (uint16_t)number;

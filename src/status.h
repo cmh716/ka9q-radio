@@ -198,6 +198,7 @@ enum demod_type {
   DSTAR_DEMOD,          // D-STAR voice
   NXDN_DEMOD,           // NXDN voice (NXDN48 or NXDN96)
   DIGITAL_DEMOD,        // any of the digital voice modes, detected automatically
+  LTR_DEMOD,            // LTR Standard trunked analog FM, with its sub-audible data decoded
   N_DEMOD,              // Dummy equal to number of valid entries
 };
 

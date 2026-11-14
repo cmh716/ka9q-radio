@@ -19,7 +19,7 @@ SOURCES := dv_api.cpp dv_auto.cpp dv_frontend.cpp dv_ambe.cpp fsk4.cpp \
 	upstream/bptc19696.cc upstream/hamming.cc upstream/golay2087.cc \
 	upstream/software_imbe_decoder.cc upstream/imbe_decoder.cc \
 	upstream/mbelib.c upstream/ambe.c \
-	m17_rx.cpp ysf_rx.cpp dstar_rx.cpp nxdn_rx.cpp
+	m17_rx.cpp ysf_rx.cpp dstar_rx.cpp nxdn_rx.cpp ltr_rx.cpp
 # libm17 has files with the same name in different directories, so its
 # objects keep its directory layout
 LIBM17_SOURCES := $(wildcard upstream/libm17/*.c upstream/libm17/*/*.c)

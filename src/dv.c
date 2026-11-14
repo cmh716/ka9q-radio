@@ -282,7 +282,7 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
   if(follow != NULL){
     if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src,
 		      &call->freq,&call->slot,&call->generation,&call->serial))
-      strlcpy(call->mode,mode == DV_NXDN48 || mode == DV_NXDN96 ? "NXDN" : "P25",sizeof call->mode);
+      strlcpy(call->mode,mode == DV_NXDN48 || mode == DV_NXDN96 ? "NXDN" : mode == DV_LTR ? "LTR" : "P25",sizeof call->mode);
     return;
   }
   int const m = mode == DV_AUTO ? st->active_mode : (int)mode;
@@ -431,8 +431,9 @@ int demod_dv(void *arg){
   bool const is_dstar = chan->demod_type == DSTAR_DEMOD;
   bool const is_nxdn = chan->demod_type == NXDN_DEMOD;
   bool const is_auto = chan->demod_type == DIGITAL_DEMOD;
+  bool const is_ltr = chan->demod_type == LTR_DEMOD;
   bool const has_callsign = is_m17 || is_ysf || is_dstar || is_nxdn;
-  char const * const label = is_dmr ? "DMR" : is_m17 ? "M17" : is_ysf ? "YSF" : is_dstar ? "D-STAR"
+  char const * const label = is_dmr ? "DMR" : is_m17 ? "M17" : is_ysf ? "YSF" : is_dstar ? "D-STAR" : is_ltr ? "LTR"
     : is_nxdn ? (chan->nxdn.nxdn96 ? "NXDN96" : "NXDN48") : is_auto ? "DIGITAL" : "P25";
 
   // Like WFM, the output rate is fixed by the mode, whatever was set before
@@ -466,6 +467,7 @@ int demod_dv(void *arg){
     .m17_can = chan->m17.can,
   };
   dv_mode const mode = is_auto ? DV_AUTO : is_dmr ? DV_DMR : is_m17 ? DV_M17 : is_ysf ? DV_YSF : is_dstar ? DV_DSTAR
+    : is_ltr ? DV_LTR
     : is_nxdn ? (chan->nxdn.nxdn96 ? DV_NXDN96 : DV_NXDN48)
     : chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK
     : chan->p25.modulation == P25_PHASE2 ? DV_P25P2 : DV_P25_C4FM;
@@ -474,7 +476,7 @@ int demod_dv(void *arg){
   // decoder's own speech (should the control channel move and this frequency
   // carry voice) would bypass the talkgroup list
   bool const following = chan->p25.follow
-    && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK || mode == DV_NXDN48 || mode == DV_NXDN96);
+    && (mode == DV_P25_C4FM || mode == DV_P25_CQPSK || mode == DV_NXDN48 || mode == DV_NXDN96 || mode == DV_LTR);
   dv_decoder * const decoder = dv_create(mode,&config,following ? NULL : queue_pcm,&audio_queue);
   if(decoder == NULL){
     fprintf(stderr,"%s: couldn't create %s decoder\n",chan->name,label);
@@ -483,8 +485,9 @@ int demod_dv(void *arg){
   }
   audio_queue.decoder = decoder;
   audio_queue.mode = mode;
-  // A P25 Phase 1 or NXDN Type-C control channel can follow its voice grants
-  struct dv_events events = { .chan = chan, .system = is_nxdn ? "NXDN" : "P25" };
+  // A P25 Phase 1 or NXDN Type-C control channel can follow its voice grants,
+  // an LTR home repeater the calls of the groups homed on it
+  struct dv_events events = { .chan = chan, .system = is_nxdn ? "NXDN" : is_ltr ? "LTR" : "P25" };
   if(following){
     events.follow = dv_follow_create(chan,queue_pcm,&audio_queue);
     if(events.follow == NULL)
@@ -653,15 +656,16 @@ int demod_dv(void *arg){
       if(events.follow != NULL){
 	if(!dv_follow_source(events.follow,chan->dv.source,sizeof chan->dv.source))
 	  chan->dv.source[0] = '\0';
-      } else if(mode == DV_P25_C4FM || mode == DV_P25_CQPSK){
-	// Conventional P25: the call's talkgroup and talker, from the link control
+      } else if(mode == DV_P25_C4FM || mode == DV_P25_CQPSK || mode == DV_LTR){
+	// Conventional P25: the call's talkgroup and talker, from the link control.
+	// An LTR repeater: the talkgroup of the call on it
 	if(stats.dst_call[0] == '\0')
 	  chan->dv.source[0] = '\0';
 	else
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"TG%.6s%s%.8s",stats.dst_call,
 		   stats.src_call[0] ? " " : "",stats.src_call);
       }
-      if(!is_dmr && !has_callsign && !is_auto && stats.frames != 0){
+      if(!is_dmr && !has_callsign && !is_auto && !is_ltr && stats.frames != 0){
 	chan->p25.last_nac = stats.last_nac;
 	chan->p25.have_nac = true;
       }
@@ -677,6 +681,11 @@ int demod_dv(void *arg){
 		  " control=%" PRIu64 "/%" PRIu64 " RAN=%u offset=%+.1f Hz\n",
 		  chan->name,label,stats.samples,stats.syncs,stats.frames,
 		  stats.tsbks,stats.tsbks + stats.tsbk_errors,stats.last_nac,stats.freq_offset);
+	else if(is_ltr)
+	  fprintf(stderr,"%s LTR samples=%" PRIu64 " words=%" PRIu64 "/%" PRIu64 " repeater=%u area=%u voice=%" PRIu64
+		  " TG=%s offset=%+.1f Hz\n",
+		  chan->name,stats.samples,stats.tsbks,stats.syncs,stats.site,stats.sysid,stats.voice_decoded,
+		  stats.dst_call[0] ? stats.dst_call : "-",stats.freq_offset);
 	else if(is_ysf || is_dstar || is_nxdn)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s offset=%+.1f Hz\n",

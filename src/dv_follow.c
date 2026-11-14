@@ -88,8 +88,11 @@ struct dv_follow {
 static bool is_nxdn(chan_t const *chan){
   return chan->demod_type == NXDN_DEMOD;
 }
+static bool is_ltr(chan_t const *chan){
+  return chan->demod_type == LTR_DEMOD;
+}
 static char const *system_name(chan_t const *chan){
-  return is_nxdn(chan) ? "NXDN" : "P25";
+  return is_nxdn(chan) ? "NXDN" : is_ltr(chan) ? "LTR" : "P25";
 }
 
 static void add_control(struct dv_follow *f, uint64_t hz){
@@ -222,7 +225,7 @@ void dv_follow_destroy(struct dv_follow *f){
 }
 
 // A channel number's frequency in the system's channel plan
-// (nxdn-channels), 0 if it isn't there
+// (nxdn-channels, ltr-repeaters), 0 if it isn't there
 static uint64_t nxdn_channel_hz(chan_t const *chan,unsigned number){
   for(int i = 0; i < chan->nxdn.nchannels; i++)
     if(chan->nxdn.channels[i].number == number)
@@ -233,16 +236,21 @@ static uint64_t nxdn_channel_hz(chan_t const *chan,unsigned number){
 void dv_follow_event(struct dv_follow *f, dv_event const *event){
   if(f == NULL)
     return;
-  // An NXDN site that assigns channel numbers: only the channel plan knows
-  // their frequencies
+  // An NXDN site that assigns channel numbers, or an LTR repeater number:
+  // only the channel plan knows their frequencies
   dv_event numbered;
   dv_event const *e = event;
-  if((e->type == DV_EVENT_GRANT || e->type == DV_EVENT_UPDATE) && e->freq_hz == 0 && is_nxdn(f->chan)){
+  if((e->type == DV_EVENT_GRANT || e->type == DV_EVENT_UPDATE) && e->freq_hz == 0
+     && (is_nxdn(f->chan) || is_ltr(f->chan))){
     numbered = *event;
     numbered.freq_hz = nxdn_channel_hz(f->chan,e->channel);
     e = &numbered;
-    if(e->freq_hz == 0 && e->type == DV_EVENT_GRANT && Verbose > 0)
-      fprintf(stderr,"%s NXDN ch %u isn't in nxdn-channels: not followed\n",f->chan->name,(unsigned)e->channel);
+    if(e->freq_hz == 0 && e->type == DV_EVENT_GRANT && Verbose > 0){
+      if(is_ltr(f->chan))
+	fprintf(stderr,"%s LTR repeater %u isn't in ltr-repeaters: not followed\n",f->chan->name,(unsigned)e->channel);
+      else
+	fprintf(stderr,"%s NXDN ch %u isn't in nxdn-channels: not followed\n",f->chan->name,(unsigned)e->channel);
+    }
   }
   if(e->type == DV_EVENT_CONTROL){
     add_control(f,e->freq_hz);
@@ -366,7 +374,10 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
   dv_mode mode;
   if(is_nxdn(chan))
     mode = chan->nxdn.nxdn96 ? DV_NXDN96 : DV_NXDN48; // the traffic channels are as the control channel
-  else if(g->slot >= 0){
+  else if(is_ltr(chan)){
+    mode = DV_LTR;
+    config.ltr_group = g->group; // the repeater may carry another group's call next
+  } else if(g->slot >= 0){
     if(cc->wacn == 0)
       return; // can't descramble until the control channel names the network
     mode = DV_P25P2;
@@ -516,6 +527,8 @@ bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
   // Between calls, whether the control channel is being received
   if(f->voice != NULL)
     snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
+  else if(is_ltr(f->chan) && f->cc_ever)
+    snprintf(buf,len,"LTR R%u",f->cc_nac); // an idle repeater says so only every ten seconds
   else if(f->cc_ever && f->now - f->cc_seen <= FOLLOW_CC_LOST)
     snprintf(buf,len,is_nxdn(f->chan) ? "CC R%u" : "CC N%03X",f->cc_nac);
   else if(f->searching)

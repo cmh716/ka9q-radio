@@ -853,6 +853,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
   case DSTAR_DEMOD:
   case NXDN_DEMOD:
   case DIGITAL_DEMOD:
+  case LTR_DEMOD:
     encode_float(&bp,FREQ_OFFSET,chan->sig.foffset);
     encode_string(&bp,SOURCE_CALLSIGN,chan->dv.source,strlen(chan->dv.source));
     encode_string(&bp,CALL_DEST,chan->dv.call_dest,strlen(chan->dv.call_dest));

@@ -27,6 +27,7 @@ typedef enum {
   DV_NXDN96 = 7,     // NXDN, 4800 baud (12.5 kHz)
   DV_AUTO = 8,       // all of the above but P25 CQPSK, whichever is on the air
   DV_P25P2 = 9,      // P25 Phase 2 (TDMA) voice channel; needs p25_wacn, p25_sysid, p25_nac
+  DV_LTR = 10,       // LTR Standard: analog FM voice with 300 bit/s trunking data under it
 } dv_mode;
 
 typedef struct {
@@ -39,6 +40,8 @@ typedef struct {
   int dmr_slot;      // DMR: timeslot 1 or 2; 0 = whichever starts a call first
   bool m17_can_filter; // M17: play only transmissions with this CAN
   int m17_can;       // M17: Channel Access Number 0-15, if m17_can_filter
+  uint32_t ltr_group; // LTR: play only this talkgroup (area, home repeater, group as
+                      // one decimal number: 102007); 0 = whatever the repeater carries
 } dv_config;
 
 // Called synchronously from dv_process() for each 20 ms frame of speech.
