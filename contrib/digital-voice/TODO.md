@@ -47,11 +47,14 @@ Capacity Max (going encrypted).
         LICH values 1b 15 13 13 11 and didn't decode: unexplained, not seen
         since;
       - sites that assign channel numbers: `nxdn-channels` gives the plan
-        (number:frequency). Needs a live test on the UHF system
-        (RadioReference 8099, NXDN96, Attica site 454.550 MHz, RAN 1), whose
-        control channel decodes and which assigns channel numbers ("ch 11"):
-        the numbers' frequencies are still to be found, and the control
-        channel's own number as logged is unconfirmed;
+        (number:frequency). Works live (2026-11-14) on the UHF system
+        (RadioReference 8099, NXDN96, system 157): Attica (site 1, RAN 1,
+        454.550 MHz) followed by channel number with clear speech, with
+        Tonawanda (site 2, 424.700) and South Wales (site 3, 424.975)
+        decoded from the same tuning (Fobos at 444.6 MHz, 50 MHz). Channel
+        numbers are per site: the same number is a different frequency on
+        another. Still to do: the site sent no control channel number that
+        the CCH_INFO layout assumed here could read (nothing was logged);
       - Type-D (no control channel) if a local system uses it.
 - [x] Talkgroup names per system: `system = name` on the channel, and that
       system's CSV files in `talkgroups.d/name/`; pcmrecord files its calls
