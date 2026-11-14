@@ -90,8 +90,9 @@ decodes voice first, until that transmission ends; meanwhile the other receivers
 Monitor shows the mode and its callsign or ID.
 With **analog = yes** (the **mixed** preset) it also plays analog FM, with the channel's de-emphasis and
 squelch, whenever no digital mode is on the air; FM audio is delayed 240 ms so digital is recognized first.
-A carrier that shows no digital sync word for half a second is taken to be FM: the digital receivers
-rest until it drops, except for a half-second look every 5 seconds.
+Digital detection continues while an analog carrier is present, so a digital transmission starting
+on the same carrier is recognized and muted in the FM path. DMR idle bursts are muted even though
+they contain no voice and do not select an active digital voice mode.
 All digital modes sleep between transmissions; see **dv-gate**.
 "NXDN" decodes NXDN conventional digital voice (NXDN48 or NXDN96, see **nxdn-rate**) to mono 8 kHz audio; encrypted calls are muted.
 

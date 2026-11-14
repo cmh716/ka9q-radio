@@ -106,7 +106,10 @@ radio header at the start (descrambled, de-interleaved and Viterbi decoded,
 K=3; CRC checked; verified on the live capture with no bit errors), or
 otherwise from the slow-data copy of the header. The header is tried after
 every header sync while unlocked, since an openSPOT 4 sometimes sends zeros
-rather than the 1010 preamble before it. Voice is decoded with
+rather than the 1010 preamble before it. Without a CRC-checked radio
+header, late entry requires a second sync at the expected 420 ms superframe
+interval before producing audio; an isolated match cannot claim automatic
+mode. Voice is decoded with
 OP25's decode_dstar() and mbelib's AMBE 2400 tables; OP25's synthesizer
 renders it ~14 dB hotter than P25 and clips, so the spectral magnitudes are
 scaled down 12 dB first. Tested on a 3-minute capture of an openSPOT 4

@@ -139,6 +139,7 @@ bool decode_radio_header(uint8_t const in[kHeaderBits], uint8_t out[41])
 }
 
 class dstar_decoder : public dv_decoder {
+  friend struct dstar_framing_test;
 public:
   dstar_decoder(dv_pcm_callback callback, void *user_data)
     : callback_(callback), user_data_(user_data), frontend_(350.0f)
@@ -312,6 +313,13 @@ private:
   void sync(uint64_t at)
   {
     syncs_++;
+    // A lone 24-bit match can occur in noise or another digital mode.
+    // With no CRC-checked radio header, require the next superframe sync
+    // at its expected position before letting the vocoder produce audio.
+    if (!locked_ && !header_valid_ && expect_sync_ == 0) {
+      expect_sync_ = at + kSuperframe * kFrameBits;
+      return;
+    }
     if (!locked_) {
       header_.clear();
       if (!header_valid_)

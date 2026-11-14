@@ -49,6 +49,9 @@ fi
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream auto-call-test.cpp \
   $LIB -lcodec2 -lm -o out/auto-call-test
 out/auto-call-test
+c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dstar-framing-test.cpp \
+  $LIB -lcodec2 -lm -o out/dstar-framing-test
+out/dstar-framing-test
 cc $FLAGS -I$TOP -o out/dvtest dvtest.c $LIB -lcodec2 -lstdc++ -lm
 [ -d data ] || { echo "no recordings: run ./fetch.sh first"; exit 1; }
 cc $FLAGS -I$TOP call-serial-test.c $LIB -lcodec2 -lstdc++ -lm -o out/call-serial-test
