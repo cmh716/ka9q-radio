@@ -100,10 +100,13 @@ Capacity Max (going encrypted).
 - [ ] Even out digital voice levels: decoded audio from different modes,
       radios and talkers varies in loudness; normalise it (optionally).
 
-- [ ] A master frequency list for non-trunked analog and digital systems:
-      one CSV that both names the channels in monitor (as `repeaters.d`
-      does for RepeaterBook data) and generates the channel definitions for
-      a radiod conf file.
+- [x] A frequency list for non-trunked analog and digital systems:
+      `contrib/rr2radiod.py` turns a radioreference.com conventional
+      frequency download into radiod channel sections (mode, CTCSS/DCS/NAC/
+      DMR slot, a stream per category, only what the front end covers, no
+      encrypted channels) and a names file for monitor's `repeaters.d`.
+      Needs a live test: the load of some hundreds of channels, and the
+      names in monitor.
 
 ## Amateur radio
 
