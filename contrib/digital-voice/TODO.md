@@ -101,12 +101,59 @@ Capacity Max (going encrypted).
       radios and talkers varies in loudness; normalise it (optionally).
 
 - [x] A frequency list for non-trunked analog and digital systems:
-      `contrib/rr2radiod.py` turns a radioreference.com conventional
-      frequency download into radiod channel sections (mode, CTCSS/DCS/NAC/
-      DMR slot, a stream per category, only what the front end covers, no
-      encrypted channels) and a names file for monitor's `repeaters.d`.
-      Needs a live test: the load of some hundreds of channels, and the
-      names in monitor.
+      `contrib/rr2radiod.py` turns radioreference.com conventional
+      frequency downloads and repeaterbook.com exports into radiod channel
+      sections (mode, CTCSS/DCS/NAC/DMR slot, a stream per category, only
+      what the front end covers, no encrypted channels) and a names file
+      for monitor's `repeaters.d`. The files given are pooled by frequency
+      (a frequency one calls FM and another digital becomes a `mixed`
+      channel); `--overrides` is a CSV of one's own corrections (disable,
+      rename, re-tone, add). Run in radiod with 62 generated channels; the
+      names in monitor, the overrides and a config directory as the base
+      are unchecked live.
+- [ ] A master frequency list kept outside this repository (the
+      RadioReference data is licensed for personal use: a private one),
+      from which each device's files are generated. The suggested layout:
+
+      ```
+      radio-lists/
+        downloads/            ctid_*.csv, RB_*.csv, trs_tg_*.csv,
+                              trs_sites_*.csv: as downloaded, never edited
+        freq-overrides.csv    one's own corrections (rr2radiod.py --overrides)
+        uhf.d/                a radiod config directory for one tuning
+          00-hardware.conf      [global] and the front end: by hand
+          10-trunked.conf       the trunked systems' following channels,
+                                with their channel plans and repeater
+                                numbers: by hand
+          50-conventional.conf  everything from the downloads: generated
+        vhf.d/                the same three files for the VHF tuning
+        names/                uhf-names.csv ...: generated, for repeaters.d
+      ```
+
+      The generated files are committed too, so that after a fresh download
+      `git diff` shows which channels appeared, went or changed before
+      anything is installed. Generating into a directory:
+
+      ```
+      contrib/rr2radiod.py --base radio-lists/uhf.d \
+        --overrides radio-lists/freq-overrides.csv \
+        -o radio-lists/uhf.d/50-conventional.conf \
+        -n radio-lists/names/uhf-names.csv \
+        radio-lists/downloads/ctid_*.csv radio-lists/downloads/RB_*.csv
+      ```
+
+      Trunked systems stay hand-written in `10-trunked.conf` for now: it
+      holds what no download has (the NXDN channel numbers and LTR repeater
+      numbers found by listening), and there are few of them. Still to do:
+      - split the script into importers (RadioReference, RepeaterBook) that
+        write the master files, and exporters that read them;
+      - an exporter for CHIRP's CSV, for the Icom rigs (ham rows only, with
+        the input frequency and uplink tone);
+      - an exporter for the Uniden SDS scanners' favourites lists, once one
+        is at hand to test against;
+      - an overrides file for talkgroups (rename, disable), and generating
+        the trunked sections from a device-neutral description of each
+        system when a second device needs them.
 
 ## Amateur radio
 
