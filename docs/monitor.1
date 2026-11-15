@@ -25,6 +25,21 @@ The following audio encodings are supported: Opus; \[*m]-law PCM; A-law PCM;
 IEEE-754 binary16 floating point PCM;
 IEEE-754 binary32 big-endian floating point PCM
 and IEEE-754 binary32 little-endian floating point PCM.
+.SH DISPLAY
+The default dashboard uses ASCII frames and terminal colors, with a
+highlighted selected channel and a keyboard shortcut bar. Green marks recent
+audio activity, yellow marks recent activity below 6 dB SNR, cyan marks
+reported digital modes, and dim rows indicate idle or muted sessions.
+Color is optional; selection and activity also use text attributes.
+.P
+The Config column shows the configured demodulator; Detect shows the reported
+voice mode, or a dash when none is reported. DMR idle bursts do not select
+a voice mode. Frequencies are displayed in MHz.
+.P
+Larger terminals include selected-channel details: source, destination,
+timeslot, gain, SNR, and packet counters. Smaller terminals omit this panel
+and reduce the table columns. Press v to switch to the full diagnostic table
+and h for keyboard help. Existing navigation and audio controls are unchanged.
 .SH OPTIONS
 .TP
 .B "\-I destination, \-\-input destination"

@@ -129,3 +129,15 @@ freq2 [tone] ID of freq2
 ```
 
 Where **freq** is the frequency in Hz, **tone** is the optional CTCSS/PL tone in Hz, and the rest of the line is the ID.
+
+### Terminal dashboard
+
+The default display has ASCII frames, optional colors, a highlighted selection,
+and a shortcut bar. Green indicates recent audio, yellow indicates recent audio
+below 6 dB SNR, and cyan indicates a reported digital mode. Idle or muted channels
+are dimmed. Config and Detect distinguish the configured demodulator from the
+reported voice mode; a dash means no voice mode is reported. Frequencies are in MHz.
+
+Larger terminals show caller, destination, timeslot, signal, and packet details
+for the selected channel. Smaller terminals use a compact table. Press `v` to
+switch between the dashboard and full diagnostics; `h` opens keyboard help.

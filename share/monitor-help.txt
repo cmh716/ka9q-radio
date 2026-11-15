@@ -22,7 +22,7 @@ t sort sessions by most active
 ← → stereo position left/right
 shift ← playout buffer -1 ms
 shift → playout buffer +1 ms
-v toggle verbose display
+v toggle dashboard / full diagnostic table
 h toggle help display
 q toggle quiet mode
 

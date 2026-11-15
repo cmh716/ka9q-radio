@@ -45,6 +45,11 @@ static int First_session = 0;
 static int Sessions_per_screen = 0;
 static int Current = 0;
 static bool help = false;
+static void show_help(void);
+
+// Color is optional: attributes and ASCII frames also work on monochrome terminals.
+enum { UI_FRAME = 1, UI_ACTIVE, UI_DIGITAL, UI_WARNING, UI_SELECTED };
+static bool Ui_colors;
 
 sess_t *Sess_ptr[NSESSIONS];
 
@@ -127,6 +132,15 @@ void *display(void *arg){
     fprintf(stderr,"initscr() failed, disabling control/display thread\n");
     pthread_exit(NULL);
   }
+  Ui_colors = has_colors() && start_color() == OK;
+  if(Ui_colors){
+    int background = use_default_colors() == OK ? -1 : COLOR_BLACK;
+    init_pair(UI_FRAME,COLOR_CYAN,background);
+    init_pair(UI_ACTIVE,COLOR_GREEN,background);
+    init_pair(UI_DIGITAL,COLOR_CYAN,background);
+    init_pair(UI_WARNING,COLOR_YELLOW,background);
+    init_pair(UI_SELECTED,COLOR_CYAN,background);
+  }
   keypad(stdscr,TRUE);
   timeout(Update_interval);
   cbreak();
@@ -154,24 +168,11 @@ void *display(void *arg){
       move(++row,col);
     }
 
-    if(help){
-      char path [PATH_MAX];
-      dist_path(path,sizeof(path),"monitor-help.txt");
-      FILE *fp = fopen(path,"r");
-      if(fp != NULL){
-	size_t size = 0;
-	char *line = NULL;
-	while(getline(&line,&size,fp) > 0)
-	  addstrt(line);
-
-	FREE(line);
-	fclose(fp);
-	fp = NULL;
-      }
-    }
+    if(help)
+      show_help();
     if(Quiet_mode){
       addstrt("Hit 'q' to resume screen updates\n");
-    } else
+    } else if(!help)
       update_monitor_display();
 
     process_keyboard();
@@ -269,7 +270,193 @@ static int sort_session_total(void){
   return 0;
 }
 
+static void ui_text(int row,int col,char const *text,attr_t attr,int pair){
+  if(row < 0 || row >= LINES || col < 0 || col >= COLS-1)
+    return;
+  attrset(attr | (Ui_colors ? COLOR_PAIR(pair) : 0));
+  mvaddnstr(row,col,text,COLS-col-1);
+  attrset(A_NORMAL);
+}
+
+static void ui_rule(int row,char const *title){
+  if(row < 0 || row >= LINES || COLS < 4)
+    return;
+  attrset(Ui_colors ? COLOR_PAIR(UI_FRAME) : A_NORMAL);
+  mvhline(row,0,'-',COLS-1);
+  mvaddch(row,0,'+');
+  mvaddch(row,COLS-2,'+');
+  attrset(A_NORMAL);
+  if(title != NULL)
+    ui_text(row,2,title,A_BOLD,UI_FRAME);
+}
+
+static void show_help(void){
+  erase();
+  ui_rule(0," MONITOR KEYBOARD HELP ");
+  char path[PATH_MAX];
+  dist_path(path,sizeof path,"monitor-help.txt");
+  FILE *fp = fopen(path,"r");
+  if(fp != NULL){
+    char *line = NULL;
+    size_t size = 0;
+    int row = 1;
+    while(row < LINES-2 && getline(&line,&size,fp) > 0){
+      line[strcspn(line,"\r\n")] = '\0';
+      ui_text(row++,2,line,A_NORMAL,UI_FRAME);
+    }
+    free(line);
+    fclose(fp);
+  } else {
+    ui_text(1,2,"Up/Down select | m/u mute/unmute | +/- gain",A_NORMAL,UI_FRAME);
+    ui_text(2,2,"M/U all | v diagnostic view | Q quit",A_NORMAL,UI_FRAME);
+  }
+  ui_rule(LINES-2,NULL);
+  ui_text(LINES-1,0," h Return to channels | Q Quit",A_REVERSE,UI_FRAME);
+  curs_set(0);
+}
+
+static char const *ui_detected(sess_t const *sp){
+  if(sp->chan.dv.call_mode[0] != '\0')
+    return sp->chan.dv.call_mode;
+  // Automatic mode publishes the recognized mode at the front of source.
+  static char const * const modes[] = {"DMR","DSTAR","P25","YSF","M17","NXDN","FM"};
+  for(size_t i=0; i < sizeof modes / sizeof modes[0]; i++){
+    size_t n = strlen(modes[i]);
+    if(strncmp(sp->chan.dv.source,modes[i],n) == 0
+       && (sp->chan.dv.source[n] == ' ' || sp->chan.dv.source[n] == '\0'))
+      return modes[i];
+  }
+  return "-";
+}
+
+static void dashboard(void){
+  erase();
+  if(LINES < 7 || COLS < 24){
+    Sessions_per_screen = 1;
+    ui_text(0,0,"KA9Q Monitor",A_BOLD,UI_FRAME);
+    ui_text(1,0,"Enlarge terminal",A_NORMAL,UI_WARNING);
+    ui_text(LINES-1,0,"h Help  Q Quit",A_REVERSE,UI_FRAME);
+    return;
+  }
+  defragment_session();
+  if(Auto_sort)
+    sort_session_total();
+  int count = 0,active = 0;
+  int64_t const now = gps_time_ns();
+  while(count < NSESSIONS && inuse(Sess_ptr[count])){
+    if(now - Sess_ptr[count]->last_active < BILLION/2)
+      active++;
+    count++;
+  }
+  bool const details = LINES >= 18;
+  int const table_header = 4;
+  int const table_end = details ? LINES-8 : LINES-3;
+  Sessions_per_screen = max(1,table_end-table_header-1);
+  Current = max(0,min(Current,count-1));
+  First_session = max(0,min(First_session,max(0,count-Sessions_per_screen)));
+  if(Current < First_session)
+    First_session = Current;
+  if(Current >= First_session+Sessions_per_screen)
+    First_session = Current-Sessions_per_screen+1;
+
+  char line[1024];
+  ui_rule(0," KA9Q AUDIO MONITOR ");
+  snprintf(line,sizeof line,"%d channels | %d active | %s | %.0f ms playout%s%s%s",
+           count,active,Channels == 1 ? "Mono" : "Stereo",1000*Playout,
+           Voting ? " | Voting" : "",Start_muted ? " | New muted" : "",
+           Constant_delay ? " | Fixed delay" : "");
+  ui_text(1,2,line,A_BOLD,UI_FRAME);
+  snprintf(line,sizeof line,"Input: %s%s%s",Nfds > 0 ? Mcast_address_text[0] : "waiting",
+           Nfds > 1 ? " (+ more)" : "",Source != NULL ? " [source filtered]" : "");
+  ui_text(2,2,line,A_DIM,UI_FRAME);
+  ui_rule(3," CHANNELS ");
+  bool const narrow = COLS < 76;
+  ui_text(table_header,2,narrow ? "  Frequency   Config  Detect  Channel" :
+          "  Frequency   Config   Detect     SNR   Gain  Channel",A_BOLD,UI_FRAME);
+  for(int i=0; i<Sessions_per_screen && First_session+i<count; i++){
+    int const index = First_session+i;
+    sess_t const *sp = Sess_ptr[index];
+    bool const recent = now-sp->last_active < BILLION/2;
+    char const *detected = ui_detected(sp);
+    char const *configured = sp->chan.demod_type == DIGITAL_DEMOD && sp->chan.dv.analog
+      ? "mixed" : demod_name_from_type(sp->chan.demod_type);
+    char name[128];
+    snprintf(name,sizeof name,"%s%s%s",sp->callsign,
+             sp->callsign[0] && sp->id[0] ? " | " : "",sp->id);
+    if(name[0] == '\0') strlcpy(name,"Unnamed channel",sizeof name);
+    char snr[16] = "-",gain[16];
+    if(isfinite(sp->snr)) snprintf(snr,sizeof snr,"%.1f",sp->snr);
+    if(muted(sp)) strlcpy(gain,"mute",sizeof gain);
+    else snprintf(gain,sizeof gain,"%+.0f",voltage2dB(sp->gain));
+    if(narrow)
+      snprintf(line,sizeof line,"%c %10.5f  %-7.7s %-7.7s %s",index == Current ? '>' : ' ',
+               sp->chan.tune.freq/1e6,configured,detected,name);
+    else
+      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6s %6s  %s",index == Current ? '>' : ' ',
+               sp->chan.tune.freq/1e6,configured,detected,snr,gain,name);
+    attr_t attr = recent ? A_BOLD : A_DIM;
+    int pair = UI_FRAME;
+    if(muted(sp)) attr = A_DIM;
+    else if(recent && isfinite(sp->snr) && sp->snr < 6) pair = UI_WARNING;
+    else if(recent) pair = UI_ACTIVE;
+    else if(strcmp(detected,"-") != 0 && strcmp(detected,"FM") != 0) pair = UI_DIGITAL;
+    if(index == Current){
+      attr = A_BOLD | A_REVERSE;
+      pair = UI_SELECTED;
+    }
+    int const row = table_header+1+i;
+    // Fill the selection's entire row, not only the text.
+    attrset(attr | (Ui_colors ? COLOR_PAIR(pair) : 0));
+    mvhline(row,1,' ',COLS-3);
+    attrset(A_NORMAL);
+    ui_text(row,2,line,attr,pair);
+  }
+  if(count == 0)
+    ui_text(table_header+1,2,"Waiting for multicast audio and status...",A_DIM,UI_FRAME);
+  snprintf(line,sizeof line," %d-%d of %d | green active  cyan digital  yellow weak ",
+           count ? First_session+1 : 0,min(count,First_session+Sessions_per_screen),count);
+  ui_rule(table_end,line);
+  if(details){
+    ui_text(table_end+1,2,"SELECTED CHANNEL",A_BOLD,UI_FRAME);
+    if(count > 0){
+      sess_t const *sp = Sess_ptr[Current];
+      snprintf(line,sizeof line,"%s%s%s",sp->callsign,sp->callsign[0] && sp->id[0] ? " | " : "",sp->id);
+      ui_text(table_end+2,2,line,A_NORMAL,UI_FRAME);
+      char slot[24] = "-";
+      if(sp->chan.dv.call_slot >= 0 && sp->chan.dv.call_mode[0])
+        snprintf(slot,sizeof slot,"%d",sp->chan.dv.call_slot+1);
+      snprintf(line,sizeof line,"Detected: %s | Source: %s | Destination: %s | Slot: %s",ui_detected(sp),
+               sp->chan.dv.call_src[0] ? sp->chan.dv.call_src : "-",
+               sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : "-",slot);
+      ui_text(table_end+3,2,line,A_NORMAL,UI_DIGITAL);
+      snprintf(line,sizeof line,"SSRC %u | Gain %+.0f dB | SNR %.1f dB | %s | %s",sp->ssrc,
+               voltage2dB(sp->gain),sp->snr,muted(sp) ? "MUTED" : "Audio enabled",
+               sp->chan.dv.source[0] ? sp->chan.dv.source : "No source label");
+      ui_text(table_end+4,2,line,A_NORMAL,UI_FRAME);
+      snprintf(line,sizeof line,"Packets %llu | Drops %llu | Late %llu | %s",(unsigned long long)sp->packets,
+               (unsigned long long)sp->drops,(unsigned long long)sp->lates,
+               sp->dest != NULL ? sp->dest : "");
+      ui_text(table_end+5,2,line,A_DIM,UI_FRAME);
+    }
+    ui_rule(LINES-2,NULL);
+  }
+  // Side frames avoid the terminal's last column, which can cause scrolling.
+  for(int r=1;r<LINES-2;r++){
+    if(r == 3 || r == table_end) continue;
+    ui_text(r,0,"|",A_NORMAL,UI_FRAME);
+    ui_text(r,COLS-2,"|",A_NORMAL,UI_FRAME);
+  }
+  ui_text(LINES-1,0,COLS < 76 ? "Up/Down Select  m Mute  u Unmute  h Help  Q Quit" :
+          " Up/Down Select | m/u Mute | M/U All | +/- Gain | v Details | h Help | Q Quit",A_REVERSE,UI_FRAME);
+  curs_set(0);
+}
+
 static void update_monitor_display(void){
+  if(!Verbose){
+    dashboard();
+    return;
+  }
+  curs_set(1);
   int row,col;
   getyx(stdscr,row,col);
 
@@ -331,7 +518,7 @@ static void update_monitor_display(void){
   // Show channel statuses
   int const header_line = row;
 
-  Sessions_per_screen = LINES - getcury(stdscr) - 1;
+  Sessions_per_screen = max(1,LINES - getcury(stdscr) - 1);
 
   defragment_session();
   if(Auto_sort)
@@ -350,8 +537,8 @@ static void update_monitor_display(void){
 
   if(Current <= First_session)
     Current = First_session;
-  else if(Current > LINES - first_line)
-    Current = LINES - first_line;
+  else if(Current >= First_session + Sessions_per_screen)
+    Current = First_session + Sessions_per_screen - 1;
 
   {  // dB gain
     char scratch [LINES][COLS];
@@ -1020,7 +1207,7 @@ static void update_monitor_display(void){
   attr_t attrs = 0;
   short pair = 0;
   attr_get(&attrs, &pair, NULL);
-  for(int session = First_session; session < NSESSIONS && row < LINES; session++,row++){
+  for(int session = First_session; session < NSESSIONS && row < LINES-1; session++,row++){
     sess_t const *sp = Sess_ptr[session];
     if(!inuse(sp))
       break;
@@ -1036,11 +1223,11 @@ static void update_monitor_display(void){
 
     // 1 adjusts for the titles
     // only underscore to just before the socket entry since it's variable length
-   int r =  mvchgat(row,0,col,attr,pair,NULL);
+   int r =  mvchgat(row,0,min(col,COLS-1),attr,pair,NULL);
    (void)r;
    assert(r == OK);
   }
-  move(first_line + Current - First_session,0); // Cursor on current line
+  move(min(LINES-1,first_line + Current - First_session),0); // Cursor on current line
   // End of display writing
 }
 static void process_keyboard(void){
@@ -1098,15 +1285,17 @@ static void process_keyboard(void){
   // Commands manipulating the current session index
   switch(c){
   case KEY_NPAGE:
-    if(First_session + Sessions_per_screen < NSESSIONS)
+    if(First_session + Sessions_per_screen < NSESSIONS){
       First_session += Sessions_per_screen;
+      Current = First_session;
+    }
     break;
   case KEY_PPAGE:
-    if(First_session - Sessions_per_screen >= 0)
-      First_session -= Sessions_per_screen;
+    First_session = max(0,First_session-Sessions_per_screen);
+    Current = First_session;
     break;
   case KEY_HOME: // first session
-    First_session = 0;
+    First_session = Current = 0;
     break;
   case KEY_END: // last session
     {
@@ -1286,7 +1475,7 @@ static int render_right(int const row, int const col, char scratch[LINES][COLS],
   }
   if(width > COLS)
     width = COLS; // keep it sane
-  for(int r = 0; r < nrows; r++){
+  for(int r = 0; r < nrows && row+r < LINES-1; r++){
     int len = strlen(&scratch[r][first_column]);
     int pad = (width > len) ? width - len : 0; // if shorter than width, pad on left to right justify
     int x = col + pad;
@@ -1307,7 +1496,7 @@ static int render_left(int const row, int const col, char scratch[LINES][COLS],i
   if(room <= 0)
     return 0;
 
-  for(int r = 0; r < nrows; r++){
+  for(int r = 0; r < nrows && row+r < LINES-1; r++){
     scratch[r][COLS-1] = 0; // ensure each line is null terminated
     int len = strlen(scratch[r]);
     if(len > room)
