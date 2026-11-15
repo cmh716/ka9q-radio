@@ -15,6 +15,11 @@
 # frequencies the front end covers are used. The output is the base config
 # followed by the generated sections (or the sections alone without --base).
 #
+# radiod also takes a directory of *.conf files. With --base naming one, only
+# the generated sections are written, to go in it as a file of their own:
+#
+#   rr2radiod.py --base ~/uhf.d -o ~/uhf.d/50-conventional.conf ctid_1839.csv
+#
 # Each channel gets the mode for its listing (FM/FMN, DMR, P25, NXDN, YSF,
 # D-STAR), its CTCSS tone, DCS code, P25 NAC or DMR slot, and an output
 # stream named after its category (the Tag column: fire-dispatch.local ...).
@@ -49,6 +54,7 @@
 import argparse
 import collections
 import csv
+import os
 import re
 import sys
 
@@ -82,10 +88,16 @@ def format_freq(hz):
     return '%dm%s' % (mhz, frac or '0')
 
 
-def read_base(path):
+def read_base(path, skip=None):
     """The base config's text, its front end's (centre, sample rate), and the
-    frequencies it already has"""
-    text = open(path).read()
+    frequencies it already has. A directory is read as radiod reads one: all
+    its *.conf files in order (but for the one being written)"""
+    if os.path.isdir(path):
+        names = sorted(n for n in os.listdir(path) if n.endswith('.conf'))
+        text = '\n'.join(open(os.path.join(path, n)).read() for n in names
+                         if skip is None or os.path.abspath(os.path.join(path, n)) != os.path.abspath(skip))
+    else:
+        text = open(path).read()
     sections = collections.OrderedDict()
     current = None
     for line in text.splitlines():
@@ -247,7 +259,8 @@ def apply_overrides(row, hz, overrides):
 def main():
     ap = argparse.ArgumentParser(description='radioreference.com and repeaterbook.com frequency CSVs to radiod channel sections')
     ap.add_argument('csv', nargs='+', help='radioreference.com conventional frequency downloads and repeaterbook.com exports')
-    ap.add_argument('--base', help='radiod config to extend: gives the tuning, and is copied to the output')
+    ap.add_argument('--base', help='radiod config, or config directory, to extend: gives the tuning and the frequencies already defined; a file is copied to the output')
+    ap.add_argument('--fragment', action='store_true', help='write only the generated sections, not the base config (always so when --base is a directory)')
     ap.add_argument('--center', help='front end centre frequency (444m6), if not from --base')
     ap.add_argument('--samprate', help='front end sample rate (50000000), if not from --base')
     ap.add_argument('--coverage', type=float, default=0.47, help='usable fraction of the sample rate each side of centre (default 0.47)')
@@ -263,7 +276,9 @@ def main():
 
     base_text, centre, samprate, have = ('', None, None, set())
     if args.base:
-        base_text, centre, samprate, have = read_base(args.base)
+        base_text, centre, samprate, have = read_base(args.base, args.output)
+        if args.fragment or os.path.isdir(args.base):
+            base_text = ''  # the generated sections go in a file of their own
     if args.center:
         centre = parse_freq(args.center)
     if args.samprate:
