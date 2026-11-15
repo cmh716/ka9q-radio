@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-# rr2radiod: turn a radioreference.com conventional frequency download (CSV)
-# into radiod channel sections, and a names file for monitor.
+# rr2radiod: turn radioreference.com conventional frequency downloads and
+# repeaterbook.com exports (CSV) into radiod channel sections, and a names
+# file for monitor.
 #
-#   rr2radiod.py --base uhf.conf -o uhf-all.conf -n names.csv ctid_1839.csv
+#   rr2radiod.py --base uhf.conf -o uhf-all.conf -n names.csv ctid_1839.csv RB_export.csv
+#
+# Several files are pooled: a frequency two of them list the same way is one
+# channel; where they disagree (FM in one, DMR in the other) it becomes a
+# "mixed" channel, which is right whichever of them is. A repeaterbook.com
+# export (recognised by its "Output Freq" column) goes in the category Ham.
 #
 # The front end's tuning and sample rate are read from the base config (its
 # [global] hardware section), or given with --center and --samprate; only
@@ -116,9 +122,41 @@ def squelch(mode, tone):
     return [], ''
 
 
+def repeaterbook(row):
+    """A repeaterbook.com export line as RadioReference lines: one for each
+    mode the repeater has (FM, and each digital voice mode)"""
+    modes = (row.get('Modes') or '').upper().replace('-', '').split()
+    wanted = []
+    if 'FM' in modes:
+        wanted.append('FM')
+    for theirs, ours in (('DMR', 'DMR'), ('DSTAR', 'D-STAR'), ('P25', 'P25'), ('FUSION', 'YSF'), ('NXDN', 'NXDN48')):
+        if theirs in modes:
+            wanted.append(ours)
+    tone = (row.get('Downlink Tone') or '').strip()
+    access = (row.get('Digital Access') or '').strip()
+    call = (row.get('Call') or '').strip()
+    place = (row.get('Location') or '').strip()
+    out = []
+    for mode in wanted:
+        pl = ''
+        if mode == 'FM':
+            if re.fullmatch(r'[\d.]+', tone):
+                pl = tone + ' PL'
+            elif re.fullmatch(r'D\d{3}', tone, re.I):
+                pl = tone[1:] + ' DPL'
+        elif mode == 'P25' and re.fullmatch(r'[0-9A-Fa-f]{1,3}', access):
+            pl = access + ' NAC'
+        out.append({
+            'Frequency Output': row.get('Output Freq') or '', 'Mode': mode, 'PL Output Tone': pl,
+            'Alpha Tag': call, 'Description': ' '.join(x for x in (call, place) if x),
+            'Agency/Category': 'RepeaterBook %s' % (row.get('County') or '').strip(), 'Tag': 'Ham',
+        })
+    return out
+
+
 def main():
-    ap = argparse.ArgumentParser(description='radioreference.com frequency CSV to radiod channel sections')
-    ap.add_argument('csv', nargs='+', help='radioreference.com conventional frequency download(s)')
+    ap = argparse.ArgumentParser(description='radioreference.com and repeaterbook.com frequency CSVs to radiod channel sections')
+    ap.add_argument('csv', nargs='+', help='radioreference.com conventional frequency downloads and repeaterbook.com exports')
     ap.add_argument('--base', help='radiod config to extend: gives the tuning, and is copied to the output')
     ap.add_argument('--center', help='front end centre frequency (444m6), if not from --base')
     ap.add_argument('--samprate', help='front end sample rate (50000000), if not from --base')
@@ -152,7 +190,9 @@ def main():
     by_freq = collections.defaultdict(list)  # for the names file
     for path in args.csv:
         with open(path, newline='', encoding='utf-8-sig') as f:
-            for row in csv.DictReader(f):
+            reader = csv.DictReader(f)
+            book = 'Output Freq' in (reader.fieldnames or [])
+            for row in (r for line in reader for r in (repeaterbook(line) if book else [line])):
                 try:
                     hz = int(round(float(row['Frequency Output']) * 1e6))
                 except (KeyError, ValueError):
@@ -224,16 +264,22 @@ def main():
             out.append('%s = %s\n' % (key, value))
         out.append('data = %s%s.local\n' % (args.prefix, stream))
         # What each frequency is
+        said = set()
         for hz, rows in channels:
             for r in rows:
                 what = (r.get('Alpha Tag') or '').strip()
                 description = (r.get('Description') or '').strip()
-                if description and description != what:
+                if description.startswith(what):
+                    what = description
+                elif description:
                     what += ': ' + description
                 agency = (r.get('Agency/Category') or '').strip()
                 if agency:
                     what += ' (%s)' % agency
-                out.append('# %-11s %s\n' % (format_freq(hz), what.replace('\n', ' ')))
+                line = '# %-11s %s\n' % (format_freq(hz), what.replace('\n', ' '))
+                if line not in said:
+                    said.add(line)
+                    out.append(line)
         freqs = [hz for hz, rows in channels]
         # radiod reads freq and freq0..freq9; keep the lines a readable length
         chunks = [freqs[i:i + 8] for i in range(0, len(freqs), 8)]
