@@ -23,6 +23,25 @@
 # Encrypted channels, trunked system frequencies (tag TRS) and deprecated
 # entries are left out, as are frequencies the base config already has.
 #
+# --overrides names a CSV of your own corrections, applied on top of the
+# downloads (which are then never edited, and can be downloaded afresh):
+#
+#   Frequency,Mode,Enabled,Name,Description,Category,Tone,Set Mode,Notes
+#   453.300,,no,,,,,,constant data, not voice
+#   444.200,FM,no,,,,,,only ever DMR here
+#   460.550,,,TCA Disp,Twin City Ambulance dispatch,EMS Dispatch,,,
+#   442.325,,,,,,none,,the listed tone is wrong
+#   446.000,FM,,Simplex,National simplex calling,Ham,,,my own entry
+#
+# A line applies to every entry on its frequency (MHz), or with Mode (FM,
+# DMR, P25, NXDN, NXDN48, YSF, D-STAR) only to those. Blank columns leave
+# the download as it is. Enabled = no leaves the entry out; Name,
+# Description and Category replace the alpha tag, description and Tag;
+# Tone is a CTCSS frequency, a DCS code (D411), a P25 NAC (293 NAC) or
+# "none"; Set Mode corrects the mode. Notes go into the config's comments.
+# A line for a frequency no download has, with a Mode, adds an entry. Lines
+# that match nothing are reported.
+#
 # The names file goes in /var/lib/ka9q-radio/repeaters.d (any name ending
 # .csv); monitor then shows each channel's alpha tag and description.
 #
@@ -154,6 +173,77 @@ def repeaterbook(row):
     return out
 
 
+def mode_class(text):
+    """A mode as written in a download or an overrides file, for comparing:
+    FM and FMN are one, and an encrypted mode is its clear one"""
+    text = (text or '').strip().upper().replace('DSTAR', 'D-STAR')
+    if text[-1:] == 'E' and text[:-1] in MODES:
+        text = text[:-1]
+    return 'FM' if text in ('FM', 'FMN') else text
+
+
+def tone_text(text):
+    """An overrides file's Tone as the downloads write it; None if it isn't one"""
+    text = text.strip()
+    if text.lower() in ('none', 'csq', 'off'):
+        return ''
+    if re.fullmatch(r'[\d.]+', text):
+        return text + ' PL'
+    m = re.fullmatch(r'D(\d{3})', text, re.I)
+    if m:
+        return m.group(1) + ' DPL'
+    if re.fullmatch(r'([\d.]+ PL|\d{3} DPL|[0-9A-Fa-f]{1,3} NAC)', text):
+        return text
+    return None
+
+
+def read_overrides(path):
+    overrides = []
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        for n, row in enumerate(csv.DictReader(f), 2):
+            row = {(k or '').strip().lower(): (v or '').strip() for k, v in row.items() if k is not None}
+            if not any(row.values()) or row.get('frequency', '').startswith('#'):
+                continue
+            try:
+                hz = int(round(float(row.get('frequency', '')) * 1e6))
+            except ValueError:
+                sys.exit('%s line %d: no frequency in MHz' % (path, n))
+            if row.get('tone') and tone_text(row['tone']) is None:
+                sys.exit('%s line %d: tone "%s" (expected 141.3, D411, 293 NAC or none)' % (path, n, row['tone']))
+            for column in ('mode', 'set mode'):
+                if row.get(column) and mode_class(row[column]) != 'FM' and mode_class(row[column]) not in MODES:
+                    sys.exit('%s line %d: mode "%s" (expected one of %s)' % (path, n, row[column], ', '.join(sorted(MODES))))
+            row['_hz'], row['_line'], row['_used'] = hz, n, False
+            overrides.append(row)
+    return overrides
+
+
+def apply_overrides(row, hz, overrides):
+    """Change a download's entry as the overrides file says; False if it is disabled"""
+    enabled = True
+    for o in overrides:
+        if o['_hz'] != hz or (o.get('mode') and mode_class(o['mode']) != mode_class(row.get('Mode'))):
+            continue
+        o['_used'] = True
+        if o.get('enabled', '').lower() in ('no', 'n', 'off', 'false', '0'):
+            enabled = False
+        elif o.get('enabled'):
+            enabled = True
+        if o.get('name'):
+            row['Alpha Tag'] = o['name']
+        if o.get('description'):
+            row['Description'] = o['description']
+        if o.get('category'):
+            row['Tag'] = o['category']
+        if o.get('tone'):
+            row['PL Output Tone'] = tone_text(o['tone'])
+        if o.get('set mode'):
+            row['Mode'] = o['set mode']
+        if o.get('notes'):
+            row['_note'] = o['notes']
+    return enabled
+
+
 def main():
     ap = argparse.ArgumentParser(description='radioreference.com and repeaterbook.com frequency CSVs to radiod channel sections')
     ap.add_argument('csv', nargs='+', help='radioreference.com conventional frequency downloads and repeaterbook.com exports')
@@ -168,6 +258,7 @@ def main():
     ap.add_argument('--group-by', choices=['tag', 'agency', 'one'], default='tag', help='what names the output streams (default tag)')
     ap.add_argument('--prefix', default='', help='put this in front of each stream name (uhf- gives uhf-business.local)')
     ap.add_argument('--encrypted', action='store_true', help='include encrypted channels')
+    ap.add_argument('--overrides', help='CSV of your own corrections to the downloads: disable, rename, re-tone, add')
     args = ap.parse_args()
 
     base_text, centre, samprate, have = ('', None, None, set())
@@ -188,40 +279,62 @@ def main():
     # (stream, mode, squelch options) -> {frequency: [rows]}
     groups = collections.OrderedDict()
     by_freq = collections.defaultdict(list)  # for the names file
-    for path in args.csv:
-        with open(path, newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            book = 'Output Freq' in (reader.fieldnames or [])
-            for row in (r for line in reader for r in (repeaterbook(line) if book else [line])):
-                try:
-                    hz = int(round(float(row['Frequency Output']) * 1e6))
-                except (KeyError, ValueError):
-                    skipped['no frequency'] += 1
-                    continue
-                if not low <= hz <= high:
-                    skipped['outside the front end coverage'] += 1
-                    continue
-                tag = (row.get('Tag') or 'Other').strip()
-                if tag.lower() in exclude or (only is not None and tag.lower() not in only):
-                    skipped['category left out (%s)' % tag] += 1
-                    continue
-                rr_mode = (row.get('Mode') or '').strip()
-                if rr_mode[-1:] in ('E', 'e') and rr_mode[:-1].upper() in MODES:
-                    if not args.encrypted:
-                        skipped['encrypted'] += 1
-                        continue
-                    rr_mode = rr_mode[:-1]
-                mode = MODES.get(rr_mode.upper())
-                if mode is None:
-                    skipped['mode %s' % (rr_mode or '?')] += 1
-                    continue
-                if hz in have:
-                    skipped['already in the base config'] += 1
-                    continue
-                options, label = squelch(mode, row.get('PL Output Tone') or '')
-                stream = {'tag': tag, 'agency': row.get('Agency/Category') or tag, 'one': 'scan'}[args.group_by]
-                row['_hz'], row['_mode'], row['_options'], row['_label'], row['_stream'] = hz, mode, options, label, slug(stream)
-                by_freq[hz].append(row)
+    overrides = read_overrides(args.overrides) if args.overrides else []
+    listed = set()
+    added = []
+
+    def entries():
+        for path in args.csv:
+            with open(path, newline='', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                book = 'Output Freq' in (reader.fieldnames or [])
+                for line in reader:
+                    for row in (repeaterbook(line) if book else [line]):
+                        try:
+                            listed.add(int(round(float(row['Frequency Output']) * 1e6)))
+                        except (KeyError, ValueError):
+                            pass
+                        yield row
+        # The overrides file's own entries: a frequency no download has
+        for o in overrides:
+            if o['_hz'] not in listed and o.get('mode') and not o['_used']:
+                added.append(o)
+                yield {'Frequency Output': '%.6f' % (o['_hz'] / 1e6), 'Mode': o['mode'], 'Tag': 'Other',
+                       'Alpha Tag': '', 'Description': '', 'Agency/Category': 'overrides', 'PL Output Tone': ''}
+
+    for row in entries():
+        try:
+            hz = int(round(float(row['Frequency Output']) * 1e6))
+        except (KeyError, ValueError):
+            skipped['no frequency'] += 1
+            continue
+        if not apply_overrides(row, hz, overrides):
+            skipped['disabled in the overrides file'] += 1
+            continue
+        if not low <= hz <= high:
+            skipped['outside the front end coverage'] += 1
+            continue
+        tag = (row.get('Tag') or 'Other').strip()
+        if tag.lower() in exclude or (only is not None and tag.lower() not in only):
+            skipped['category left out (%s)' % tag] += 1
+            continue
+        rr_mode = (row.get('Mode') or '').strip()
+        if rr_mode[-1:] in ('E', 'e') and rr_mode[:-1].upper() in MODES:
+            if not args.encrypted:
+                skipped['encrypted'] += 1
+                continue
+            rr_mode = rr_mode[:-1]
+        mode = MODES.get(rr_mode.upper())
+        if mode is None:
+            skipped['mode %s' % (rr_mode or '?')] += 1
+            continue
+        if hz in have:
+            skipped['already in the base config'] += 1
+            continue
+        options, label = squelch(mode, row.get('PL Output Tone') or '')
+        stream = {'tag': tag, 'agency': row.get('Agency/Category') or tag, 'one': 'scan'}[args.group_by]
+        row['_hz'], row['_mode'], row['_options'], row['_label'], row['_stream'] = hz, mode, options, label, slug(stream)
+        by_freq[hz].append(row)
 
     # One channel per frequency and squelch. Where a frequency is listed
     # both with and without a tone (or, DMR, on both slots), the open
@@ -276,6 +389,8 @@ def main():
                 agency = (r.get('Agency/Category') or '').strip()
                 if agency:
                     what += ' (%s)' % agency
+                if r.get('_note'):
+                    what += ' -- ' + r['_note']
                 line = '# %-11s %s\n' % (format_freq(hz), what.replace('\n', ' '))
                 if line not in said:
                     said.add(line)
@@ -325,6 +440,12 @@ def main():
     print('%d channels in %d sections, on %d streams:' % (total, len(groups), len(counts)), file=sys.stderr)
     for stream, n in sorted(counts.items()):
         print('  %-28s %d' % (stream, n), file=sys.stderr)
+    for o in added:
+        print('%s line %d: %.6f MHz %s added (no download lists it)' % (args.overrides, o['_line'], o['_hz'] / 1e6, o['mode']), file=sys.stderr)
+    for o in overrides:
+        if not o['_used']:
+            print('%s line %d: %.6f MHz%s matches nothing in the downloads' % (
+                args.overrides, o['_line'], o['_hz'] / 1e6, ' ' + o['mode'] if o.get('mode') else ''), file=sys.stderr)
     if skipped:
         print('left out:', file=sys.stderr)
         for reason, n in skipped.most_common():
