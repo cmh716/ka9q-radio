@@ -15,6 +15,7 @@
 #include "upstream/dmr_const.h"
 #include "upstream/frame_sync_magics.h"
 #include "dv_ambe.h"
+#include "dmr_idle.h"
 #include "upstream/bptc19696.h"
 #include "upstream/ezpwd/rs"
 #include "upstream/golay2087.h"
@@ -76,6 +77,15 @@ public:
     uint8_t dibit;
     if (fsk4_.process(lev, dibit))
       rx_dibit(dibit);
+    int color;
+    if(idle_detector_.process(fsk4_.filtered_sample(), color)
+       && !locked_ && symbols_ - last_sync_ > kExpiration) {
+      // Only protected, grid-confirmed idle activity can supplement the
+      // ordinary framer. Never feed it into the voice/vocoder path.
+      syncs_++;
+      bursts_++;
+      cc_ = color;
+    }
   }
 
   void get_stats(dv_stats *stats) const override
@@ -155,6 +165,7 @@ private:
   {
     sync_reset();
     end_calls();
+    idle_detector_.reset();
   }
 
   // Forget both slots' calls: encryption, IDs, embedded LC fragments. (Not on
@@ -429,6 +440,7 @@ private:
   void * const user_data_;
   dv_frontend frontend_;
   dv_fsk4 fsk4_;
+  dmr_idle_detector idle_detector_;
 
   // Framing (rx_sync)
   uint8_t buf_[kBurstDibits]{};

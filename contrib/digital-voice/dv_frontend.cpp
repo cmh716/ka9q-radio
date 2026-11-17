@@ -146,6 +146,7 @@ bool dv_fsk4::process(cfloat sample, uint8_t& dibit)
   previous_ = sample;
   history_[position_] = std::atan2(im, re) * quadrature_gain_;
   float const shaped = dv_fir(rx_taps_, history_.data(), position_);
+  filtered_sample_ = shaped;
   position_ = (position_ + 1) % history_.size();
   float sym;
   if (fsk4_.process(&shaped, 1, &sym) == 0)

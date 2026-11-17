@@ -296,6 +296,7 @@ enum {
 };
 
 static struct option Options[] = {
+  {"help", no_argument, NULL, 'h'},
   {"ft8", no_argument, NULL, '8'}, // synonym for --jt --lengthlimit 15
   {"ft4", no_argument, NULL, '4'}, // synonym for --jt --lengthlimit 7.5
   {"wspr", no_argument, NULL, 'w'}, // synonym for --jt --lengthlimit 120
@@ -329,7 +330,41 @@ static struct option Options[] = {
   {"max_length", required_argument, NULL, 'x'},
   {NULL, no_argument, NULL, 0},
 };
-static char Optstring[] = ":cd:e:fjl:m:o:PprRsS:t:vL:Vx:48w";
+static char Optstring[] = ":hcd:e:fjl:m:o:PprRsS:t:vL:Vx:48w";
+
+static void usage(FILE *out,char const *name){
+  fprintf(out,"Usage: %s [options] PCM_multicast_address\n",name);
+  fputs("Options:\n"
+        "  -h, --help                         Show this help and exit\n"
+        "  -c, --stdout, --catmode             Write one stream to stdout\n"
+        "      --reacquire                    Follow selected SSRC across sender changes (with --stdout)\n"
+        "  -e, --exec command                 Pipe each stream to a shell command\n"
+        "  -d, --directory directory          Recording directory (default: .)\n"
+        "  -S, --ssrc ssrc                    Select one SSRC (decimal or C-style prefix)\n"
+        "  -o, --source source                Restrict reception to a network source\n"
+        "  -r, --raw                          Omit WAVE headers for PCM\n"
+        "  -f, --flush                        Flush output after each packet\n"
+        "  -s, --subdirs, --subdirectories     Create SSRC/year/month/day subdirectories\n"
+        "      --by-talkgroup                 Record digital calls in talkgroup directories\n"
+        "      --call-log file                Append call CSV log (with --by-talkgroup)\n"
+        "      --talkgroups file|directory    Load talkgroup names (with --by-talkgroup)\n"
+        "  -p, --prefix-source                Prefix filenames with sender socket identity\n"
+        "  -j, --jt                           K1JT filenames; enable padding and clock reset\n"
+        "  -L, --length, --lengthlimit, --limit seconds\n"
+        "                                     File segment duration (default: 0, unlimited)\n"
+        "  -x, --max_length seconds            Alias for --lengthlimit\n"
+        "  -P, --pad                          Align segments and pad beginning with silence\n"
+        "  -R, --reset                        Detect clock skew and reset timing\n"
+        "  -4, --ft4                          --jt with 7.5-second segments\n"
+        "  -8, --ft8                          --jt with 15-second segments\n"
+        "  -w, --wspr                         --jt with 120-second segments\n"
+        "  -m, --mintime, --minfiletime seconds\n"
+        "                                     Minimum retained file duration (default: 0.2)\n"
+        "  -t, --timeout seconds              Close idle files (integer; default: 20)\n"
+        "  -l, --locale locale                Set locale (default: LANG)\n"
+        "  -v, --verbose                      Increase verbosity; may be repeated\n"
+        "  -V, --version                      Show version and exit\n",out);
+}
 
 int main(int argc,char *argv[]){
   App_path = argv[0];
@@ -439,8 +474,11 @@ int main(int argc,char *argv[]){
     case 'V':
       VERSION();
       exit(EX_OK);
+    case 'h':
+      usage(stdout,argv[0]);
+      exit(EX_OK);
     default:
-      fprintf(stderr,"Usage: %s [-c|--catmode|--stdout] [--reacquire] [-r|--raw] [-e|--exec command] [-f|--flush] [-s] [-d directory] [-l locale] [-L maxtime] [-t timeout] [-j|--jt] [-v] [-m sec] [-x|--max_length max_file_time, no sync, oneshot] [-o|--source <source-name-or-address>] [--by-talkgroup [--call-log file] [--talkgroups file|directory]] PCM_multicast_address\n",argv[0]);
+      usage(stderr,argv[0]);
       exit(EX_USAGE);
       break;
     }

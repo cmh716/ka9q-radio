@@ -102,6 +102,7 @@ public:
       fsk4_(kDvSampleRate, symbol_rate), history_(rx_taps_.size(), 0.0f) {}
   // Returns true and sets dibit when a symbol is ready
   bool process(cfloat in, uint8_t& dibit);
+  float filtered_sample() const { return filtered_sample_; }
   float fine_offset_hz() const { return static_cast<float>(fsk4_.fine_frequency_correction() * deviation_); }
 
 private:
@@ -113,6 +114,7 @@ private:
   bool have_previous_ = false;
   std::vector<float> history_;
   size_t position_ = 0;
+  float filtered_sample_ = 0;
 };
 
 // Receive filters for dv_fsk4

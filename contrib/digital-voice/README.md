@@ -69,6 +69,16 @@ hasn't met an encrypted call yet. AMBE+2 output level follows the talker and
 varies a lot between transmissions; the `[dmr]` preset leaves the gain at
 0 dB, which sounds about as loud as P25 on live signals.
 
+When the ordinary DMR framer cannot acquire distorted idle traffic, a separate
+observer searches all five phases of the 24 kHz RRC-filtered discriminator.
+It estimates offset and level spacing from the data sync and requires two
+Golay-protected idle slot types to agree on color code on the 30 ms burst grid.
+Only then does it report idle activity for radiod's mixed-mode FM suppression;
+it never produces speech or takes ownership of automatic mode. This avoids
+playing idle beacons as FM buzz without changing the voice timing/vocoder path.
+Tested on the 424.150 MHz CC3 capture, gain/DC/timing variants, analog tones,
+and noise. It is an idle-acquisition fallback, not a general data-protocol decoder.
+
 M17 has no symbol timing loop: as in the M17 reference receivers, each
 frame's sync word sets the sample phase, gain and DC offset for its payload
 (OP25's FSK4 timing loop can settle on false equilibria on M17's

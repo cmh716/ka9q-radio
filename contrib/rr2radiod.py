@@ -20,7 +20,7 @@
 #
 #   rr2radiod.py --base ~/uhf.d -o ~/uhf.d/50-conventional.conf ctid_1839.csv
 #
-# Each channel gets the mode for its listing (FM/FMN, DMR, P25, NXDN, YSF,
+# Each channel gets the mode for its listing (AM, FM/FMN, DMR, P25, NXDN, YSF,
 # D-STAR), its CTCSS tone, DCS code, P25 NAC or DMR slot, and an output
 # stream named after its category (the Tag column: fire-dispatch.local ...).
 # A frequency listed as analog without a tone and as digital too becomes one
@@ -62,7 +62,7 @@ import sys
 # RadioReference's "NXDN" is the 12.5 kHz (9600 bit/s) kind, "NXDN48" the
 # 6.25 kHz one; radiod's nxdn is the latter and nxdn96 the former
 MODES = {
-    'FM': 'pm', 'FMN': 'npm', 'DMR': 'dmr', 'P25': 'p25', 'NXDN': 'nxdn96',
+    'AM': 'am', 'FM': 'pm', 'FMN': 'npm', 'DMR': 'dmr', 'P25': 'p25', 'NXDN': 'nxdn96',
     'NXDN48': 'nxdn', 'YSF': 'ysf', 'D-STAR': 'dstar', 'DSTAR': 'dstar', 'LTR': 'ltr',
 }
 ANALOG = ('pm', 'npm')

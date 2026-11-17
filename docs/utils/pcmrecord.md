@@ -12,6 +12,10 @@ This program reads one or more RTP streams from a multicast group and either wri
 
 ### CLI Options
 
+**-h, --help**
+
+> show all options and exit.
+
 **-c, --stdout, --catmode**
 
 > write one stream to stdout, default false. If --ssrc is not specified, selects the first one found and ignores the rest.
@@ -47,9 +51,33 @@ Several macros expanded as shown when found in the arguments:
 
 > flush after each received packet, default false. Increases Ogg container overhead; little need for this writing files.
 
+**-p, --prefix-source**
+
+> prefix recording filenames with the sender socket identity.
+
+**-P, --pad**
+
+> align segments to duration boundaries and pad the beginning with silence.
+
+**-R, --reset**
+
+> detect clock skew and reset timing.
+
+**--by-talkgroup**
+
+> record digital voice calls separately in talkgroup directories.
+
+**--call-log file**
+
+> append a CSV call log with --by-talkgroup.
+
+**--talkgroups file|directory**
+
+> load talkgroup names from a CSV file or directory with --by-talkgroup.
+
 **-j, --jt**
 
-> use K1JT format file names, default false.
+> use K1JT format file names and enable padding and clock-reset handling, default false.
 
 **-l, --locale**
 
@@ -77,11 +105,11 @@ Several macros expanded as shown when found in the arguments:
 
 **-L, --limit, --length, --lengthlimit**
 
-> maximum file duration (in seconds), default 0 (unlimited). When new file is created, round down to previous start of interval and pad with silence (for JT decoding).
+> maximum file duration (in seconds), default 0 (unlimited). Use --pad to align segments to duration boundaries and pad with silence (for JT decoding).
 
 **-x, --max_length**
 
-> maximum recording duration (in seconds), default 0 (unlimited). Don't pad the .wav file with silence. Exit when all files have reached max duration.
+> alias for --lengthlimit; this does not provide a one-shot recording mode.
 
 **-4, --ft4**
 

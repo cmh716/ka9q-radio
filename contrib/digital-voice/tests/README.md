@@ -49,3 +49,21 @@ so a mismatch there is a reason to look, not necessarily a bug.
 
 End-to-end tests of radiod and pcmrecord can play any of these recordings through
 radiod with the `iq_file` front end (see the top of `src/iq_file.c`).
+
+`dmr-idle-test.cpp` checks protected idle acquisition across sample phases,
+levels, and DC offsets, rejects an isolated burst, mismatched color codes,
+non-idle slot types, analog tones, and 120 seconds of noise, and checks reset
+behavior. It runs with the normal suite. The existing DMR voice recording now
+reports one additional idle burst; its speech hashes and call identities are
+unchanged.
+
+It can also replay the 424.150 MHz CC3 regression recording, converted to raw
+48 kHz cf32, through both DMR and automatic mode:
+
+```sh
+out/dmr-idle-test /path/to/424150.c64
+```
+
+That optional recording must contain idle CC3 traffic and no speech. The check
+requires repeated acquisition, the correct color code in DMR mode, and no audio
+callbacks in either mode. The original user IQ recording is not bundled.
