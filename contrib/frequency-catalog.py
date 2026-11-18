@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 
 # Frequencies are authoritative; Offset MHz is a derived display column.
 FIELDS = ['ID', 'Name', 'RX MHz', 'TX MHz', 'Offset MHz', 'Operation',
-          'RX Mode', 'TX Mode', 'Bandwidth kHz',
+          'RX Mode', 'TX Mode', 'Bandwidth kHz', 'CTCSS Notch Hz',
           'RX Squelch Type', 'RX Squelch Value', 'TX Access Type', 'TX Access Value',
           'RX DCS Polarity', 'TX DCS Polarity',
           'DMR Color Code', 'DMR Timeslot', 'DMR Talkgroup', 'P25 NAC', 'NXDN RAN',
@@ -36,9 +36,9 @@ DEVICE_FIELDS = ['Device', 'Model', 'Default Filter', 'Tuning Step kHz', 'Preamp
 MEMORY_FIELDS = ['Channel ID', 'Device', 'Bank', 'Memory Number', 'Short Name',
                  'Favorite', 'Scan', 'Notes']
 SCHEMA_VERSION = 2
-MODES = {'AM', 'FM', 'FMN', 'DMR', 'P25', 'NXDN', 'NXDN48', 'YSF', 'D-STAR', 'LTR'}
+MODES = {'USB', 'AM', 'FM', 'FMN', 'DMR', 'P25', 'NXDN', 'NXDN48', 'YSF', 'D-STAR', 'LTR'}
 RR_FIELDS = ['Frequency Output', 'Frequency Input', 'Alpha Tag', 'Description',
-             'Mode', 'PL Output Tone', 'PL Input Tone', 'Agency/Category', 'Tag']
+             'Mode', 'PL Output Tone', 'PL Input Tone', 'Agency/Category', 'Tag', 'CTCSS Notch Hz']
 
 
 def read_csv(path, required=()):
@@ -315,6 +315,16 @@ def import_files(args):
     print(f'{len(master)} master entries; {len(new_inbox)} inbox entries; {len(ignored)} ignored. No channels selected automatically.')
 
 
+def notch_hz(value):
+    try:
+        n = Decimal(value or '0')
+        if not n.is_finite() or (n != 0 and not Decimal(60) <= n <= Decimal(260)):
+            raise InvalidOperation
+        return format(n.normalize(), 'f') if value else ''
+    except (InvalidOperation, ValueError):
+        raise ValueError('CTCSS Notch Hz must be blank, 0, or a frequency from 60 to 260 Hz')
+
+
 def validate(row):
     if not row.get('Name'):
         raise ValueError(f'{row["ID"]}: Name is required')
@@ -322,6 +332,9 @@ def validate(row):
     mhz(row.get('TX MHz', ''), True)
     row = upgrade(row)
     mode = row.get('RX Mode', '').upper()
+    notch = notch_hz(row['CTCSS Notch Hz'])
+    if notch not in ('', '0') and mode not in ('FM', 'FMN'):
+        raise ValueError(f'{row["ID"]}: CTCSS Notch Hz requires FM or FMN')
     if mode not in MODES and not (mode.endswith('E') and mode[:-1] in MODES):
         raise ValueError(f'{row["ID"]}: unsupported mode {mode!r}; correct it before Keep')
     if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', row.get('Group', '')):
@@ -415,7 +428,7 @@ def export(args):
             continue
         rows.append(dict(zip(RR_FIELDS, [entry['RX MHz'], entry['TX MHz'] or '0.000000',
                     entry['Name'], entry['Description'], entry['RX Mode'], receiver_tone(entry),
-                    access_text(entry['TX Access Type'], entry['TX Access Value']), entry['Service'], entry['Group']])))
+                    access_text(entry['TX Access Type'], entry['TX Access Value']), entry['Service'], entry['Group'], notch_hz(entry.get('CTCSS Notch Hz', ''))])))
     # This export is for receive-only radiod: combine overlapping source
     # listings without losing their separate records in the master.
     combined = {}
@@ -430,6 +443,8 @@ def export(args):
             combined[key] = row
             continue
         previous = combined[key]
+        if previous['CTCSS Notch Hz'] != row['CTCSS Notch Hz']:
+            raise ValueError(f'{rx} MHz has conflicting CTCSS Notch Hz settings; choose one before exporting')
         if mode == 'FM':
             previous['Mode'] = 'FM'  # receive the widest listed analog signal
         for field in ('Alpha Tag', 'Description', 'Agency/Category'):

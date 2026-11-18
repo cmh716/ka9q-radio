@@ -37,7 +37,7 @@
 #define DV_AGC_CEILING 0.9f        // peak limit, fraction of full scale
 
 // Analog FM alongside "digital" (analog = yes): discriminator, low pass and
-// 6:1 decimation to 8 kHz, a 300 Hz high pass (subaudible tones), the
+// 6:1 decimation to 8 kHz, preserving subaudible signaling for monitor, the
 // channel's de-emphasis, and a squelch on the channel's SNR. Its audio is
 // delayed DV_FM_DELAY frames so that a digital transmission is recognized
 // (any receiver's sync) before any of it can be heard as FM
@@ -91,8 +91,7 @@ struct dv_fm {
   float taps[DV_FM_TAPS];
   float hist[DV_FM_TAPS];
   int pos, phase;
-  float hp_x1, hp_x2, hp_y1, hp_y2;  // 2nd order high pass state
-  float hp_b0, hp_b1, hp_b2, hp_a1, hp_a2;
+  struct audio_notch notch;          // analog FM only, before output encoding
   float deemph;
   bool open;
   int below;                          // frames below the close threshold
@@ -117,15 +116,7 @@ static void dv_fm_init(struct dv_fm *fm){
   }
   for(int i = 0; i < DV_FM_TAPS; i++)
     fm->taps[i] /= sum;
-  // High pass: 2nd order Butterworth at 300 Hz, 8 kHz (RBJ cookbook)
-  float const w0 = 2 * M_PIf * 300.0f / DV_AUDIO_SAMPRATE;
-  float const alpha = sinf(w0) / (2 * 0.70710678f);
-  float const a0 = 1 + alpha;
-  fm->hp_b0 = (1 + cosf(w0)) / 2 / a0;
-  fm->hp_b1 = -(1 + cosf(w0)) / a0;
-  fm->hp_b2 = (1 + cosf(w0)) / 2 / a0;
-  fm->hp_a1 = -2 * cosf(w0) / a0;
-  fm->hp_a2 = (1 - alpha) / a0;
+
 }
 
 // One block of 48 kHz baseband through the FM chain; finished 8 kHz frames
@@ -155,16 +146,14 @@ static void dv_fm_block(struct dv_fm *fm,chan_t const *chan,float complex const 
     float y = 0;
     for(int k = 0; k < DV_FM_TAPS; k++)
       y += fm->taps[k] * fm->hist[(fm->pos + k) % DV_FM_TAPS];
-    // High pass
-    float const h = fm->hp_b0 * y + fm->hp_b1 * fm->hp_x1 + fm->hp_b2 * fm->hp_x2 - fm->hp_a1 * fm->hp_y1 - fm->hp_a2 * fm->hp_y2;
-    fm->hp_x2 = fm->hp_x1; fm->hp_x1 = y;
-    fm->hp_y2 = fm->hp_y1; fm->hp_y1 = h;
-    // De-emphasis (deemph-tc, deemph-gain), or flat
-    float out = h;
+    // Preserve CTCSS/DCS in analog RTP, as the ordinary FM path does.
+    // Monitor detects signaling before applying its optional tone notch.
+    float out = y;
     if(chan->fm.rate != 1){
-      fm->deemph += chan->fm.rate * (h - fm->deemph);
+      fm->deemph += chan->fm.rate * (y - fm->deemph);
       out = fm->deemph * chan->fm.gain;
     }
+    out = apply_audio_notch(&fm->notch,out,chan->fm.notch_freq,DV_AUDIO_SAMPRATE);
     fm->frame[fm->frame_len++] = out;
     if(fm->frame_len == DV_PCM_SAMPLES){
       fm->frame_len = 0;

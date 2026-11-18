@@ -265,6 +265,7 @@ struct channel {
     float devmax;           // configured peak deviation, Hz (eg 5 kHz for NBFM)
     float modbw;            // configured modulation bandwidth, e,g, 3 kHz for NBFM
     float pdeviation;       // measured frequency deviation Hz (FM)
+    float notch_freq;       // Optional output CTCSS notch, Hz; zero disables
     float tone_freq;        // PL tone squelch frequency
     float tone_deviation;   // Measured deviation of tone
     int dcs_code;           // DCS code in decimal-octal notation; zero disables

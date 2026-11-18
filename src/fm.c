@@ -56,6 +56,7 @@ int demod_fm(void *arg){
   init_dcs_decoder(&dcs,(float)samprate);
   float const alpha = -(float)expm1(-Blocktime / 1.0); // Smoothing for estimated frequency offset
   assert(isfinite(alpha) && alpha > 0.0f && alpha <= 1.0f);
+  struct audio_notch notch = {0};
   float deemph_state = 0;
   int squelch_state = 0; // Number of blocks for which squelch remains open
   int const pl_integrate_samples = (int)lrint(samprate * 0.24f); // 240 milliseconds (spec is < 250 ms). 12 blocks @ 24 kHz
@@ -313,6 +314,10 @@ int demod_fm(void *arg){
 	baseband[n] = deemph_state;
       }
     }
+    // Tone/DCS squelch above sees the unfiltered discriminator audio.
+    // Remove a configured CTCSS tone only from the outgoing audio stream.
+    for(int n = 0; n < N; n++)
+      baseband[n] = apply_audio_notch(&notch,baseband[n],chan->fm.notch_freq,samprate);
     // Compute audio output level
     // Constant gain used by FM only; automatically adjusted by AGC in linear modes
     // We do this in the loop because BW can change

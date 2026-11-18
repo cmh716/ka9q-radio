@@ -176,6 +176,7 @@ char const *Channel_keys[] = {
   "nxdn-rate",
   "nxdn-channels",
   "ltr-repeaters",
+  "ctcss-notch",
   "analog",
   "dv-gate",
   "pl", // do these too (sigh)
@@ -556,6 +557,13 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
       float const g = strtof(cp,NULL);
       chan->fm.gain = dB2voltage(g);
     }
+  }
+  {
+    float const notch = config_getfloat(table,sname,"ctcss-notch",chan->fm.notch_freq);
+    if(isfinite(notch) && (notch == 0 || (notch >= 60 && notch <= 260)))
+      chan->fm.notch_freq = notch;
+    else
+      fprintf(stderr,"%s: ctcss-notch must be 0 (off) or a tone frequency from 60 to 260 Hz; ignored\n",sname);
   }
   // "tone", "pl" and "ctcss" are synonyms
   {

@@ -26,3 +26,33 @@ You may add or delete entries in this file as needed, but be careful as it will 
 | wspr      | linear    |   3.05k | same as **usb** but with AGC disabled |
 | spectrum  | spectrum  |   NA    | experimental |
 | nam       | linear    |   6.0k  | narrow (completely flat) AM, passes DC|
+
+## Optional CTCSS output notch
+
+Set `ctcss-notch` to a tone frequency in Hz in an FM channel section. It defaults
+to `0` (disabled); supported frequencies are 60–260 Hz. For example:
+
+```ini
+[repeater-audio]
+mode = pm
+freq = 146m52
+data = ham.local
+ctcss-notch = 123.0
+```
+
+This removes a fixed tone from outgoing audio before PCM or Opus encoding. It
+works with `fm`, `nfm`, `pm`, `npm`, and the analog FM portion of `mixed`; it does
+not filter digital voice or wideband broadcast FM. Each section has one notch
+frequency, so put channels requiring different tones in separate sections.
+The example frequency and tone are illustrative; choose the tone actually used.
+
+The setting is independent of `tone`/`pl`/`ctcss` receive squelch. Specifying a
+notch does not enable tone squelch; when both are set, squelch detection runs
+before the notch. Use `ctcss-notch = 0` to disable an inherited setting.
+
+Every listener and recording of that stream receives the filtered audio.
+Monitor's audio-based detector may no longer report the removed tone. To retain
+an unfiltered recording, leave the option off or provide a separate unfiltered
+channel/stream. pcmrecord still saves received Opus packets without re-encoding.
+Keep personal configuration outside generated files that rr2radiod replaces;
+the catalog/exporter generates this option from the `CTCSS Notch Hz` column.

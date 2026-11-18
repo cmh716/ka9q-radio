@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 #include <samplerate.h>
 #include <stddef.h>
+#include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/socket.h>
@@ -246,4 +247,15 @@ static inline int modsub(int a, int b, int const modulus){
     return diff + modulus;
   return diff;
 }
+// Mixed channels carry analog signaling only while FM is selected.
+static inline bool session_has_analog_audio(sess_t const *sp){
+  if(!is_dv_demod(sp->chan.demod_type))
+    return true;
+  // dv.analog is radiod-local configuration, absent from wire status.
+  // An explicit FM call/source identifies analog audio at the receiver.
+  return sp->chan.demod_type == DIGITAL_DEMOD
+    && (strcmp(sp->chan.dv.call_mode,"FM") == 0
+        || (sp->chan.dv.call_mode[0] == '\0' && strcmp(sp->chan.dv.source,"FM") == 0));
+}
+
 #endif

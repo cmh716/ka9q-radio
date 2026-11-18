@@ -350,11 +350,14 @@ static void *decode_task(void *arg){
     int64_t const q = qlen(sp);
     if(q < 0 || q > 3 * DAC_samprate / 2)
       reset_playout(sp);
-    // Do PL detection and notching even when muted
-    // but not on digital voice: vocoded speech gives false tone/DCS hits, and there's no tone to notch
-    if(sp->notch_enable && !is_dv_demod(sp->chan.demod_type)){
+    // Detect signaling even when muted or notching is disabled. Vocoded
+    // speech must never feed the analog detectors, including in mixed mode.
+    if(session_has_analog_audio(sp)){
       run_pl(sp);
-      apply_notch(sp);
+      if(sp->notch_enable)
+        apply_notch(sp);
+    } else {
+      init_pl(sp);
     }
     // count active time even when muted
     sp->tot_active += (float)sp->frame_size / sp->samprate;
@@ -589,7 +592,6 @@ static int run_pl(sess_t * const sp){
   if(sp == NULL || sp->samprate == 0)
     return -1;
   // Run PL tone decoders on the bounce buffer. We don't really care about timestamp jumps
-  // Disable if display isn't active and autonotching is off
   // Fed audio that might be discontinuous or out of sequence, but it's a pain to fix
   if(sp->channels == 1){
     for(int i=0; i < sp->frame_size; i++){
@@ -647,6 +649,8 @@ static void init_pl(sess_t * const sp){
   init_dcs_decoder(&sp->dcs,(float)sp->samprate);
   sp->current_dcs = 0;
   sp->current_dcs_inverted = false;
+  sp->current_tone = 0;
+  sp->tone_samples = 0;
   sp->notch_tone = 0;
 }
 static void apply_notch(sess_t * const sp){

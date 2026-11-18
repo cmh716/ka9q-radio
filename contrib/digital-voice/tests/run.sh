@@ -30,6 +30,13 @@ if [ -f ../../../src/config_paths.h ]; then
     -Wl,--gc-sections -lm $(pkg-config --libs libbsd-overlay) -o out/calltest
   out/calltest
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+    $(pkg-config --cflags libbsd-overlay) -iquote ../../../src -iquote .. \
+    ../../../src/monitor-tone-test.c ../../../src/iir.c ../../../src/dcs.c \
+    ../../../src/sincospif.c ../../../src/decode_status.c ../../../src/libstatus.a \
+    -Wl,--gc-sections -lm \
+    $(pkg-config --libs libbsd-overlay) -o out/monitor-tone-test
+  out/monitor-tone-test
+  cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
     $(pkg-config --cflags libbsd-overlay) \
     -iquote ../../../src -iquote .. ../../../src/follow-test.c \
     -Wl,--gc-sections -lm $(pkg-config --libs libbsd-overlay) -o out/follow-test
@@ -54,6 +61,9 @@ c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dstar-framing-test.cpp \
 out/dstar-framing-test
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dmr-idle-test.cpp \
   $LIB -lcodec2 -lm -o out/dmr-idle-test
+c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dmr-polarity-test.cpp \
+  $LIB -lcodec2 -lm -o out/dmr-polarity-test
+out/dmr-polarity-test
 out/dmr-idle-test
 cc $FLAGS -I$TOP -o out/dvtest dvtest.c $LIB -lcodec2 -lstdc++ -lm
 [ -d data ] || { echo "no recordings: run ./fetch.sh first"; exit 1; }

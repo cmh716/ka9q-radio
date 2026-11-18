@@ -48,7 +48,7 @@ A session does not appear in the list until it's active (audio is decoded).
 
 **-n, --notch**
 
-> enable notch filter, default false.
+> enable CTCSS tone notching, default false. CTCSS/DCS detection and display work independently of this option.
 
 **-o, --source**
 
@@ -137,6 +137,9 @@ and a shortcut bar. Green indicates recent audio, yellow indicates recent audio
 below 6 dB SNR, and cyan indicates a reported digital mode. Idle or muted channels
 are dimmed. Config and Detect distinguish the configured demodulator from the
 reported voice mode; a dash means no voice mode is reported. Frequencies are in MHz.
+The Tone column shows detected CTCSS in Hz or DCS as D023/I023 (normal/inverted).
+Detection also works during analog FM calls on mixed channels, with notching off.
+Digital voice is excluded to avoid false tone detections.
 
 Larger terminals show caller, destination, timeslot, signal, and packet details
 for the selected channel. Smaller terminals use a compact table. Press `v` to

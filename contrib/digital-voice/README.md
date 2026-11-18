@@ -246,3 +246,11 @@ DMR and YSF vocoder files (`p25p2_vf`, `rs`, `mbelib`, `ambe`, `software_imbe_de
 OP25 is GPL-3.0-or-later, libm17 GPL-2.0-or-later and ka9q-radio GPL-3; mbelib is ISC; see
 `LICENSE.TXT`. AMBE+2 is a DVSI codec; mbelib is an independent
 implementation, and its patent status is for the user to judge.
+
+DMR polarity is acquired from repeated Golay-protected idle slot types on the
+30 ms burst grid. Sync alone cannot distinguish polarity: sign inversion swaps
+base-station voice and data syncs. On confirmation, the receiver corrects IQ
+polarity before symbol recovery and resets timing and false call/privacy state.
+This also handles a polarity change between transmissions. Acquisition requires
+idle data; inverted voice-only signals without preceding idle are not guaranteed
+to acquire. Known-good normal-polarity speech remains the regression baseline.

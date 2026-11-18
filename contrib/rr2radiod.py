@@ -20,7 +20,7 @@
 #
 #   rr2radiod.py --base ~/uhf.d -o ~/uhf.d/50-conventional.conf ctid_1839.csv
 #
-# Each channel gets the mode for its listing (AM, FM/FMN, DMR, P25, NXDN, YSF,
+# Each channel gets the mode for its listing (USB, AM, FM/FMN, DMR, P25, NXDN, YSF,
 # D-STAR), its CTCSS tone, DCS code, P25 NAC or DMR slot, and an output
 # stream named after its category (the Tag column: fire-dispatch.local ...).
 # A frequency listed as analog without a tone and as digital too becomes one
@@ -54,6 +54,7 @@
 import argparse
 import collections
 import csv
+from decimal import Decimal, InvalidOperation
 import os
 import re
 import sys
@@ -62,7 +63,7 @@ import sys
 # RadioReference's "NXDN" is the 12.5 kHz (9600 bit/s) kind, "NXDN48" the
 # 6.25 kHz one; radiod's nxdn is the latter and nxdn96 the former
 MODES = {
-    'AM': 'am', 'FM': 'pm', 'FMN': 'npm', 'DMR': 'dmr', 'P25': 'p25', 'NXDN': 'nxdn96',
+    'USB': 'usb', 'AM': 'am', 'FM': 'pm', 'FMN': 'npm', 'DMR': 'dmr', 'P25': 'p25', 'NXDN': 'nxdn96',
     'NXDN48': 'nxdn', 'YSF': 'ysf', 'D-STAR': 'dstar', 'DSTAR': 'dstar', 'LTR': 'ltr',
 }
 ANALOG = ('pm', 'npm')
@@ -256,6 +257,22 @@ def apply_overrides(row, hz, overrides):
     return enabled
 
 
+def notch_setting(row, mode):
+    try:
+        hz = Decimal((row.get('CTCSS Notch Hz') or '').strip() or '0')
+        if not hz.is_finite() or (hz != 0 and not Decimal(60) <= hz <= Decimal(260)):
+            raise InvalidOperation
+    except InvalidOperation:
+        sys.exit('CTCSS Notch Hz must be blank, 0, or 60 through 260 Hz')
+    if hz and mode not in ANALOG:
+        sys.exit('CTCSS Notch Hz is only supported on analog FM listings')
+    return format(hz.normalize(), 'f') if mode in ANALOG and (row.get('CTCSS Notch Hz') or '').strip() else ''
+
+
+def notch_options(notch):
+    return ([('ctcss-notch', notch)], 'notch' + notch.replace('.', '_')) if notch else ([], '')
+
+
 def main():
     ap = argparse.ArgumentParser(description='radioreference.com and repeaterbook.com frequency CSVs to radiod channel sections')
     ap.add_argument('csv', nargs='+', help='radioreference.com conventional frequency downloads and repeaterbook.com exports')
@@ -346,6 +363,7 @@ def main():
         if hz in have:
             skipped['already in the base config'] += 1
             continue
+        row['_notch'] = notch_setting(row, mode)
         options, label = squelch(mode, row.get('PL Output Tone') or '')
         stream = {'tag': tag, 'agency': row.get('Agency/Category') or tag, 'one': 'scan'}[args.group_by]
         row['_hz'], row['_mode'], row['_options'], row['_label'], row['_stream'] = hz, mode, options, label, slug(stream)
@@ -361,7 +379,11 @@ def main():
         analog = [r for r in rows if r['_mode'] in ANALOG]
         digital = [r for r in rows if r['_mode'] not in ANALOG]
         if digital and any(r['_label'] == '' for r in analog):
-            key = (rows[0]['_stream'], 'mixed', (), '')
+            notches = {r['_notch'] for r in analog}
+            if len(notches) != 1:
+                sys.exit('%s: conflicting CTCSS notch settings for mixed reception' % format_freq(hz))
+            options, label = notch_options(notches.pop())
+            key = (rows[0]['_stream'], 'mixed', tuple(options), label)
             groups.setdefault(key, []).append((hz, rows))
             continue
         seen = {}
@@ -369,8 +391,13 @@ def main():
             these = [r for r in rows if r['_mode'] == mode]
             labels = {r['_label'] for r in these}
             open_squelch = '' in labels or (mode == 'dmr' and len(labels) > 1)
+            if open_squelch and len({r['_notch'] for r in these}) > 1:
+                sys.exit('%s: conflicting CTCSS notch settings for open squelch' % format_freq(hz))
             for r in these:
                 options, label = ([], '') if open_squelch else (r['_options'], r['_label'])
+                extra, suffix = notch_options(r['_notch'])
+                options = list(options) + extra
+                label = '-'.join(x for x in (label, suffix) if x)
                 key = (r['_stream'], mode, tuple(options), label)
                 if (mode, label) in seen:
                     seen[(mode, label)].append(r)

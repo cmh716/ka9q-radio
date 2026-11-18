@@ -329,6 +329,16 @@ static char const *ui_detected(sess_t const *sp){
   return "-";
 }
 
+static void ui_tone(sess_t const *sp,char *out,size_t size){
+  strlcpy(out,"-",size);
+  if(!session_has_analog_audio(sp))
+    return;
+  if(sp->current_tone > 0)
+    snprintf(out,size,"%.1f",sp->current_tone);
+  else if(sp->current_dcs != 0)
+    snprintf(out,size,"%c%03d",sp->current_dcs_inverted ? 'I' : 'D',sp->current_dcs);
+}
+
 static void dashboard(void){
   erase();
   if(LINES < 7 || COLS < 24){
@@ -371,8 +381,8 @@ static void dashboard(void){
   ui_text(2,2,line,A_DIM,UI_FRAME);
   ui_rule(3," CHANNELS ");
   bool const narrow = COLS < 76;
-  ui_text(table_header,2,narrow ? "  Frequency   Config  Detect  Channel" :
-          "  Frequency   Config   Detect     SNR   Gain  Channel",A_BOLD,UI_FRAME);
+  ui_text(table_header,2,narrow ? "  Frequency   Config  Detect    Tone Channel" :
+          "  Frequency   Config   Detect     Tone    SNR   Gain  Channel",A_BOLD,UI_FRAME);
   for(int i=0; i<Sessions_per_screen && First_session+i<count; i++){
     int const index = First_session+i;
     sess_t const *sp = Sess_ptr[index];
@@ -388,12 +398,14 @@ static void dashboard(void){
     if(isfinite(sp->snr)) snprintf(snr,sizeof snr,"%.1f",sp->snr);
     if(muted(sp)) strlcpy(gain,"mute",sizeof gain);
     else snprintf(gain,sizeof gain,"%+.0f",voltage2dB(sp->gain));
+    char tone[16];
+    ui_tone(sp,tone,sizeof tone);
     if(narrow)
-      snprintf(line,sizeof line,"%c %10.5f  %-7.7s %-7.7s %s",index == Current ? '>' : ' ',
-               sp->chan.tune.freq/1e6,configured,detected,name);
+      snprintf(line,sizeof line,"%c %10.5f  %-7.7s %-7.7s %6s %s",index == Current ? '>' : ' ',
+               sp->chan.tune.freq/1e6,configured,detected,tone,name);
     else
-      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6s %6s  %s",index == Current ? '>' : ' ',
-               sp->chan.tune.freq/1e6,configured,detected,snr,gain,name);
+      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6s %6s %6s  %s",index == Current ? '>' : ' ',
+               sp->chan.tune.freq/1e6,configured,detected,tone,snr,gain,name);
     attr_t attr = recent ? A_BOLD : A_DIM;
     int pair = UI_FRAME;
     if(muted(sp)) attr = A_DIM;
@@ -425,7 +437,9 @@ static void dashboard(void){
       char slot[24] = "-";
       if(sp->chan.dv.call_slot >= 0 && sp->chan.dv.call_mode[0])
         snprintf(slot,sizeof slot,"%d",sp->chan.dv.call_slot+1);
-      snprintf(line,sizeof line,"Detected: %s | Source: %s | Destination: %s | Slot: %s",ui_detected(sp),
+      char tone[16];
+      ui_tone(sp,tone,sizeof tone);
+      snprintf(line,sizeof line,"Detected: %s | Tone: %s | Source: %s | Destination: %s | Slot: %s",ui_detected(sp),tone,
                sp->chan.dv.call_src[0] ? sp->chan.dv.call_src : "-",
                sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : "-",slot);
       ui_text(table_end+3,2,line,A_NORMAL,UI_DIGITAL);
@@ -596,7 +610,7 @@ static void update_monitor_display(void){
   if(col >= COLS)
     goto done;
 
-  if(Notch){
+  {
    char scratch [LINES][COLS];
     memset(scratch,0,sizeof scratch);
     int session = First_session;
@@ -606,7 +620,9 @@ static void update_monitor_display(void){
     for(;i < LINES && session < NSESSIONS; i++,session++){
       sess_t const *sp = Sess_ptr[session];
       if(!inuse(sp)) break;
-      if(sp->chan.demod_type == P25_DEMOD){
+      if(session_has_analog_audio(sp)){
+        ui_tone(sp,scratch[i],COLS);
+      } else if(sp->chan.demod_type == P25_DEMOD){
 	// The call being followed or decoded, else the NAC
 	if(sp->chan.dv.source[0] != '\0')
 	  snprintf(scratch[i],COLS,"%s",sp->chan.dv.source);

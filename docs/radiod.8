@@ -93,6 +93,18 @@ journalctl \-u radiod@hf \-f
 Zero indicates normal termination by SIGTERM or completion of -V. Startup and
 configuration errors return nonzero status. SIGINT and SIGQUIT currently
 return a software-error status.
+.SH OPTIONAL CTCSS AUDIO NOTCH
+In an FM channel section, set ctcss-notch to the CTCSS frequency in Hz
+(60 through 260), or 0 to disable it (the default). For example,
+ctcss-notch = 123.0 removes that tone before PCM or Opus output encoding.
+The setting also applies to analog FM in mixed mode, but not digital voice
+or wideband broadcast FM. Channels with different notch frequencies need
+separate sections.
+.PP
+This is independent of tone/pl/ctcss squelch and does not enable tone
+squelch. Squelch detection precedes filtering. Every consumer of the stream
+receives the filtered audio, so monitor may no longer detect the removed
+tone. Leave it off or use a separate unfiltered stream to preserve tones.
 .SH SEE ALSO
 control(1), tune(1), monitor(1), pcmrecord(1), fft-gen(1), systemctl(1)
 .PP

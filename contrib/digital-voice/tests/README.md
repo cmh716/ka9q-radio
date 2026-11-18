@@ -67,3 +67,18 @@ out/dmr-idle-test /path/to/424150.c64
 That optional recording must contain idle CC3 traffic and no speech. The check
 requires repeated acquisition, the correct color code in DMR mode, and no audio
 callbacks in either mode. The original user IQ recording is not bundled.
+
+The radiod/monitor tone regression synthesizes FM IQ with each of the 55 CTCSS
+tones plus a voice-band tone, passes it through the production mixed FM chain
+and monitor detectors, using decoded wire status without radiod-local flags.
+It verifies detection with notching disabled, silence,
+digital-call exclusion, and detector reset. It runs as part of `run.sh`.
+
+The tone regression also checks the optional radiod output notch at 8/24/48 kHz:
+all 55 tones must be suppressed by at least 28 dB, a 1 kHz signal stays within
+5% of its input amplitude, bypass is exact, and the mixed FM path is filtered.
+
+`dmr-polarity-test` synthesizes protected idle at both polarities and exercises
+polarity transitions in DMR and automatic mode. After acquisition there must be
+no false vocoder output. An optional cf32 48 kHz input argument checks a captured
+inverted CC10 idle interval (at least 50 bursts, no voice after acquisition).

@@ -58,4 +58,20 @@ void setIIRnotch(struct iir *,float);
 void setIIRlp(struct iir * const iir,float f);
 void setIIRdc(struct iir * const iir);
 
+// Optional fixed-frequency audio notch. Reinitialize on frequency changes so
+// enabling/disabling a channel preset cannot retain another tone's history.
+struct audio_notch {
+  struct iir filter;
+  float frequency;
+};
+static inline float apply_audio_notch(struct audio_notch *state,float sample,float hz,float rate){
+  if(hz != state->frequency){
+    state->filter = (struct iir){0};
+    state->frequency = hz;
+    if(hz > 0)
+      setIIRnotch(&state->filter,hz / rate);
+  }
+  return hz > 0 ? applyIIR(&state->filter,sample) : sample;
+}
+
 #endif

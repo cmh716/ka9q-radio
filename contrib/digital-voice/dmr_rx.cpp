@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "dv_decoder.h"
@@ -53,7 +54,7 @@ class dmr_decoder : public dv_decoder {
 public:
   dmr_decoder(int slot, dv_pcm_callback callback, void *user_data)
     : wanted_slot_(slot - 1), callback_(callback), user_data_(user_data),
-      frontend_(350.0f), fsk4_(DV_RRC_TAPS)
+      frontend_(350.0f), fsk4_(new dv_fsk4(DV_RRC_TAPS))
   {
   }
 
@@ -75,13 +76,33 @@ public:
   void leveled(cfloat lev)
   {
     uint8_t dibit;
-    if (fsk4_.process(lev, dibit))
+    bool have_symbol = fsk4_->process(inverted_ ? std::conj(lev) : lev, dibit);
+    float const original_sample = (inverted_ ? -1 : 1) * fsk4_->filtered_sample();
+    int normal_color = -1, inverted_color = -1;
+    bool const normal_idle = idle_detector_.process(original_sample, normal_color);
+    bool const inverted_idle = inverted_idle_detector_.process(-original_sample, inverted_color);
+    // DMR voice and data syncs differ by sign inversion (XOR 0xaaaa...).
+    // Sync alone therefore cannot establish polarity: inverted idle looks like
+    // voice. Require two full Golay-protected idle fields on the burst grid.
+    if(normal_idle != inverted_idle) {
+      bool const inverted = inverted_idle;
+      if(inverted != inverted_) {
+        inverted_ = inverted;
+        fsk4_.reset(new dv_fsk4(DV_RRC_TAPS));
+        have_symbol = false;
+        idle_detector_.reset();
+        inverted_idle_detector_.reset();
+        sync_reset();
+        end_calls(); // discard false voice/encryption state from wrong polarity
+      }
+    }
+    if(have_symbol)
       rx_dibit(dibit);
-    int color;
-    if(idle_detector_.process(fsk4_.filtered_sample(), color)
-       && !locked_ && symbols_ - last_sync_ > kExpiration) {
-      // Only protected, grid-confirmed idle activity can supplement the
-      // ordinary framer. Never feed it into the voice/vocoder path.
+    bool const idle = inverted_ ? inverted_idle : normal_idle;
+    int const color = inverted_ ? inverted_color : normal_color;
+    if(idle && !locked_ && symbols_ - last_sync_ > kExpiration) {
+      // Protected idle activity can supplement the ordinary framer when its
+      // decision-directed timing cannot acquire a repeating idle pattern.
       syncs_++;
       bursts_++;
       cc_ = color;
@@ -98,7 +119,7 @@ public:
     stats->frames = bursts_;
     stats->voice_decoded = voice_decoded_;
     stats->voice_muted = voice_muted_;
-    stats->freq_offset = frontend_.frequency_offset_hz() + fsk4_.fine_offset_hz();
+    stats->freq_offset = frontend_.frequency_offset_hz() + (inverted_ ? -1 : 1) * fsk4_->fine_offset_hz();
     stats->active_slot = active_slot_ + 1;
     stats->dmr_cc = cc_;
     if (active_slot_ >= 0)
@@ -166,6 +187,7 @@ private:
     sync_reset();
     end_calls();
     idle_detector_.reset();
+    inverted_idle_detector_.reset();
   }
 
   // Forget both slots' calls: encryption, IDs, embedded LC fragments. (Not on
@@ -439,8 +461,10 @@ private:
   dv_pcm_callback const callback_;
   void * const user_data_;
   dv_frontend frontend_;
-  dv_fsk4 fsk4_;
+  std::unique_ptr<dv_fsk4> fsk4_;
   dmr_idle_detector idle_detector_;
+  dmr_idle_detector inverted_idle_detector_;
+  bool inverted_ = false;
 
   // Framing (rx_sync)
   uint8_t buf_[kBurstDibits]{};

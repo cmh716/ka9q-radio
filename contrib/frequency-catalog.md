@@ -72,6 +72,16 @@ remove master channels. Imports do not edit the downloaded files.
   Unknown; they do not infer an intended transmit setup from an input frequency.
 - **RX Mode / TX Mode** are separate. RX mode comes from the source; TX mode remains
   blank until explicitly chosen. Unsupported modes require correction before Keep.
+- **USB** is supported for RX/TX mode; the receiver bridge maps it to radiod's `usb` preset.
+- **CTCSS Notch Hz** optionally removes a fixed CTCSS tone from radiod output
+  before PCM or Opus encoding. Enter 60–260 Hz, e.g. `107.2`; blank or `0`
+  leaves notching off with the default radiod configuration. Explicit `0` is
+  exported to disable any inherited notch; blank omits the option. It is independent
+  of RX squelch, applies only to FM/FMN listings (including analog listings
+  exported as mixed), and is preserved as a personal setting on source refresh.
+  Different settings generate separate sections; conflicting duplicate receiver
+  entries are rejected. All listeners receive filtered audio, so monitor may no
+  longer detect the removed tone.
 - **Bandwidth kHz** is an optional positive numeric value; it is not an Icom filter number.
 - **RX Squelch Type / Value** control receiving: Carrier, CTCSS, DCS, Digital, or Unknown.
   **TX Access Type / Value** describe repeater access: None, CTCSS, DCS, Digital, or Unknown.

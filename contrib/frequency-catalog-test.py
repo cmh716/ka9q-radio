@@ -8,6 +8,7 @@ import io
 from pathlib import Path
 import tempfile
 import sys
+import subprocess
 import unittest
 
 spec = importlib.util.spec_from_file_location('catalog', Path(__file__).with_name('frequency-catalog.py'))
@@ -111,6 +112,94 @@ class CatalogTest(unittest.TestCase):
         self.stage()
         self.assertEqual(self.read('inbox.csv')[0]['Name'], 'My edited label')
         self.assertEqual(self.read('inbox.csv')[0]['Decision'], 'Keep')
+
+    def test_usb_import_apply_export_and_radiod(self):
+        self.rows[0]['Mode'] = 'USB'
+        self.stage()
+        inbox = self.read('inbox.csv')
+        for row in inbox:
+            row['Decision'] = 'Keep' if row['RX Mode'] == 'USB' else 'Ignore'
+        catalog.write_csv(self.w / 'inbox.csv', catalog.INBOX, inbox)
+        self.call(catalog.apply)
+        master = self.read('master.csv')
+        self.assertEqual(master[0]['RX Mode'], 'USB')
+        # The channel schema also permits an explicitly selected USB TX mode.
+        catalog.validate(dict(master[0], **{'TX Mode': 'USB', 'Receive Only': 'no',
+                                          'Operation': 'Repeater'}))
+        out = self.root / 'selected.csv'
+        self.call(catalog.export, profile='uhf', output=out)
+        self.assertEqual(catalog.read_csv(out)[0]['Mode'], 'USB')
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name('rr2radiod.py')),
+             '--center', '462m6', '--samprate', '2000000', str(out)],
+            capture_output=True, text=True, check=True)
+        self.assertIn('mode = usb\n', result.stdout)
+        self.assertIn('462m55', result.stdout)
+        self.assertNotIn('mode = pm\n', result.stdout)
+
+    def radiod_export(self, entries):
+        selected = self.root / 'notches.csv'
+        catalog.write_csv(selected, catalog.RR_FIELDS, entries)
+        return subprocess.run(
+            [sys.executable, str(Path(__file__).with_name('rr2radiod.py')),
+             '--center', '462m6', '--samprate', '2000000', str(selected)],
+            capture_output=True, text=True)
+
+    def test_notch_survives_catalog_and_separates_sections(self):
+        self.decisions()
+        master = self.read('master.csv')
+        master[0].update({'CTCSS Notch Hz': '107.20', 'RX Squelch Type': 'CTCSS',
+                          'RX Squelch Value': '107.2'})
+        other = dict(master[0], ID='different-notch', **{'RX MHz': '462.575000',
+                                                       'CTCSS Notch Hz': '88.5'})
+        catalog.write_csv(self.w / 'master.csv', catalog.FIELDS, master + [other])
+        out = self.root / 'selected.csv'
+        self.call(catalog.export, profile='uhf', output=out)
+        result = self.radiod_export(catalog.read_csv(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('ctcss-notch = 107.2', result.stdout)
+        self.assertIn('ctcss-notch = 88.5', result.stdout)
+        self.assertEqual(result.stdout.count('tone = 107.2'), 2)
+        self.assertIn('pl107_2-notch107_2', result.stdout)
+        self.assertIn('pl107_2-notch88_5', result.stdout)
+        self.rows[0]['Description'] = 'Source update'
+        self.stage()
+        proposal = next(r for r in self.read('inbox.csv') if r['ID'] == master[0]['ID'])
+        self.assertEqual(proposal['CTCSS Notch Hz'], '107.20')
+
+    def test_notch_validation_and_conflicting_duplicates(self):
+        self.decisions()
+        row = self.read('master.csv')[0]
+        for value in ['-1', '59', '261', 'nan', 'inf', 'yes']:
+            with self.assertRaises(ValueError):
+                catalog.validate(dict(row, **{'CTCSS Notch Hz': value}))
+        for value in ['', '0', '60', '107.2', '260']:
+            catalog.validate(dict(row, **{'CTCSS Notch Hz': value}))
+        with self.assertRaises(ValueError):
+            catalog.validate(dict(row, **{'RX Mode': 'DMR', 'CTCSS Notch Hz': '107.2'}))
+        duplicate = dict(row, ID='conflicting-notch', **{'CTCSS Notch Hz': '107.2'})
+        catalog.write_csv(self.w / 'master.csv', catalog.FIELDS, [row, duplicate])
+        with self.assertRaisesRegex(ValueError, 'conflicting CTCSS'):
+            self.call(catalog.export, profile='uhf', output=self.root / 'selected.csv')
+
+    def test_notch_in_mixed_and_default_disabled(self):
+        analog = {'Frequency Output': '462.550', 'Mode': 'FM', 'Tag': 'Ham',
+                  'CTCSS Notch Hz': '107.2'}
+        digital = dict(analog, Mode='DMR', **{'CTCSS Notch Hz': ''})
+        result = self.radiod_export([analog, digital])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('mode = mixed', result.stdout)
+        self.assertIn('ctcss-notch = 107.2', result.stdout)
+        result = self.radiod_export([dict(analog, **{'CTCSS Notch Hz': '0'})])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('ctcss-notch = 0', result.stdout)
+        result = self.radiod_export([dict(analog, **{'CTCSS Notch Hz': ''})])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('ctcss-notch =', result.stdout)
+        result = self.radiod_export([analog, dict(analog, **{'CTCSS Notch Hz': ''})])
+        self.assertNotEqual(result.returncode, 0)
+        result = self.radiod_export([dict(digital, **{'CTCSS Notch Hz': '107.2'})])
+        self.assertNotEqual(result.returncode, 0)
 
     def test_receiver_export_combines_fm_widths(self):
         self.decisions()
