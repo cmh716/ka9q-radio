@@ -19,6 +19,18 @@
 #include "dv.h"
 #include "dv_follow.h"
 
+// Activity is separate from voice ownership: idle/control bursts can identify
+// a protocol while active_mode remains unset. Never collapse ambiguous hits.
+static void dv_activity_names(char *out,size_t size,uint32_t mask){
+  out[0] = '\0';
+  for(int mode = DV_P25_C4FM; mode <= DV_LTR; mode++){
+    if(!(mask & (1U << mode))) continue;
+    if(out[0]) strlcat(out,",",size);
+    strlcat(out,dv_mode_name(mode),size);
+  }
+  if(!out[0]) strlcpy(out,"-",size);
+}
+
 #define DV_AUDIO_QUEUE_DEPTH 45 // 900 ms
 
 // Speech level control: vocoder output level follows the talker (13 dB
@@ -642,13 +654,16 @@ int demod_dv(void *arg){
 	chan->p25.have_nac = true;
       }
       if(Verbose > 0){
-	if(is_auto)
+	if(is_auto){
+          char framed[96],sync[96];
+          dv_activity_names(framed,sizeof framed,stats.recent_frame_modes);
+          dv_activity_names(sync,sizeof sync,stats.recent_sync_modes);
 	  fprintf(stderr,"%s DIGITAL samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
-		  " voice=%" PRIu64 " muted=%" PRIu64 " active=%s offset=%+.1f Hz\n",
+		  " voice=%" PRIu64 " muted=%" PRIu64 " framed=%s sync=%s active=%s offset=%+.1f Hz\n",
 		  chan->name,stats.samples,stats.syncs,stats.frames,
-		  stats.voice_decoded,stats.voice_muted,
+		  stats.voice_decoded,stats.voice_muted,framed,sync,
 		  chan->dv.source[0] ? chan->dv.source : "-",stats.freq_offset);
-	else if(is_nxdn && stats.tsbks + stats.tsbk_errors != 0)
+        } else if(is_nxdn && stats.tsbks + stats.tsbk_errors != 0)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " control=%" PRIu64 "/%" PRIu64 " RAN=%u offset=%+.1f Hz\n",
 		  chan->name,label,stats.samples,stats.syncs,stats.frames,

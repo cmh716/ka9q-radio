@@ -82,3 +82,8 @@ all 55 tones must be suppressed by at least 28 dB, a 1 kHz signal stays within
 polarity transitions in DMR and automatic mode. After acquisition there must be
 no false vocoder output. An optional cf32 48 kHz input argument checks a captured
 inverted CC10 idle interval (at least 50 bursts, no voice after acquisition).
+
+Automatic-mode tests also verify recent sync/frame protocol masks independently
+of voice ownership: a data-only DMR receiver and a competing sync-only NXDN
+receiver must be distinguished, activity expires after one second of IQ, and
+signal loss clears it. This feeds radiod's verbose `framed=` and `sync=` fields.

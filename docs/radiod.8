@@ -105,6 +105,17 @@ This is independent of tone/pl/ctcss squelch and does not enable tone
 squelch. Squelch detection precedes filtering. Every consumer of the stream
 receives the filtered audio, so monitor may no longer detect the removed
 tone. Leave it off or use a separate unfiltered stream to preserve tones.
+.SH AUTOMATIC DIGITAL MODE LOGGING
+With mode = digital (or mixed), verbose status lines include framed= and
+sync= protocol names as well as active=. framed= lists receivers whose frame
+counter advanced in the last second of processed IQ; sync= lists receivers
+whose sync counter advanced. Multiple candidates are comma-separated and
+a dash means no recent activity. Signal loss clears recent activity.
+.PP
+active= describes voice audio ownership, so it can remain a dash during
+idle, telemetry or control traffic. A sync match alone is a candidate,
+not a verified protocol identification; frame-validation strength depends
+on the receiver. The aggregate syncs= and frames= counters remain cumulative.
 .SH SEE ALSO
 control(1), tune(1), monitor(1), pcmrecord(1), fft-gen(1), systemctl(1)
 .PP

@@ -78,6 +78,9 @@ public:
       sub_[i]->get_stats(&st);
       uint64_t const voice = st.voice_decoded - last_voice_[i];
       bool const framed = st.frames != last_frames_[i];
+      if(st.syncs != last_syncs_[i]) sync_seen_[i] = samples_;
+      if(framed) frame_seen_[i] = samples_;
+      last_syncs_[i] = st.syncs;
       last_voice_[i] = st.voice_decoded;
       last_frames_[i] = st.frames;
       if (static_cast<int>(i) == owner_ && (framed || voice != 0))
@@ -118,6 +121,8 @@ public:
     for (auto& d : sub_)
       d->signal_lost();
     owner_ = -1; // the next transmission may be any mode
+    sync_seen_.fill(0);
+    frame_seen_.fill(0);
     for (auto& q : queue_)
       q.clear();
   }
@@ -160,6 +165,13 @@ public:
       stats->active_mode = -1;
       stats->m17_can = -1;
     }
+    stats->recent_sync_modes = stats->recent_frame_modes = 0;
+    for(size_t i = 0; i < kNumModes; i++) {
+      if(sync_seen_[i] && samples_ - sync_seen_[i] <= DV_IQ_SAMPRATE)
+        stats->recent_sync_modes |= 1U << kModes[i];
+      if(frame_seen_[i] && samples_ - frame_seen_[i] <= DV_IQ_SAMPRATE)
+        stats->recent_frame_modes |= 1U << kModes[i];
+    }
   }
 
 private:
@@ -186,6 +198,8 @@ private:
   tap tap_[kNumModes];
   std::vector<pcm_frame> queue_[kNumModes];
   dv_stats const *playing_ = nullptr;
+  std::array<uint64_t,kNumModes> sync_seen_{}, frame_seen_{};
+  uint64_t last_syncs_[kNumModes]{};
   uint64_t last_voice_[kNumModes]{};
   uint64_t last_frames_[kNumModes]{};
   uint64_t samples_ = 0;

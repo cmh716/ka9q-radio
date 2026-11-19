@@ -85,6 +85,10 @@ typedef struct {
   // cannot tell successive key-ups apart. Added last to keep the layout of
   // the fields before it.
   uint64_t call_serial;
+  // DV_AUTO: protocols with new syncs/frames in the last second of IQ.
+  // Bit N corresponds to dv_mode N; multiple bits preserve ambiguity.
+  uint32_t recent_sync_modes;
+  uint32_t recent_frame_modes;
 } dv_stats;
 
 // P25 control channel events

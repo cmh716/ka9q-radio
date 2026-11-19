@@ -5,15 +5,23 @@
 #include <cstdlib>
 
 namespace {
+bool data_only, data_activity;
 class scripted_decoder : public dv_decoder {
 public:
-  scripted_decoder(bool emit,dv_pcm_callback cb,void *user) : emit_(emit),cb_(cb),user_(user) {}
+  scripted_decoder(bool emit,dv_pcm_callback cb,void *user,int activity = 0) : emit_(emit),cb_(cb),user_(user),activity_(activity) {}
   void process(cfloat const *,size_t) override { run(); }
   void process_leveled(cfloat const *,size_t) override { run(); }
   void signal_lost() override { st_.call_serial++; }
   void get_stats(dv_stats *st) const override { *st = st_; }
 private:
   void run() {
+    if(data_only){
+      if(data_activity && activity_){
+        st_.syncs++;
+        if(activity_ == 1) st_.frames++;
+      }
+      return;
+    }
     if(!emit_)
       return;
     int16_t pcm[DV_PCM_SAMPLES]{};
@@ -33,6 +41,7 @@ private:
   bool emit_;
   dv_pcm_callback cb_;
   void *user_;
+  int activity_;
   dv_stats st_{};
 };
 
@@ -59,10 +68,10 @@ void receive(void *,int16_t const pcm[DV_PCM_SAMPLES]) {
 
 // Only P25 emits frames; the other factories provide silent competitors.
 dv_decoder *dv_create_p25(bool,uint16_t,bool,dv_pcm_callback cb,void *u) { return new scripted_decoder(true,cb,u); }
-dv_decoder *dv_create_dmr(int,dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
+dv_decoder *dv_create_dmr(int,dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u,1); }
 dv_decoder *dv_create_ysf(dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
 dv_decoder *dv_create_dstar(dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
-dv_decoder *dv_create_nxdn(bool,dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
+dv_decoder *dv_create_nxdn(bool high,dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u,high ? 0 : 2); }
 dv_decoder *dv_create_m17(int,dv_pcm_callback cb,void *u) { return new scripted_decoder(false,cb,u); }
 
 int main() {
@@ -85,5 +94,21 @@ int main() {
   catch(int) { caught = true; }
   decoder->get_stats(&st);
   check(caught && st.call_serial == 2 && st.dst_call[0] == '\0');
+  data_only = data_activity = true;
+  decoder.reset(dv_create_auto(config,receive,nullptr));
+  decoder->process(iq,960);
+  decoder->get_stats(&st);
+  check(st.active_mode == -1 && st.voice_decoded == 0);
+  check(st.recent_frame_modes == (1U << DV_DMR));
+  check(st.recent_sync_modes == ((1U << DV_DMR) | (1U << DV_NXDN48)));
+  data_activity = false;
+  for(int i=0;i<51;i++) decoder->process(iq,960);
+  decoder->get_stats(&st);
+  check(st.recent_sync_modes == 0 && st.recent_frame_modes == 0);
+  data_activity = true;
+  decoder->process(iq,960);
+  decoder->signal_lost();
+  decoder->get_stats(&st);
+  check(st.recent_sync_modes == 0 && st.recent_frame_modes == 0);
   std::puts("Automatic mode call snapshot tests passed");
 }
