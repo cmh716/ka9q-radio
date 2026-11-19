@@ -37,7 +37,20 @@ voice mode, or a dash when none is reported. DMR idle bursts do not select
 a voice mode. Frequencies are displayed in MHz. The Tone column displays
 detected CTCSS in Hz or DCS as D023/I023 (normal/inverted), including analog
 FM calls on mixed channels. Detection does not require notching; digital
-voice is excluded to avoid false tone detections.
+voice is excluded to avoid false tone detections. On P25 channels it shows
+the NAC last received (N293), a following channel's being its control
+channel's.
+.P
+The Call column shows the call in progress: the talkgroup (TG2000) or
+destination callsign and the talker's ID, and on a trunked channel the voice
+frequency being followed (TG110 463.7250 1757). Between calls a trunked
+channel shows its state there: CC R2 or CC N469 while its control channel is
+received, no CC when it is lost, CC search while other control channels are
+tried, LTR R1 for an LTR home repeater. Last is the time since the channel
+last sent audio: now, 4:07 (minutes and seconds), 3h12, 2d.
+.P
+Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
+followed frequency in Call.
 .P
 Larger terminals include selected-channel details: source, destination,
 timeslot, gain, SNR, and packet counters. Smaller terminals omit this panel

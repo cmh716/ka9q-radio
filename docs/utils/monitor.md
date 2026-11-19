@@ -139,7 +139,17 @@ are dimmed. Config and Detect distinguish the configured demodulator from the
 reported voice mode; a dash means no voice mode is reported. Frequencies are in MHz.
 The Tone column shows detected CTCSS in Hz or DCS as D023/I023 (normal/inverted).
 Detection also works during analog FM calls on mixed channels, with notching off.
-Digital voice is excluded to avoid false tone detections.
+Digital voice is excluded to avoid false tone detections. On P25 channels it
+shows the NAC last received (N293; a following channel's is its control channel's).
+
+The Call column shows the call in progress: talkgroup (TG2000) or destination
+callsign, the talker's ID, and on a trunked channel the voice frequency being
+followed (TG110 463.7250 1757). Between calls a trunked channel shows its state:
+CC R2 / CC N469 while its control channel is received, no CC when it is lost,
+CC search while other control channels are tried, LTR R1 for an LTR home
+repeater. Last is the time since the channel last sent audio (now, 4:07, 3h12,
+2d). Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
+followed frequency in Call.
 
 Larger terminals show caller, destination, timeslot, signal, and packet details
 for the selected channel. Smaller terminals use a compact table. Press `v` to

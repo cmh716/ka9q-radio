@@ -331,12 +331,64 @@ static char const *ui_detected(sess_t const *sp){
 
 static void ui_tone(sess_t const *sp,char *out,size_t size){
   strlcpy(out,"-",size);
-  if(!session_has_analog_audio(sp))
+  if(!session_has_analog_audio(sp)){
+    // P25: the NAC last received (a following channel's is its control channel's)
+    if(sp->chan.demod_type == P25_DEMOD && sp->chan.p25.have_nac)
+      snprintf(out,size,"N%03X",sp->chan.p25.last_nac);
     return;
+  }
   if(sp->current_tone > 0)
     snprintf(out,size,"%.1f",sp->current_tone);
   else if(sp->current_dcs != 0)
     snprintf(out,size,"%c%03d",sp->current_dcs_inverted ? 'I' : 'D',sp->current_dcs);
+}
+
+// The call in progress: talkgroup (or destination callsign) and talker, and
+// on a trunked channel the voice frequency it is following. Between calls, a
+// trunked channel's state: "CC R2", "no CC", "CC search", "LTR R1".
+// brief: without the followed frequency, for a narrow screen
+static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
+  out[0] = '\0';
+  char const *dest = sp->chan.dv.call_dest;
+  if(dest[0] == '\0'){
+    char const *s = sp->chan.dv.source;
+    if(strncmp(s,"CC ",3) == 0 || strcmp(s,"no CC") == 0 || strcmp(s,"CC search") == 0
+       || strncmp(s,"LTR R",5) == 0)
+      strlcpy(out,s,size);
+    return;
+  }
+  // "110", "TG 110" or "TG110" is talkgroup 110; anything else (a callsign) as it is
+  if(strncmp(dest,"TG",2) == 0)
+    dest += dest[2] == ' ' ? 3 : 2;
+  bool const number = dest[0] != '\0' && strspn(dest,"0123456789") == strlen(dest);
+  snprintf(out,size,"%s%s",number ? "TG" : "",number ? dest : sp->chan.dv.call_dest);
+  double const freq = sp->chan.dv.call_freq;
+  if(!brief && freq > 0 && fabs(freq - sp->chan.tune.freq) > 100){
+    char where[24];
+    snprintf(where,sizeof where," %.4f",freq * 1e-6);
+    strlcat(out,where,size);
+  }
+  if(sp->chan.dv.call_src[0] != '\0'){
+    strlcat(out," ",size);
+    strlcat(out,sp->chan.dv.call_src,size);
+  }
+}
+
+// How long since the channel last sent audio: "now", "4:07", "3h12", "2d"
+static void ui_last(sess_t const *sp,int64_t now,char *out,size_t size){
+  if(sp->packets == 0){
+    strlcpy(out,"-",size);
+    return;
+  }
+  int64_t const s = (now - sp->last_active) / BILLION;
+  if(s < 1)
+    strlcpy(out,"now",size);
+  else if(s < 3600)
+    snprintf(out,size,"%d:%02d",(int)(s / 60),(int)(s % 60));
+  else if(s < 86400)
+    snprintf(out,size,"%dh%02d",(int)(s / 3600),(int)(s / 60 % 60));
+  else
+    snprintf(out,size,"%dd",(int)(s / 86400));
 }
 
 static void dashboard(void){
@@ -380,9 +432,14 @@ static void dashboard(void){
            Nfds > 1 ? " (+ more)" : "",Source != NULL ? " [source filtered]" : "");
   ui_text(2,2,line,A_DIM,UI_FRAME);
   ui_rule(3," CHANNELS ");
-  bool const narrow = COLS < 76;
-  ui_text(table_header,2,narrow ? "  Frequency   Config  Detect    Tone Channel" :
-          "  Frequency   Config   Detect     Tone    SNR   Gain  Channel",A_BOLD,UI_FRAME);
+  // Below 100 columns: no Config, SNR or Gain (the details panel has them)
+  bool const narrow = COLS < 100;
+  if(narrow)
+    snprintf(line,sizeof line,"  %10s %-7s %6s %-16s %5s %s","Frequency","Detect","Tone","Call","Last","Channel");
+  else
+    snprintf(line,sizeof line,"  %10s  %-8s %-8s %6s %-22s %5s %6s %6s  %s","Frequency","Config","Detect",
+             "Tone","Call","Last","SNR","Gain","Channel");
+  ui_text(table_header,2,line,A_BOLD,UI_FRAME);
   for(int i=0; i<Sessions_per_screen && First_session+i<count; i++){
     int const index = First_session+i;
     sess_t const *sp = Sess_ptr[index];
@@ -398,14 +455,16 @@ static void dashboard(void){
     if(isfinite(sp->snr)) snprintf(snr,sizeof snr,"%.1f",sp->snr);
     if(muted(sp)) strlcpy(gain,"mute",sizeof gain);
     else snprintf(gain,sizeof gain,"%+.0f",voltage2dB(sp->gain));
-    char tone[16];
+    char tone[16],call[64],last[16];
     ui_tone(sp,tone,sizeof tone);
+    ui_call(sp,narrow,call,sizeof call);
+    ui_last(sp,now,last,sizeof last);
     if(narrow)
-      snprintf(line,sizeof line,"%c %10.5f  %-7.7s %-7.7s %6s %s",index == Current ? '>' : ' ',
-               sp->chan.tune.freq/1e6,configured,detected,tone,name);
+      snprintf(line,sizeof line,"%c %10.5f %-7.7s %6.6s %-16.16s %5.5s %s",index == Current ? '>' : ' ',
+               sp->chan.tune.freq/1e6,detected,tone,call,last,name);
     else
-      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6s %6s %6s  %s",index == Current ? '>' : ' ',
-               sp->chan.tune.freq/1e6,configured,detected,tone,snr,gain,name);
+      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6.6s %-22.22s %5.5s %6s %6s  %s",index == Current ? '>' : ' ',
+               sp->chan.tune.freq/1e6,configured,detected,tone,call,last,snr,gain,name);
     attr_t attr = recent ? A_BOLD : A_DIM;
     int pair = UI_FRAME;
     if(muted(sp)) attr = A_DIM;
