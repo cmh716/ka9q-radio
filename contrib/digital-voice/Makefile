@@ -51,7 +51,8 @@ $(BUILD_DIR)/%.o: %.cc | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/libm17/%.o: upstream/libm17/%.c
+# Use an explicit rule so older GNU make does not select the generic C rule.
+$(LIBM17_OBJECTS): $(BUILD_DIR)/libm17/%.o: upstream/libm17/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
