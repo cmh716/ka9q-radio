@@ -323,7 +323,7 @@ radiod: $(RADIOD_OBJECTS) $(DVLIB)
 
 # Always ask the sub-make; it only rebuilds (and touches the archive) when sources change
 $(DVLIB): FORCE
-	$(MAKE) -C ../contrib/digital-voice
+	$(MAKE) -C ../contrib/digital-voice INCLUDES="$(INCLUDES)"
 else
 radiod: $(RADIOD_OBJECTS)
 	$(CC) -rdynamic $(LDFLAGS) -o $@ $^ -lopus -lfftw3f_threads -lfftw3f -liniparser -lusb-1.0 -ldl $(LDLIBS)

@@ -9,7 +9,7 @@ CXXFLAGS += -std=c++17 -Wall -Wextra -MMD -MP
 CPPFLAGS += -DEZPWD_NO_EXCEPTS
 CFLAGS ?= -O2 -g
 CFLAGS += -std=gnu11 -Wall -MMD -MP
-CPPFLAGS += -I. -Iupstream -Iupstream/imbe_vocoder -Iupstream/libm17
+CPPFLAGS += -I. -Iupstream -Iupstream/imbe_vocoder -Iupstream/libm17 $(INCLUDES)
 
 BUILD_DIR ?= build
 SOURCES := dv_api.cpp dv_auto.cpp dv_frontend.cpp dv_ambe.cpp fsk4.cpp \
