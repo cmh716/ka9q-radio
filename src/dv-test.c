@@ -100,6 +100,22 @@ int main(void){
   check(current.id != followed && q.call[followed_tail].id == followed,"followed decoder replacement preserves queued call identity");
   check(q.call[q.count - 1].freq == 852000000 && q.call[q.count - 1].slot == 0,"followed frame retains voice frequency and slot");
 
+  // DMR and NXDN talkgroups are filed as bare numbers, private calls as
+  // "U" and the radio, so they aren't taken for the talkgroup of that number
+  struct dv_call c;
+  dv_stats st = {0};
+  strcpy(st.dst_call,"TG 2000");
+  call_ids(&st,DV_DMR,NULL,&chan,&c);
+  check(strcmp(c.dest,"2000") == 0,"DMR group call filed by talkgroup");
+  strcpy(st.dst_call,"2000");
+  call_ids(&st,DV_DMR,NULL,&chan,&c);
+  check(strcmp(c.dest,"U2000") == 0,"DMR private call not filed as a talkgroup");
+  call_ids(&st,DV_NXDN48,NULL,&chan,&c);
+  check(strcmp(c.dest,"U2000") == 0,"NXDN unit call not filed as a talkgroup");
+  strcpy(st.dst_call,"N0CALL");
+  call_ids(&st,DV_DMR,NULL,&chan,&c);
+  check(strcmp(c.dest,"N0CALL") == 0,"a callsign destination unchanged");
+
   puts("Call queue tests passed");
   return EXIT_SUCCESS;
 }

@@ -560,7 +560,8 @@ bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *sr
   dv_get_stats(f->voice,&st);
   *generation = f->calls;
   *serial = st.call_serial;
-  snprintf(dest,dlen,"%" PRIu32,f->cur.group);
+  // A unit-to-unit call as "U" and the radio, as dv.c files private calls
+  snprintf(dest,dlen,"%s%" PRIu32,f->cur.unit ? "U" : "",f->cur.group);
   if(st.src_call[0] != '\0')
     strlcpy(src,st.src_call,slen);
   else if(f->cur.source != 0)

@@ -291,11 +291,21 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
     call->slot = st->active_slot - 1;
   if(st->dst_call[0] == '\0' && st->src_call[0] == '\0')
     return;
-  // DMR shows "TG 44772": recorders file talkgroups as bare numbers, as for P25
+  // DMR and NXDN show a talkgroup as "TG 44772" and a private call by the
+  // radio's bare number. Recorders file talkgroups as bare numbers, as for
+  // P25, and a private call as "U" and the radio ("U2000"), so it is not
+  // taken for the talkgroup of that number
   char const *dest = st->dst_call;
-  if(m == DV_DMR && strncmp(dest,"TG ",3) == 0)
-    dest += 3;
-  strlcpy(call->dest,dest,sizeof call->dest);
+  if(m == DV_DMR || m == DV_NXDN48 || m == DV_NXDN96){
+    if(strncmp(dest,"TG ",3) == 0)
+      dest += 3;
+    else if(dest[0] >= '0' && dest[0] <= '9'){
+      snprintf(call->dest,sizeof call->dest,"U%s",dest);
+      dest = NULL;
+    }
+  }
+  if(dest != NULL)
+    strlcpy(call->dest,dest,sizeof call->dest);
   strlcpy(call->src,st->src_call,sizeof call->src);
   strlcpy(call->mode,dv_mode_name(m),sizeof call->mode);
 }
@@ -645,6 +655,9 @@ int demod_dv(void *arg){
 	// An LTR repeater: the talkgroup of the call on it
 	if(stats.dst_call[0] == '\0')
 	  chan->dv.source[0] = '\0';
+	else if(stats.dst_call[0] == 'U') // a unit-to-unit call
+	  snprintf(chan->dv.source,sizeof chan->dv.source,"%.9s%s%.8s",stats.dst_call,
+		   stats.src_call[0] ? " " : "",stats.src_call);
 	else
 	  snprintf(chan->dv.source,sizeof chan->dv.source,"TG%.6s%s%.8s",stats.dst_call,
 		   stats.src_call[0] ? " " : "",stats.src_call);

@@ -155,7 +155,8 @@ struct p25_voice::impl {
     uint32_t const dest = lco == 0x00 ? static_cast<uint32_t>(lc[4] << 8 | lc[5])
                                       : static_cast<uint32_t>(lc[3] << 16 | lc[4] << 8 | lc[5]);
     uint32_t const src = static_cast<uint32_t>(lc[6] << 16 | lc[7] << 8 | lc[8]);
-    snprintf(stats.dst_call, sizeof stats.dst_call, "%u", dest);
+    // A unit-to-unit call as "U" and the radio, not taken for a talkgroup
+    snprintf(stats.dst_call, sizeof stats.dst_call, "%s%u", lco == 0x03 ? "U" : "", dest);
     if (src != 0)
       snprintf(stats.src_call, sizeof stats.src_call, "%u", src);
   }

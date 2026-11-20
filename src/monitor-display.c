@@ -357,7 +357,8 @@ static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
       strlcpy(out,s,size);
     return;
   }
-  // "110", "TG 110" or "TG110" is talkgroup 110; anything else (a callsign) as it is
+  // "110", "TG 110" or "TG110" is talkgroup 110; anything else (a private
+  // call "U2000", a callsign) as it is
   if(strncmp(dest,"TG",2) == 0)
     dest += dest[2] == ' ' ? 3 : 2;
   bool const number = dest[0] != '\0' && strspn(dest,"0123456789") == strlen(dest);

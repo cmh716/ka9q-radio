@@ -34,7 +34,7 @@ Command-line options:
  --max_length|-x|--lengthlimit|--limit|-L <seconds>: maximum file duration, seconds. When --pad is set, pad first file to duration boundary
  --ssrc <ssrc>: Select one SSRC (recommended for --stdout)
  --version|-V: display command version
- --by-talkgroup: one file per digital voice call, filed by talkgroup (or destination callsign) as
+ --by-talkgroup: one file per digital voice call, filed by talkgroup (or target unit, U2000, or destination callsign) as
         talkgroup/year/month/day/yyyymmddThhmmssZ_<MHz>_<source>.wav; a new talkgroup or talker starts a new file
  --call-log <file>: with --by-talkgroup, append a CSV line for each call recorded
  --talkgroups <file or directory>: talkgroup names for --by-talkgroup, from a CSV file with "Decimal" and "Alpha Tag"
