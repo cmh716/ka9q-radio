@@ -297,12 +297,13 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
     case CALL_MODE:
     case CALL_SYSTEM:
     case CALL_ALIAS:
+    case CALL_MESSAGE:
       {
 	char *p = decode_string(cp,optlen);
 	char *dst = type == CALL_DEST ? chan->dv.call_dest : type == CALL_SOURCE ? chan->dv.call_src : type == CALL_MODE ? chan->dv.call_mode
-	  : type == CALL_ALIAS ? chan->dv.call_alias : chan->dv.system;
+	  : type == CALL_ALIAS ? chan->dv.call_alias : type == CALL_MESSAGE ? chan->dv.call_message : chan->dv.system;
 	size_t const len = type == CALL_DEST ? sizeof chan->dv.call_dest : type == CALL_SOURCE ? sizeof chan->dv.call_src : type == CALL_MODE ? sizeof chan->dv.call_mode
-	  : type == CALL_ALIAS ? sizeof chan->dv.call_alias : sizeof chan->dv.system;
+	  : type == CALL_ALIAS ? sizeof chan->dv.call_alias : type == CALL_MESSAGE ? sizeof chan->dv.call_message : sizeof chan->dv.system;
 	strlcpy(dst,p != NULL ? p : "",len);
 	FREE(p);
       }

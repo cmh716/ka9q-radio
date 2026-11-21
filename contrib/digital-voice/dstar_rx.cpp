@@ -182,6 +182,7 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + dc_ * kDeviation;
     std::memcpy(stats->src_call, src_, sizeof src_);
     std::memcpy(stats->dst_call, dst_, sizeof dst_);
+    std::memcpy(stats->message, message_, sizeof message_);
     stats->m17_can = -1;
   }
 
@@ -247,6 +248,7 @@ private:
         if (!locked_ && decode_radio_header(radio_header_, h)) {
           set_call(dst_, h + 19);   // UR
           set_call(src_, h + 27);   // MY
+          clear_message();          // a new transmission's
           header_valid_ = true;
           invert_ = header_invert_;
           expect_sync_ = bits_ + 1 + kFrameBits; // the end of voice frame 0
@@ -322,8 +324,10 @@ private:
     }
     if (!locked_) {
       header_.clear();
-      if (!header_valid_)
+      if (!header_valid_) {
         src_[0] = dst_[0] = '\0';
+        clear_message();
+      }
     }
     locked_ = true;
     missed_ = 0;
@@ -351,7 +355,8 @@ private:
   }
 
   // Frames 1-20 carry 3 scrambled bytes each; pairs make 6-byte blocks.
-  // Type 0x5n blocks carry the 41-byte header 5 bytes at a time
+  // Type 0x5n blocks carry the 41-byte header 5 bytes at a time, type 0x4n
+  // the 20-character text message, 5 characters in each of blocks n = 0-3
   void slow_data(uint8_t const *bits)
   {
     for (int k = 0; k < 3; k++) {
@@ -365,6 +370,10 @@ private:
     block_len_ = 0;
     uint8_t const type = block_[0] & 0xf0;
     int const n = std::min(block_[0] & 0x0f, 5);
+    if (type == 0x40) {
+      text_block(block_[0] & 0x0f, block_ + 1);
+      return;
+    }
     if (type != 0x50)
       return;
     for (int i = 0; i < n && header_.size() < 41; i++)
@@ -379,6 +388,34 @@ private:
       }
       header_.clear();
     }
+  }
+
+  // One of the text message's four blocks. Complete once all four are in;
+  // a block that changes starts it again (a new message)
+  void text_block(int index, uint8_t const *chars)
+  {
+    if (index > 3)
+      return;
+    if ((text_have_ & (1u << index)) && std::memcmp(text_ + 5 * index, chars, 5) != 0) {
+      text_have_ = 0;
+      message_[0] = '\0';
+    }
+    std::memcpy(text_ + 5 * index, chars, 5);
+    text_have_ |= 1u << index;
+    if (text_have_ != 0xf)
+      return;
+    int n = 0;
+    for (int i = 0; i < 20; i++)
+      message_[n++] = (text_[i] >= 0x20 && text_[i] < 0x7f) ? static_cast<char>(text_[i]) : ' ';
+    while (n > 0 && message_[n - 1] == ' ')
+      n--;
+    message_[n] = '\0';
+  }
+
+  void clear_message()
+  {
+    text_have_ = 0;
+    message_[0] = '\0';
   }
 
   static void set_call(char out[12], uint8_t const *c)
@@ -446,6 +483,7 @@ private:
     header_.clear();
     block_len_ = 0;
     src_[0] = dst_[0] = '\0';
+    clear_message();
   }
 
   static constexpr size_t kMaxGolayErrors = 6; // two Golay(24,12) words, 3 each
@@ -490,6 +528,9 @@ private:
   std::deque<uint8_t> header_;
   char src_[12]{};
   char dst_[12]{};
+  uint8_t text_[20]{};     // the text message's blocks as they come
+  unsigned text_have_ = 0; // bit n: block n received
+  char message_[24]{};     // the message, once all four blocks are in
 
   // Vocoder
   p25p2_vf interleaver_;

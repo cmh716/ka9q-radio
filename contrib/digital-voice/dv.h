@@ -95,6 +95,8 @@ typedef struct {
   // checks (bit n: FLCO n), and how many failed them
   uint64_t dmr_lc_flcos;
   uint64_t dmr_lc_bad;
+  // D-STAR: the transmission's text message (slow data), "" until complete
+  char message[24];
 } dv_stats;
 
 // P25 control channel events

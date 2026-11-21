@@ -375,6 +375,11 @@ static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
     strlcat(out," ",size);
     strlcat(out,talker,size);
   }
+  // and what they've written (D-STAR's text message), if there's room
+  if(sp->chan.dv.call_message[0] != '\0'){
+    strlcat(out," ",size);
+    strlcat(out,sp->chan.dv.call_message,size);
+  }
 }
 
 // in as exactly width columns: cut, or padded with spaces. Counts UTF-8
@@ -529,6 +534,10 @@ static void dashboard(void){
                sp->chan.dv.call_alias[0] ? " (" : "",sp->chan.dv.call_alias,sp->chan.dv.call_alias[0] ? ")" : "");
       snprintf(line,sizeof line,"Detected: %s | Tone: %s | Source: %s | Destination: %s | Slot: %s",ui_detected(sp),tone,
                source,sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : "-",slot);
+      if(sp->chan.dv.call_message[0] != '\0'){
+        strlcat(line," | Message: ",sizeof line);
+        strlcat(line,sp->chan.dv.call_message,sizeof line);
+      }
       ui_text(table_end+3,2,line,A_NORMAL,UI_DIGITAL);
       snprintf(line,sizeof line,"SSRC %u | Gain %+.0f dB | SNR %.1f dB | %s | %s",sp->ssrc,
                voltage2dB(sp->gain),sp->snr,muted(sp) ? "MUTED" : "Audio enabled",

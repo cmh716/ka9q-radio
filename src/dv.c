@@ -233,6 +233,7 @@ struct dv_call {
   char src[sizeof ((chan_t *)0)->dv.call_src];
   char mode[sizeof ((chan_t *)0)->dv.call_mode];
   char alias[sizeof ((chan_t *)0)->dv.call_alias]; // the talker's, for display: not part of the call's identity
+  char message[sizeof ((chan_t *)0)->dv.call_message]; // the transmission's text: display only, too
   uint32_t id;
   double freq;
   int slot;
@@ -324,6 +325,7 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
     strlcpy(call->dest,dest,sizeof call->dest);
   strlcpy(call->src,st->src_call,sizeof call->src);
   strlcpy(call->alias,st->talker_alias,sizeof call->alias);
+  strlcpy(call->message,st->message,sizeof call->message);
   strlcpy(call->mode,dv_mode_name(m),sizeof call->mode);
 }
 
@@ -400,6 +402,11 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
 	fprintf(stderr,"%s call %u: %s is \"%s\"\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->alias);
       strlcpy(cur->alias,seen->alias,sizeof cur->alias);
     }
+    if(seen->message[0] != '\0' && strcmp(cur->message,seen->message) != 0){
+      if(Verbose > 1)
+	fprintf(stderr,"%s call %u: %s says \"%s\"\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->message);
+      strlcpy(cur->message,seen->message,sizeof cur->message);
+    }
   }
 }
 
@@ -410,8 +417,9 @@ static void publish_call(chan_t *chan,struct dv_call const *call){
      && strcmp(call->src,chan->dv.call_src) == 0){
     // The same call. Its talker's alias may have come: show it, but it is
     // no change of call (no new timestamp for recorders to split at)
-    if(strcmp(call->alias,chan->dv.call_alias) != 0){
+    if(strcmp(call->alias,chan->dv.call_alias) != 0 || strcmp(call->message,chan->dv.call_message) != 0){
       strlcpy(chan->dv.call_alias,call->alias,sizeof chan->dv.call_alias);
+      strlcpy(chan->dv.call_message,call->message,sizeof chan->dv.call_message);
       push_status(chan);
     }
     return;
@@ -422,6 +430,7 @@ static void publish_call(chan_t *chan,struct dv_call const *call){
   strlcpy(chan->dv.call_src,call->src,sizeof chan->dv.call_src);
   strlcpy(chan->dv.call_mode,call->mode,sizeof chan->dv.call_mode);
   strlcpy(chan->dv.call_alias,call->alias,sizeof chan->dv.call_alias);
+  strlcpy(chan->dv.call_message,call->message,sizeof chan->dv.call_message);
   chan->dv.call_id = call->id;
   chan->dv.call_freq = call->freq;
   chan->dv.call_slot = call->slot;
@@ -565,7 +574,7 @@ int demod_dv(void *arg){
   chan->tp2 = 0; // decoded frames (P25) or bursts (DMR)
   chan->p25.have_nac = false;
   chan->dv.source[0] = '\0';
-  chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = chan->dv.call_alias[0] = '\0';
+  chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = chan->dv.call_alias[0] = chan->dv.call_message[0] = '\0';
   chan->dv.call_id = 0;
   chan->dv.call_freq = chan->tune.freq;
   chan->dv.call_slot = -1;
@@ -719,10 +728,11 @@ int demod_dv(void *arg){
 		  stats.dst_call[0] ? stats.dst_call : "-",stats.freq_offset);
 	else if(is_ysf || is_dstar || is_nxdn)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
-		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s offset=%+.1f Hz\n",
+		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s%s%s%s offset=%+.1f Hz\n",
 		  chan->name,label,stats.samples,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
+		  stats.message[0] ? " message=\"" : "",stats.message,stats.message[0] ? "\"" : "",
 		  stats.freq_offset);
 	else if(is_m17)
 	  fprintf(stderr,"%s M17 samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64

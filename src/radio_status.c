@@ -842,6 +842,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_string(&bp,CALL_SOURCE,chan->dv.call_src,strlen(chan->dv.call_src));
     encode_string(&bp,CALL_MODE,chan->dv.call_mode,strlen(chan->dv.call_mode));
     encode_string(&bp,CALL_ALIAS,chan->dv.call_alias,strlen(chan->dv.call_alias)); // always: "" clears it
+    encode_string(&bp,CALL_MESSAGE,chan->dv.call_message,strlen(chan->dv.call_message));
     if(chan->dv.system[0] != '\0')
       encode_string(&bp,CALL_SYSTEM,chan->dv.system,strlen(chan->dv.system));
     encode_int32(&bp,CALL_ID,chan->dv.call_id);
@@ -861,6 +862,7 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_string(&bp,CALL_SOURCE,chan->dv.call_src,strlen(chan->dv.call_src));
     encode_string(&bp,CALL_MODE,chan->dv.call_mode,strlen(chan->dv.call_mode));
     encode_string(&bp,CALL_ALIAS,chan->dv.call_alias,strlen(chan->dv.call_alias)); // always: "" clears it
+    encode_string(&bp,CALL_MESSAGE,chan->dv.call_message,strlen(chan->dv.call_message));
     if(chan->dv.system[0] != '\0')
       encode_string(&bp,CALL_SYSTEM,chan->dv.system,strlen(chan->dv.system));
     encode_int32(&bp,CALL_ID,chan->dv.call_id);
