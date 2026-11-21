@@ -113,6 +113,12 @@ struct session {
   bool talkgroup_named;  // callsign and id are a P25 call's talkgroup, not a repeater
   int64_t talkgroup_ended; // when that call ended (gps_time_ns), 0 while it lasts
   float distance;     // meters, if known
+  // The last position a call on this channel sent (D-STAR GPS): kept after
+  // the call, with whose it was and when
+  bool have_position;
+  double position_lat,position_lon;
+  char position_call[24];
+  int64_t position_time; // gps_time_ns of the last report
   bool notch_enable;         // Enable PL removal notch
   struct iir iir_left;       // State for PL removal filter
   struct iir iir_right;
@@ -161,6 +167,8 @@ extern int Dit_length;
 extern int Channels;
 extern char const *Init;
 extern char const *Source; // Only accept from this domain name
+extern bool Have_location;  // --location given: distances and bearings to positions heard
+extern double My_lat,My_lon; // that location (or a default, for sorting repeaters.d only)
 
 // Global variables that regularly change
 extern float const Tone_period; // PL tone integration period

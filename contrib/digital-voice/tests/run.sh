@@ -59,6 +59,10 @@ out/auto-call-test
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dstar-framing-test.cpp \
   $LIB -lcodec2 -lm -o out/dstar-framing-test
 out/dstar-framing-test
+c++ $FLAGS -std=c++17 -I$TOP dstar-gps-test.cpp -o out/dstar-gps-test
+out/dstar-gps-test
+cc $FLAGS -iquote ../../../src ../../../src/locator-test.c ../../../src/locator.c -lm -o out/locator-test
+out/locator-test
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream ysf-via-test.cpp \
   $LIB -lcodec2 -lm -o out/ysf-via-test
 out/ysf-via-test

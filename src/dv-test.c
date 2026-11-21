@@ -116,6 +116,19 @@ int main(void){
   call_ids(&st,DV_DMR,NULL,&chan,&c);
   check(strcmp(c.dest,"N0CALL") == 0,"a callsign destination unchanged");
 
+  // A decoder's position (D-STAR GPS) goes with the call
+  memset(&st,0,sizeof st);
+  strcpy(st.dst_call,"CQCQCQ");
+  strcpy(st.src_call,"KD2TYY");
+  st.has_position = true;
+  st.latitude = 42.8353;
+  st.longitude = -78.6075;
+  call_ids(&st,DV_DSTAR,NULL,&chan,&c);
+  check(c.has_position && c.lat == 42.8353 && c.lon == -78.6075,"a position goes with the call");
+  st.has_position = false;
+  call_ids(&st,DV_DSTAR,NULL,&chan,&c);
+  check(!c.has_position,"and none when the decoder has none");
+
   puts("Call queue tests passed");
   return EXIT_SUCCESS;
 }

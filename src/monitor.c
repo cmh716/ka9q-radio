@@ -30,6 +30,7 @@
 #include "morse.h"
 #include "status.h"
 #include "monitor.h"
+#include "locator.h"
 #include "sched.h"
 #include "database.h"
 #include "talkgroup.h"
@@ -105,6 +106,8 @@ PaTime Start_pa_time;
 _Atomic PaTime Last_callback_time;
 int64_t Last_error_time;
 sess_t Sessions[NSESSIONS];
+bool Have_location;
+double My_lat = 32.860455, My_lon = -117.188861; // the old built-in, until --location
 _Atomic bool Terminate;
 sess_t * _Atomic Best_session; // Session with highest SNR
 void *output_thread(void *p);
@@ -114,7 +117,7 @@ uint64_t Wait_timeout;
 uint64_t Waits;
 uint64_t Gap_waits;
 
-static char Optstring[] = "CI:P:LR:Sb:c:f:g:o:p:qr:su:vnV";
+static char Optstring[] = "CI:P:LR:Sb:c:f:g:l:o:p:qr:su:vnV";
 static struct  option Options[] = {
    {"center", no_argument, NULL, 'C'},
    {"input", required_argument, NULL, 'I'},
@@ -125,6 +128,7 @@ static struct  option Options[] = {
    {"channels", required_argument, NULL, 'c'},
    {"config", required_argument, NULL, 'f'},
    {"gain", required_argument, NULL, 'g'},
+   {"location", required_argument, NULL, 'l'},
    {"notch", no_argument, NULL, 'n'},
    {"source", required_argument, NULL, 'o'},
    {"pipe", required_argument, NULL, 'P'},
@@ -208,6 +212,14 @@ int main(int argc,char * const argv[]){
     Playout = config_getfloat(Configtable,Audio,"playout",Playout) / 1000.; // convert ms to sec
     Repeater_tail = config_getfloat(Configtable,Repeater,"tail",Repeater_tail);
     Verbose = config_getboolean(Configtable,Display,"verbose",Verbose);
+    char const *location = config_getstring(Configtable,Display,"location",NULL);
+    if(location != NULL){
+      if(!parse_location(location,&My_lat,&My_lon)){
+	fprintf(stderr,"location %s: give lat,lon (42.835,-78.607) or a locator (FN02qu)\n",location);
+	exit(EX_USAGE);
+      }
+      Have_location = true;
+    }
     char const *txon = config_getstring(Configtable,Radio,"txon",NULL);
     char const *txoff = config_getstring(Configtable,Radio,"txoff",NULL);
     if(txon)
@@ -258,6 +270,13 @@ int main(int argc,char * const argv[]){
       break;
     case 'u':
       Update_interval = atoi(optarg);
+      break;
+    case 'l':
+      if(!parse_location(optarg,&My_lat,&My_lon)){
+	fprintf(stderr,"--location %s: give lat,lon (42.835,-78.607) or a locator (FN02qu)\n",optarg);
+	exit(EX_USAGE);
+      }
+      Have_location = true;
       break;
     case 'v':
       Verbose = true;
@@ -351,12 +370,8 @@ int main(int argc,char * const argv[]){
   snd_lib_error_set_handler(alsa_error_handler);
 #endif
 #define REPEATERS "/var/lib/ka9q-radio/repeaters.d"
-  //static degree_t const Mylat = 39.337802;
-  static degree_t const Mylat =  32.860455;
-  static degree_t const Mylongit = -117.188861;
-  //static degree_t const Mylongit = -76.631600;
-
-  load_databases(REPEATERS,Mylat,Mylongit);
+  // Of repeaters.d's entries for one frequency and tone, the nearest is taken
+  load_databases(REPEATERS,My_lat,My_lon);
   load_talkgroups(TALKGROUPS); // optional
   // Callback continuously scans sessions, merging their audio
   // if active into the output stream
@@ -578,6 +593,14 @@ void *statproc(void *arg){
 	  sp->callsign[0] = sp->id[0] = '\0';
       } else if(sp->talkgroup_ended == 0)
 	sp->talkgroup_ended = gps_time_ns();
+    }
+    // A position (D-STAR GPS): remembered, whose and when, after the call
+    if(sp->chan.dv.call_has_position){
+      sp->have_position = true;
+      sp->position_lat = sp->chan.dv.call_lat;
+      sp->position_lon = sp->chan.dv.call_lon;
+      strlcpy(sp->position_call,sp->chan.dv.call_src,sizeof sp->position_call);
+      sp->position_time = gps_time_ns();
     }
     // Update SNR calculation (not sent explicitly)
     float const noise_bandwidth = fabsf(sp->chan.filter.max_IF - sp->chan.filter.min_IF);

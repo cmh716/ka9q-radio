@@ -46,6 +46,13 @@ A session does not appear in the list until it's active (audio is decoded).
 
 > audio gain, default 0 (no gain).
 
+**-l, --location**
+
+> where you are, as lat,lon (`42.835,-78.607`) or a locator (`FN02qu`); also
+> `location` in the `[display]` section of the config file. Positions heard
+> are then shown with their distance and bearing from here, and of the
+> repeaters.d entries for one frequency and tone the nearest is used.
+
 **-n, --notch**
 
 > enable CTCSS tone notching, default false. CTCSS/DCS detection and display work independently of this option.
@@ -152,6 +159,12 @@ repeater. Last is the time since the channel last sent audio (now, 4:07, 3h12,
 2d). Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
 followed frequency in Call.
 
+A D-STAR call that sends its position (D-PRS or NMEA GPS in the slow data)
+shows the sender's locator after their callsign in Call (CQCQCQ KD2TYY
+FN02qu).
+
 Larger terminals show caller, destination, timeslot, signal, and packet details
-for the selected channel. Smaller terminals use a compact table. Press `v` to
+for the selected channel, and the last position heard on it: the sender, the
+locator and latitude,longitude, the distance and bearing with --location, and
+how long ago once the call has ended. Smaller terminals use a compact table. Press `v` to
 switch between the dashboard and full diagnostics; `h` opens keyboard help.

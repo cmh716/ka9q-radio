@@ -307,6 +307,10 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
     case CALL_TIMESTAMP:
       fprintf(fp,"call timestamp %u",(unsigned)decode_int32(cp,optlen));
       break;
+    case CALL_LATITUDE:
+    case CALL_LONGITUDE:
+      fprintf(fp,"call %s %.5f",type == CALL_LATITUDE ? "latitude" : "longitude",decode_double(cp,optlen));
+      break;
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:

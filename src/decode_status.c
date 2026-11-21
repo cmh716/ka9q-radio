@@ -292,6 +292,14 @@ int decode_radio_status(struct frontend *frontend,chan_t *chan,uint8_t const *bu
       chan->dv.call_timestamp = decode_int32(cp,optlen);
       chan->dv.call_timestamp_valid = true;
       break;
+    case CALL_LATITUDE:
+      chan->dv.call_lat = decode_double(cp,optlen);
+      chan->dv.call_has_position = isfinite(chan->dv.call_lat) && isfinite(chan->dv.call_lon);
+      break;
+    case CALL_LONGITUDE: // sent after the latitude
+      chan->dv.call_lon = decode_double(cp,optlen);
+      chan->dv.call_has_position = isfinite(chan->dv.call_lat) && isfinite(chan->dv.call_lon);
+      break;
     case CALL_DEST:
     case CALL_SOURCE:
     case CALL_MODE:

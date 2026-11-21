@@ -32,6 +32,7 @@
 #include "monitor.h"
 #include "database.h"
 #include "timing.h"
+#include "locator.h"
 
 bool Auto_sort = false;
 int Update_interval = 100;  // Default time in ms between display updates
@@ -375,6 +376,15 @@ static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
     strlcat(out," ",size);
     strlcat(out,talker,size);
   }
+  // where they are (D-STAR GPS), as a locator
+  if(sp->chan.dv.call_has_position){
+    char grid[8];
+    latlon_to_locator(sp->chan.dv.call_lat,sp->chan.dv.call_lon,grid,sizeof grid);
+    if(grid[0] != '\0'){
+      strlcat(out," ",size);
+      strlcat(out,grid,size);
+    }
+  }
   // and what they've written (D-STAR's text message), if there's room
   if(sp->chan.dv.call_message[0] != '\0'){
     strlcat(out," ",size);
@@ -402,6 +412,36 @@ static void ui_fit(char *out,size_t size,char const *in,int width){
   for(; cols < width && o + 1 < size; cols++)
     out[o++] = ' ';
   out[o] = '\0';
+}
+
+// The last position a call on this channel sent: "Position: KD2TYY FN02qu
+// 42.83530,-78.60750 | 23 km 284 deg | now" (distance and bearing with
+// --location; the age once the call has gone)
+static void ui_position(sess_t const *sp,char *out,size_t size){
+  if(!sp->have_position){
+    strlcpy(out,"Position: -",size);
+    return;
+  }
+  char grid[8];
+  latlon_to_locator(sp->position_lat,sp->position_lon,grid,sizeof grid);
+  snprintf(out,size,"Position: %s%s%s %.5f,%.5f",sp->position_call,sp->position_call[0] ? " " : "",grid,
+           sp->position_lat,sp->position_lon);
+  if(Have_location){
+    double km,bearing;
+    distance_bearing(My_lat,My_lon,sp->position_lat,sp->position_lon,&km,&bearing);
+    char d[48];
+    snprintf(d,sizeof d," | %.*f km %.0f deg",km < 10 ? 1 : 0,km,bearing);
+    strlcat(out,d,size);
+  }
+  if(!sp->chan.dv.call_has_position){ // heard before: how long ago
+    int64_t const s = (gps_time_ns() - sp->position_time) / BILLION;
+    char ago[32];
+    if(s < 3600)
+      snprintf(ago,sizeof ago," | %d:%02d ago",(int)(s / 60),(int)(s % 60));
+    else
+      snprintf(ago,sizeof ago," | %dh%02d ago",(int)(s / 3600),(int)(s / 60 % 60));
+    strlcat(out,ago,size);
+  }
 }
 
 // How long since the channel last sent audio: "now", "4:07", "3h12", "2d"
@@ -442,7 +482,7 @@ static void dashboard(void){
   }
   bool const details = LINES >= 18;
   int const table_header = 4;
-  int const table_end = details ? LINES-8 : LINES-3;
+  int const table_end = details ? LINES-9 : LINES-3;
   Sessions_per_screen = max(1,table_end-table_header-1);
   Current = max(0,min(Current,count-1));
   First_session = max(0,min(First_session,max(0,count-Sessions_per_screen)));
@@ -547,6 +587,8 @@ static void dashboard(void){
                (unsigned long long)sp->drops,(unsigned long long)sp->lates,
                sp->dest != NULL ? sp->dest : "");
       ui_text(table_end+5,2,line,A_DIM,UI_FRAME);
+      ui_position(sp,line,sizeof line);
+      ui_text(table_end+6,2,line,sp->chan.dv.call_has_position ? A_NORMAL : A_DIM,UI_FRAME);
     }
     ui_rule(LINES-2,NULL);
   }

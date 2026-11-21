@@ -98,6 +98,11 @@ typedef struct {
   // D-STAR: the transmission's text message (slow data), "" until complete;
   // YSF: the way it came, "via UPLINK/DOWNLINK"
   char message[32];
+  // D-STAR: the sender's position (D-PRS or NMEA in the slow data), and the
+  // last GPS line received, checked or not (for diagnosis)
+  bool has_position;
+  double latitude, longitude; // degrees north, east
+  char gps_line[64];
 } dv_stats;
 
 // P25 control channel events

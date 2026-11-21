@@ -180,6 +180,8 @@ enum status_type {
   CALL_SYSTEM,    // Digital voice: the configured name of the radio system this channel is on ("" if none)
   CALL_ALIAS,     // Digital voice: the talker's alias (DMR talker alias), UTF-8, "" if none or not yet complete
   CALL_MESSAGE,   // Digital voice: the transmission's text: D-STAR text message, YSF "via" uplink/downlink; "" if none
+  CALL_LATITUDE,  // Digital voice: the sender's position (D-STAR GPS), degrees north; NaN if none
+  CALL_LONGITUDE, // Digital voice: the sender's position, degrees east; NaN if none (sent after CALL_LATITUDE)
 };
 
 /**

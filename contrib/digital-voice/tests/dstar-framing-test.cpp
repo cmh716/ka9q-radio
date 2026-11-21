@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 #include <array>
 #include <initializer_list>
@@ -113,6 +114,7 @@ struct dstar_framing_test {
 
     lock_loss();
     unowned_lock_loss();
+    gps();
 
     dstar_decoder header_block(nullptr, nullptr);
     slow_block(header_block, 0x55, "KD2TY");
@@ -221,6 +223,46 @@ struct dstar_framing_test {
     superframe(d, header_blocks("G4SPF"));
     check(std::strcmp(d.src_, "G4SPF") == 0, "relocked on a callsign", d.src_);
     check(reported(d).empty(), "the unowned text isn't that callsign's", reported(d).c_str());
+  }
+
+  // GPS blocks (type 0x3n, n characters): a D-PRS line through the
+  // decoder, the position its sender's
+  static void gps_line(dstar_decoder& d, std::string const& line) {
+    std::string const s = line + "\r";
+    for (size_t i = 0; i < s.size(); i += 5) {
+      int const n = static_cast<int>(std::min<size_t>(5, s.size() - i));
+      char five[6] = {};
+      std::memcpy(five, s.data() + i, n);
+      slow_block(d, static_cast<uint8_t>(0x30 | n), five);
+    }
+  }
+  static void gps() {
+    std::string const packet = "KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>";
+    std::string const with_cr = packet + "\r";
+    char line[128];
+    std::snprintf(line, sizeof line, "$$CRC%04X,%s", dstar_gps::crc(with_cr.data(), with_cr.size()), packet.c_str());
+    dstar_decoder d(nullptr, nullptr);
+    std::strcpy(d.src_, "KD2TYY");
+    gps_line(d, line);
+    dv_stats st;
+    d.get_stats(&st);
+    check(st.has_position && std::fabs(st.latitude - (42 + 50.12 / 60)) < 1e-6
+          && std::fabs(st.longitude + (78 + 36.45 / 60)) < 1e-6, "a D-PRS position through the GPS blocks");
+    check(std::strncmp(st.gps_line, "$$CRC", 5) == 0, "and its line, for diagnosis", st.gps_line);
+    std::strcpy(d.src_, "G4SPF");
+    d.get_stats(&st);
+    check(!st.has_position, "not shown with another callsign");
+    d.end_call();
+    std::strcpy(d.src_, "KD2TYY");
+    d.get_stats(&st);
+    check(!st.has_position, "the end of the transmission clears it");
+    dstar_decoder early(nullptr, nullptr);
+    gps_line(early, line);  // before the callsign
+    early.lose_lock();
+    std::strcpy(early.src_, "G4SPF");
+    early.adopt_message();
+    early.get_stats(&st);
+    check(!st.has_position, "a position with no known sender doesn't survive a lock loss");
   }
 
   // One 6-byte slow data block, as the two frames that carry it

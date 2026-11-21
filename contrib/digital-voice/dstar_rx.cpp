@@ -11,6 +11,7 @@
 #include <iterator>
 
 #include "dv_decoder.h"
+#include "dstar_gps.h"
 #include "dv_frontend.h"
 #include "upstream/gnuradio_mmse_taps.h"
 #include "upstream/mbelib.h"
@@ -186,6 +187,12 @@ public:
     // unknown or another's (after a relock), lest it go with another call
     if (src_[0] != '\0' && std::strcmp(src_, message_owner_) == 0)
       std::memcpy(stats->message, message_, sizeof message_);
+    if (gps_.valid() && src_[0] != '\0' && std::strcmp(src_, position_owner_) == 0) {
+      stats->has_position = true;
+      stats->latitude = gps_.latitude();
+      stats->longitude = gps_.longitude();
+    }
+    std::snprintf(stats->gps_line, sizeof stats->gps_line, "%s", gps_.last_line());
     stats->m17_can = -1;
   }
 
@@ -376,6 +383,11 @@ private:
       text_block(block_[0] & 0x0f, block_ + 1);
       return;
     }
+    if (type == 0x30) { // GPS: n characters of D-PRS or NMEA
+      if (gps_.feed(block_ + 1, n))
+        std::memcpy(position_owner_, src_, sizeof src_); // "" if not yet known
+      return;
+    }
     if (type != 0x50)
       return;
     for (int i = 0; i < n && header_.size() < 41; i++)
@@ -432,13 +444,18 @@ private:
   {
     if (message_[0] != '\0' && message_owner_[0] == '\0')
       std::memcpy(message_owner_, src_, sizeof src_);
+    if (gps_.valid() && position_owner_[0] == '\0')
+      std::memcpy(position_owner_, src_, sizeof src_);
   }
 
+  // The text message and the position: a transmission's, its sender's
   void clear_message()
   {
     text_have_ = 0;
     message_[0] = '\0';
     message_owner_[0] = '\0';
+    gps_.reset();
+    position_owner_[0] = '\0';
   }
 
   static void set_call(char out[12], uint8_t const *c)
@@ -519,8 +536,12 @@ private:
     block_len_ = 0;
     src_[0] = dst_[0] = '\0';
     text_have_ = 0; // a part-assembled message: its blocks may be stale by the relock
-    if (message_owner_[0] == '\0')
-      clear_message(); // whose it was isn't known: after the relock it could seem anyone's
+    if (message_owner_[0] == '\0') {
+      text_have_ = 0; // whose it was isn't known: after the relock it could seem anyone's
+      message_[0] = '\0';
+    }
+    if (position_owner_[0] == '\0')
+      gps_.reset();
   }
 
   static constexpr size_t kMaxGolayErrors = 6; // two Golay(24,12) words, 3 each
@@ -571,6 +592,8 @@ private:
   uint64_t superframes_ = 0;
   char message_[24]{};     // the message, once all four blocks are in
   char message_owner_[12]{}; // whose: src_ when it completed
+  dstar_gps gps_;          // the position, from the GPS blocks
+  char position_owner_[12]{}; // whose: src_ when it came
 
   // Vocoder
   p25p2_vf interleaver_;

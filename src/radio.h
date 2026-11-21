@@ -214,6 +214,8 @@ struct channel {
     char call_src[24];            // source unit ID or callsign
     char call_mode[8];            // "P25", "DMR", ...
     char call_alias[64];          // the talker's alias (DMR talker alias), UTF-8; display only, not an ID
+    bool call_has_position;       // the sender's position (D-STAR GPS): display only
+    double call_lat,call_lon;     // degrees north, east
     char call_message[32];        // the transmission's text: D-STAR text message, YSF "via" uplink/downlink; display only
     char system[32];              // the radio system this channel is on, as "system" in the config names it ("" if none)
     uint32_t call_id;             // changes with each call, 0 = none; published as its audio starts and ends

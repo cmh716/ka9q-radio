@@ -234,6 +234,8 @@ struct dv_call {
   char mode[sizeof ((chan_t *)0)->dv.call_mode];
   char alias[sizeof ((chan_t *)0)->dv.call_alias]; // the talker's, for display: not part of the call's identity
   char message[sizeof ((chan_t *)0)->dv.call_message]; // the transmission's text: display only, too
+  bool has_position;   // the sender's position (D-STAR GPS): display only
+  double lat,lon;
   uint32_t id;
   double freq;
   int slot;
@@ -257,6 +259,15 @@ struct dv_audio_queue {
   struct dv_follow const *follow;
   int absent; // samples without IDs, independent of the number of PCM frames
 };
+
+// " position=42.83530,-78.60750" for the -v log, or ""
+static char const *position_text(dv_stats const *st){
+  static __thread char buf[48];
+  if(!st->has_position)
+    return "";
+  snprintf(buf,sizeof buf," position=%.5f,%.5f",st->latitude,st->longitude);
+  return buf;
+}
 
 // DMR embedded LC FLCOs seen, for the -v log: "0,4,5" ("-" if none).
 // 0 group voice, 3 unit to unit, 4-7 talker alias, 8 GPS
@@ -326,6 +337,9 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
   strlcpy(call->src,st->src_call,sizeof call->src);
   strlcpy(call->alias,st->talker_alias,sizeof call->alias);
   strlcpy(call->message,st->message,sizeof call->message);
+  call->has_position = st->has_position;
+  call->lat = st->latitude;
+  call->lon = st->longitude;
   strlcpy(call->mode,dv_mode_name(m),sizeof call->mode);
 }
 
@@ -410,6 +424,14 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
 	fprintf(stderr,"%s call %u: %s says \"%s\"\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->message);
       strlcpy(cur->message,seen->message,sizeof cur->message);
     }
+    // The position likewise: the decoder's, as it is now
+    if(seen->has_position != cur->has_position || (seen->has_position && (seen->lat != cur->lat || seen->lon != cur->lon))){
+      if(Verbose > 1 && seen->has_position)
+	fprintf(stderr,"%s call %u: %s at %.5f,%.5f\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->lat,seen->lon);
+      cur->has_position = seen->has_position;
+      cur->lat = seen->lat;
+      cur->lon = seen->lon;
+    }
   }
 }
 
@@ -420,9 +442,14 @@ static void publish_call(chan_t *chan,struct dv_call const *call){
      && strcmp(call->src,chan->dv.call_src) == 0){
     // The same call. Its talker's alias may have come: show it, but it is
     // no change of call (no new timestamp for recorders to split at)
-    if(strcmp(call->alias,chan->dv.call_alias) != 0 || strcmp(call->message,chan->dv.call_message) != 0){
+    if(strcmp(call->alias,chan->dv.call_alias) != 0 || strcmp(call->message,chan->dv.call_message) != 0
+       || call->has_position != chan->dv.call_has_position
+       || (call->has_position && (call->lat != chan->dv.call_lat || call->lon != chan->dv.call_lon))){
       strlcpy(chan->dv.call_alias,call->alias,sizeof chan->dv.call_alias);
       strlcpy(chan->dv.call_message,call->message,sizeof chan->dv.call_message);
+      chan->dv.call_has_position = call->has_position;
+      chan->dv.call_lat = call->lat;
+      chan->dv.call_lon = call->lon;
       push_status(chan);
     }
     return;
@@ -434,6 +461,9 @@ static void publish_call(chan_t *chan,struct dv_call const *call){
   strlcpy(chan->dv.call_mode,call->mode,sizeof chan->dv.call_mode);
   strlcpy(chan->dv.call_alias,call->alias,sizeof chan->dv.call_alias);
   strlcpy(chan->dv.call_message,call->message,sizeof chan->dv.call_message);
+  chan->dv.call_has_position = call->has_position;
+  chan->dv.call_lat = call->lat;
+  chan->dv.call_lon = call->lon;
   chan->dv.call_id = call->id;
   chan->dv.call_freq = call->freq;
   chan->dv.call_slot = call->slot;
@@ -578,6 +608,7 @@ int demod_dv(void *arg){
   chan->p25.have_nac = false;
   chan->dv.source[0] = '\0';
   chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = chan->dv.call_alias[0] = chan->dv.call_message[0] = '\0';
+  chan->dv.call_has_position = false;
   chan->dv.call_id = 0;
   chan->dv.call_freq = chan->tune.freq;
   chan->dv.call_slot = -1;
@@ -731,11 +762,14 @@ int demod_dv(void *arg){
 		  stats.dst_call[0] ? stats.dst_call : "-",stats.freq_offset);
 	else if(is_ysf || is_dstar || is_nxdn)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
-		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s%s%s%s offset=%+.1f Hz\n",
+		  " voice=%" PRIu64 " muted=%" PRIu64 " src=%s dst=%s%s%s%s%s%s%s%s offset=%+.1f Hz\n",
 		  chan->name,label,stats.samples,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
 		  stats.message[0] ? " message=\"" : "",stats.message,stats.message[0] ? "\"" : "",
+		  position_text(&stats),
+		  stats.gps_line[0] ? " gps_line=\"" : "",stats.gps_line,  // the last, checked or not
+		  stats.gps_line[0] ? "\"" : "",
 		  stats.freq_offset);
 	else if(is_m17)
 	  fprintf(stderr,"%s M17 samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64

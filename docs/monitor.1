@@ -54,8 +54,14 @@ last sent audio: now, 4:07 (minutes and seconds), 3h12, 2d.
 Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
 followed frequency in Call.
 .P
+A D-STAR call that sends its position (D-PRS or NMEA GPS in the slow data)
+shows the sender's locator after their callsign in Call (CQCQCQ KD2TYY
+FN02qu).
+.P
 Larger terminals include selected-channel details: source, destination,
-timeslot, gain, SNR, and packet counters. Smaller terminals omit this panel
+timeslot, gain, SNR, and packet counters, and the last position heard on the
+channel: the sender, the locator and latitude,longitude, the distance and
+bearing with \-\-location, and how long ago once the call has ended. Smaller terminals omit this panel
 and reduce the table columns. Press v to switch to the full diagnostic table
 and h for keyboard help. Existing navigation and audio controls are unchanged.
 .SH OPTIONS
@@ -94,6 +100,12 @@ Set playback gain in dB. Default zero.
 .TP
 .B "\-p milliseconds, \-\-playout milliseconds"
 Set initial playout delay in milliseconds. Default 100.
+.TP
+.B "\-l location, \-\-location location"
+Where you are, as lat,lon (42.835,\-78.607) or a locator (FN02qu); also
+location in the [display] section of the configuration file. Positions heard
+are then shown with their distance and bearing from here, and of the
+repeaters.d entries for one frequency and tone the nearest is used.
 .TP
 .B "\-n, \-\-notch"
 Enable CTCSS tone notching. CTCSS/DCS detection and display are independent
