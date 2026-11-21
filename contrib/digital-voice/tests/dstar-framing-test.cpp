@@ -115,6 +115,7 @@ struct dstar_framing_test {
     lock_loss();
     unowned_lock_loss();
     gps();
+    callsign_fields();
 
     dstar_decoder header_block(nullptr, nullptr);
     slow_block(header_block, 0x55, "KD2TY");
@@ -263,6 +264,20 @@ struct dstar_framing_test {
     early.adopt_message();
     early.get_stats(&st);
     check(!st.has_position, "a position with no known sender doesn't survive a lock loss");
+  }
+
+  // Callsign fields lose their blanks at both ends: a right-justified
+  // repeater command reads the same, however padded
+  static void callsign_fields() {
+    char out[12];
+    dstar_decoder::set_call(out, reinterpret_cast<uint8_t const *>("       E"));
+    check(std::strcmp(out, "E") == 0, "the echo command, right-justified", out);
+    dstar_decoder::set_call(out, reinterpret_cast<uint8_t const *>("E       "));
+    check(std::strcmp(out, "E") == 0, "and left-justified: the same", out);
+    dstar_decoder::set_call(out, reinterpret_cast<uint8_t const *>("KD2TYY B"));
+    check(std::strcmp(out, "KD2TYY B") == 0, "a repeater's module keeps its inner space", out);
+    dstar_decoder::set_call(out, reinterpret_cast<uint8_t const *>("        "));
+    check(out[0] == '\0', "all blanks: none", out);
   }
 
   // One 6-byte slow data block, as the two frames that carry it

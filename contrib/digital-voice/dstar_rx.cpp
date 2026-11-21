@@ -458,11 +458,18 @@ private:
     position_owner_[0] = '\0';
   }
 
+  // An 8-character callsign field, without its blanks at either end: the
+  // repeater commands are right-justified ("       E", the echo test), and
+  // must read the same however a copy of the header pads them, or one
+  // transmission would seem several calls
   static void set_call(char out[12], uint8_t const *c)
   {
     int n = 0;
-    for (int i = 0; i < 8; i++)
-      out[n++] = (c[i] >= 0x20 && c[i] < 0x7f) ? static_cast<char>(c[i]) : ' ';
+    for (int i = 0; i < 8; i++) {
+      char const ch = (c[i] >= 0x20 && c[i] < 0x7f) ? static_cast<char>(c[i]) : ' ';
+      if (ch != ' ' || n > 0)
+        out[n++] = ch;
+    }
     while (n > 0 && out[n - 1] == ' ')
       n--;
     out[n] = '\0';
