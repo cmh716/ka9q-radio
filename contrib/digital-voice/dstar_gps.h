@@ -47,9 +47,11 @@ public:
 
   // One complete line; true if it gave a position. A report that lost its
   // end runs into the next, and a report's comment may hold what looks like
-  // the start of one, so every span from a start of a report ($$CRC, or an
-  // NMEA sentence's "$ttsss,") to a later start or the line's end is tried;
-  // the checksum decides. The latest report that passes is taken. Only the
+  // the start of one (or even a whole checksummed sentence), so each start
+  // of a report ($$CRC, or an NMEA sentence's "$ttsss,") is tried to each
+  // later start and to the line's end, the checksum deciding, the shortest
+  // span that passes first. A start inside a report that passed is part of
+  // it, not a report. Of the rest the latest that passed is taken. Only the
   // last kMaxStarts starts are tried, so that noise can't make it slow
   bool line(std::string const& s) {
     last_ = s;
@@ -62,14 +64,30 @@ public:
       }
       starts[n++] = at;
     }
-    for (size_t i = n; i-- > 0;) {
-      for (size_t j = i + 1; j <= n; j++) { // the shortest span first
+    struct { bool ok; size_t end; double lat, lon; } found[kMaxStarts] = {};
+    size_t covered_to = 0; // the end of the last report that passed
+    size_t best = kMaxStarts;
+    for (size_t i = 0; i < n; i++) {
+      if (starts[i] < covered_to)
+        continue; // inside a report
+      for (size_t j = i + 1; j <= n && !found[i].ok; j++) {
         size_t const end = j < n ? starts[j] : s.size();
-        if (report(s.substr(starts[i], end - starts[i])))
-          return true;
+        if (report(s.substr(starts[i], end - starts[i]), found[i].lat, found[i].lon)) {
+          found[i].ok = true;
+          found[i].end = end;
+        }
+      }
+      if (found[i].ok) {
+        covered_to = found[i].end;
+        best = i;
       }
     }
-    return false;
+    if (best == kMaxStarts)
+      return false;
+    lat_ = found[best].lat;
+    lon_ = found[best].lon;
+    valid_ = true;
+    return true;
   }
 
   static constexpr size_t kMaxLine = 1024;   // a few reports run together
@@ -106,8 +124,8 @@ public:
     return std::string::npos;
   }
 
-  bool report(std::string const& s) {
-    double lat, lon;
+  // One report, the whole of s: its position, if it passes
+  bool report(std::string const& s, double& lat, double& lon) {
     bool ok = false;
     // NMEA says whether it has a fix; D-PRS doesn't, and a radio without one
     // may send zeros: there 0, 0 isn't taken
@@ -115,12 +133,7 @@ public:
       ok = dprs(s, lat, lon) && !(lat == 0 && lon == 0);
     else if (s.size() > 6 && s[0] == '$')
       ok = nmea(s, lat, lon);
-    if (!ok || !(std::fabs(lat) <= 90) || !(std::fabs(lon) <= 180))
-      return false;
-    lat_ = lat;
-    lon_ = lon;
-    valid_ = true;
-    return true;
+    return ok && std::fabs(lat) <= 90 && std::fabs(lon) <= 180;
   }
 
   // The D-STAR CRC (CRC-CCITT reflected, 0x8408, init 0xffff, inverted)

@@ -123,6 +123,14 @@ int main() {
       all = all && h.valid() && near(h.latitude(), 42 + 51.0 / 60);
     }
     check(all, "past the buffer, wherever its boundary falls in the last report's start");
+    // Codex's case: a D-PRS report for 42.5 N whose comment holds a valid
+    // NMEA sentence for 49 N: the packet's own position is taken
+    std::string const inner = nmea("GPRMC,123519,A,4900.0000,N,07836.4567,W,0,0,211126,,,A");
+    std::string const outer = dprs("KD2TYY>API705,DSTAR*:!4230.00N/07836.45W>see " + inner + " here");
+    check(position(outer, 42.5, plon), "a checksummed sentence in a D-PRS comment doesn't override its position");
+    std::string const after = dprs("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>after");
+    check(position(outer.substr(0, outer.size() - 4) + after, 42 + 51.0 / 60, plon) ,
+          "that report cut short, then another: the other (the quoted sentence isn't taken)");
     dstar_gps noise;
     std::string const junk(600, 'z');
     deliver(noise, junk + dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>"));
