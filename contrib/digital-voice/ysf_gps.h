@@ -38,11 +38,24 @@ public:
   void superframe() { have_ = 0; }
 
   // A V/D mode 2 data channel frame fn of ft (the superframe's last), its
-  // 10 bytes; true if it completed a message with a position
-  bool frame(int fn, int ft, uint8_t const data[10]) {
-    if (fn == 6 || fn == 7) {
-      std::memcpy(buf_ + 10 * (fn - 6), data, 10);
-      have_ |= 1u << (fn - 6);
+  // 10 bytes, and where it came in the received stream (at: the symbol
+  // count, gaps included); true if it completed a message with a position.
+  // Frame 7 is joined only to the frame 6 just before it, a frame (480
+  // symbols, give or take a timing slip) earlier: with frames missed
+  // between, they may be two superframes'
+  static constexpr uint64_t kFrameSymbols = 480, kSlip = 8;
+  bool frame(int fn, int ft, uint8_t const data[10], uint64_t at) {
+    if (fn == 6) {
+      std::memcpy(buf_, data, 10);
+      have_ = 1;
+      at6_ = at;
+    } else if (fn == 7) {
+      if ((have_ & 1) && at >= at6_ + kFrameSymbols - kSlip && at <= at6_ + kFrameSymbols + kSlip) {
+        std::memcpy(buf_ + 10, data, 10);
+        have_ |= 2;
+      } else {
+        have_ = 0;
+      }
     }
     if (fn != ft || fn < 6 || !(have_ & 1))
       return false;
@@ -68,9 +81,10 @@ public:
   // One assembled message of n bytes: its position, if it passes
   static bool decode(uint8_t const *b, int n, double& lat, double& lon) {
     // The end marker with the sum of all before it after it: the last that
-    // has one (a 03 may also be data)
+    // has one (a 03 may also be data). It must follow the position (bytes
+    // 0-13), so that the sum covers it
     bool summed = false;
-    for (int i = n - 2; i >= 1 && !summed; i--) {
+    for (int i = n - 2; i >= 14 && !summed; i--) {
       if (b[i] != 0x03)
         continue;
       uint8_t sum = 0;
@@ -144,6 +158,7 @@ public:
 private:
   uint8_t buf_[20]{};
   unsigned have_ = 0;  // bit 0: frame 6 in, bit 1: frame 7
+  uint64_t at6_ = 0;   // where frame 6 came
   bool valid_ = false;
   double lat_ = 0, lon_ = 0;
   char hex_[64] = "";

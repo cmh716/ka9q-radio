@@ -47,8 +47,8 @@ struct ysf_via_test {
     ysf_decoder d(nullptr, nullptr);
     std::strcpy(d.src_, "MM3TWA");
     d.gps_.superframe();
-    d.gps_.frame(6, 7, m);
-    if (d.gps_.frame(7, 7, m + 10))
+    d.gps_.frame(6, 7, m, 4800);
+    if (d.gps_.frame(7, 7, m + 10, 5280))
       std::memcpy(d.position_owner_, d.src_, sizeof d.src_);
     dv_stats st;
     d.get_stats(&st);
@@ -64,6 +64,22 @@ struct ysf_via_test {
     d.get_stats(&st);
     ok = !st.has_position;
     std::printf("%s cleared at the call's end\n", ok ? "ok  " : "FAIL");
+    failures += !ok;
+
+    // A fix before any callsign: the first callsign's, once, not each one's
+    ysf_decoder e(nullptr, nullptr);
+    e.gps_.frame(6, 7, m, 4800);
+    e.gps_.frame(7, 7, m + 10, 5280);
+    e.get_stats(&st);
+    ok = !st.has_position;
+    char first[11] = "MM3TWA    ", second[11] = "G4SPF     ";
+    e.store_field(1, first);
+    e.get_stats(&st);
+    ok = ok && st.has_position;
+    e.store_field(1, second);
+    e.get_stats(&st);
+    ok = ok && !st.has_position;
+    std::printf("%s a fix before the callsign goes to the first callsign only\n", ok ? "ok  " : "FAIL");
     failures += !ok;
   }
   static void destination(char const *field, char const *want) {

@@ -39,8 +39,8 @@ static bool fed(msg const& m, double lat, double lon, ysf_gps* keep = nullptr) {
   ysf_gps local;
   ysf_gps& g = keep ? *keep : local;
   g.superframe();
-  g.frame(6, 7, m.b);
-  bool const got = g.frame(7, 7, m.b + 10);
+  g.frame(6, 7, m.b, 4800);
+  bool const got = g.frame(7, 7, m.b + 10, 4800 + 480);
   return got && std::fabs(g.latitude() - lat) < 1e-6 && std::fabs(g.longitude() - lon) < 1e-6;
 }
 
@@ -67,11 +67,24 @@ int main() {
     ysf_gps g;
     msg m = encode(42, 50, 12, true, 78, 36, 45, true);
     g.superframe();
-    check(!g.frame(7, 7, m.b + 10), "frame 7 without 6: nothing");
+    check(!g.frame(7, 7, m.b + 10, 480), "frame 7 without 6: nothing");
     g.superframe();
-    g.frame(6, 7, m.b);
+    g.frame(6, 7, m.b, 4800);
     g.superframe(); // a new superframe: frame 6 is the last one's
-    check(!g.frame(7, 7, m.b + 10), "frame 6 of the last superframe isn't joined to this one's 7");
+    check(!g.frame(7, 7, m.b + 10, 5280), "frame 6 of the last superframe isn't joined to this one's 7");
+    // Frames missed between them, frame 0 too: a superframe (8 frames) later
+    g.frame(6, 7, m.b, 4800);
+    check(!g.frame(7, 7, m.b + 10, 4800 + 9 * 480), "frame 7 a superframe after frame 6 (frames missed): not joined");
+    g.frame(6, 7, m.b, 4800);
+    check(g.frame(7, 7, m.b + 10, 4800 + 483), "frame 7 just after 6, with a timing slip: joined");
+  }
+  {
+    // The end marker must follow the position, so that the sum covers it
+    msg early = encode(42, 50, 12, true, 78, 36, 45, true);
+    early.b[3] = 0x03;
+    early.b[4] = static_cast<uint8_t>(early.b[0] + early.b[1] + early.b[2] + early.b[3]);
+    early.b[18] = 0x00; // no marker after the position
+    check(!fed(early, 0, 0), "a summed end marker before the position: refused");
   }
   {
     ysf_gps g;

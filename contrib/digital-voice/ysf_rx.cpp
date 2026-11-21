@@ -25,6 +25,7 @@
 namespace {
 
 constexpr int kFrameDibits = 480;   // 100 ms: sync 20, FICH 100, five 72-dibit voice/data blocks
+static_assert(kFrameDibits == ysf_gps::kFrameSymbols, "ysf_gps times frames by it");
 constexpr int kSyncDibits = 20;
 constexpr int kExpiration = 960;    // dibits without a sync before giving up (two frames)
 // Fusion deviation isn't pinned down here: OP25's transmitter uses DMR's
@@ -143,8 +144,7 @@ public:
     std::memcpy(stats->dst_call, dst_, sizeof dst_);
     via(stats->message, sizeof stats->message);
     // The position is its sender's, as with D-STAR
-    if (gps_.valid() && src_[0] != '\0'
-        && (std::strcmp(src_, position_owner_) == 0 || position_owner_[0] == '\0')) {
+    if (gps_.valid() && src_[0] != '\0' && std::strcmp(src_, position_owner_) == 0) {
       stats->has_position = true;
       stats->latitude = gps_.latitude();
       stats->longitude = gps_.longitude();
@@ -231,6 +231,9 @@ private:
       std::strcpy(call, "ALL");
     char *const field[4] = {dst_, src_, down_, up_};
     std::strncpy(field[fn], call, sizeof src_ - 1);
+    // A position that came before any callsign is the first one's, once
+    if (fn == 1 && gps_.valid() && position_owner_[0] == '\0')
+      std::memcpy(position_owner_, src_, sizeof src_);
   }
 
   // The way the call came: "via UPLINK/DOWNLINK" (the repeater or node it
@@ -282,8 +285,8 @@ private:
       if (ysf_decode_dch_vd2(&viterbi_, dch, call)) {
         if (fn <= 3)
           store_field(fn, call);
-        else if (gps_.frame(fn, ft, reinterpret_cast<uint8_t const *>(call)))
-          std::memcpy(position_owner_, src_, sizeof src_); // whose: "" if not yet known
+        else if (gps_.frame(fn, ft, reinterpret_cast<uint8_t const *>(call), symbols_))
+          std::memcpy(position_owner_, src_, sizeof src_); // whose: "" if not yet known (store_field binds it)
       }
     }
 
