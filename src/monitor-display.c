@@ -398,10 +398,18 @@ static int ui_call(sess_t const *sp,int64_t now,bool brief,char *out,size_t size
     ui_call_text(&sp->chan.dv,sp->chan.tune.freq,brief,out,size);
     return 0;
   }
-  if(sp->held_ended != 0 && now - sp->held_ended < Call_hold){
-    ui_call_text(&sp->held_call,sp->held_tune_freq,brief,out,size);
+  // The held call as the status thread last left it: copied whole under the
+  // mutex it writes it under (the dashboard draws without it), so that one
+  // call's fields aren't mixed with the next's
+  pthread_mutex_lock(&Sess_mutex);
+  dv_t const held = sp->held_call;
+  double const held_tune = sp->held_tune_freq;
+  int64_t const ended = sp->held_live ? 0 : sp->held_ended;
+  pthread_mutex_unlock(&Sess_mutex);
+  if(ended != 0 && now - ended < Call_hold){
+    ui_call_text(&held,held_tune,brief,out,size);
     if(out[0] != '\0')
-      return now - sp->held_ended < 30 * (int64_t)BILLION ? 1 : 2;
+      return now - ended < 30 * (int64_t)BILLION ? 1 : 2;
   }
   out[0] = '\0';
   char const *s = sp->chan.dv.source;
