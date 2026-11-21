@@ -120,6 +120,8 @@ static int64_t const AGC_TICK = BILLION / 10;      // the AGC looks every 100 ms
 static int64_t const AGC_SETTLE = BILLION / 5;     // after a cut, before another
 static int64_t const AGC_RAISE_EVERY = 5 * (int64_t)BILLION; // between steps up
 static int64_t const OVERLOAD_REPORT = 60 * (int64_t)BILLION;
+static int const AGC_RETRIES = 10;                  // failed gain changes, a tick apart, before
+static int64_t const AGC_RETRY_EVERY = 5 * (int64_t)BILLION; // trying only this often
 static int const FOBOS_BUFFER_COUNT = 16;    // the library's sample buffers
 static int const FOBOS_BUFFER_LENGTH = 65536;
 
@@ -130,7 +132,7 @@ static void rx_callback(float * restrict buf, unsigned buf_length, void * restri
 #endif
 static void *fobos_monitor(void *p);
 static void *fobos_agc(void *p);
-static void set_stages(struct sdrstate *sdr,int lna,int vga);
+static bool set_stages(struct sdrstate *sdr,int lna,int vga);
 static int lna_dB(int lna);
 
 static int find_serial_position(const char *serials, const char *serialnumcfg) {
@@ -427,19 +429,33 @@ static int lna_dB(int lna){
 }
 
 // Set the MAX2830's LNA (0-3) and VGA (0-31, 2 dB steps), with gain_lock
-// held. The A/D scaling follows so that levels in dBm stay right
-static void set_stages(struct sdrstate *sdr,int lna,int vga){
+// held; a stage already so isn't written. The A/D scaling follows so that
+// levels in dBm stay right. False if a write failed (that stage is as it was)
+static bool set_stages(struct sdrstate *sdr,int lna,int vga){
   struct frontend * const frontend = sdr->frontend;
-  int result = fobos_rx_set_lna_gain(sdr->dev, lna);
-  if (result != FOBOS_ERR_OK)
-    fprintf(stderr, "fobos_rx_set_lna_gain(%d): %s\n",lna, fobos_rx_error_name(result));
-  else
-    sdr->lna_gain = lna;
-  result = fobos_rx_set_vga_gain(sdr->dev, vga);
-  if (result != FOBOS_ERR_OK)
-    fprintf(stderr, "fobos_rx_set_vga_gain(%d): %s\n",vga, fobos_rx_error_name(result));
-  else
-    sdr->vga_gain = vga;
+  bool ok = true, changed = false;
+  if(lna != sdr->lna_gain){
+    int const result = fobos_rx_set_lna_gain(sdr->dev, lna);
+    if (result != FOBOS_ERR_OK){
+      fprintf(stderr, "fobos_rx_set_lna_gain(%d): %s\n",lna, fobos_rx_error_name(result));
+      ok = false;
+    } else {
+      sdr->lna_gain = lna;
+      changed = true;
+    }
+  }
+  if(vga != sdr->vga_gain){
+    int const result = fobos_rx_set_vga_gain(sdr->dev, vga);
+    if (result != FOBOS_ERR_OK){
+      fprintf(stderr, "fobos_rx_set_vga_gain(%d): %s\n",vga, fobos_rx_error_name(result));
+      ok = false;
+    } else {
+      sdr->vga_gain = vga;
+      changed = true;
+    }
+  }
+  if(!changed)
+    return ok; // the gain is as it was: so are the scaling and the clip cutoff
   frontend->rf_gain = 2 * sdr->vga_gain + lna_dB(sdr->lna_gain);
   atomic_store_explicit(&sdr->scale, scale_AD(frontend), memory_order_relaxed);
   // Samples up to those now in the library's buffers (and one more buffer,
@@ -447,6 +463,7 @@ static void set_stages(struct sdrstate *sdr,int lna,int vga){
   pthread_mutex_lock(&sdr->clip_lock);
   sdr->fresh_from = atomic_load(&sdr->samples_in) + (uint64_t)(FOBOS_BUFFER_COUNT + 1) * FOBOS_BUFFER_LENGTH;
   pthread_mutex_unlock(&sdr->clip_lock);
+  return ok;
 }
 
 // A gain command: turns the AGC off, and sets the total gain LNA first (the
@@ -494,6 +511,8 @@ static void *fobos_agc(void *p){
   uint64_t report_clips = 0;
   int64_t now = gps_time_ns();
   int64_t report_time = now, last_change = now - AGC_SETTLE, quiet_since = now;
+  int failures = 0;      // gain changes the device refused in a row
+  int64_t last_failure = 0;
   enum state s;
   while((s = atomic_load(&sdr->state)) == RUNNING || s == STARTING){
     struct timespec const tick = {.tv_sec = 0, .tv_nsec = AGC_TICK};
@@ -543,14 +562,26 @@ static void *fobos_agc(void *p){
     }
     if(new_vga == old_vga)
       continue;
+    if(failures >= AGC_RETRIES && now - last_failure < AGC_RETRY_EVERY)
+      continue; // the device keeps refusing: try again less often
     pthread_mutex_lock(&sdr->gain_lock);
     bool const still = frontend->rf_agc; // a gain command may just have turned it off
-    if(still)
-      set_stages(sdr,sdr->agc_lna,new_vga);
+    bool const ok = still && set_stages(sdr,sdr->agc_lna,new_vga);
     float const set = frontend->rf_gain;
     pthread_mutex_unlock(&sdr->gain_lock);
     if(!still)
       continue;
+    if(!ok){
+      // Not changed: the overloads stay pending, and the next tick tries again
+      last_failure = now;
+      if(++failures == AGC_RETRIES)
+	fprintf(stderr,"fobos AGC: %d gain changes failed in a row, now trying every %.0f s\n",
+		failures,(double)AGC_RETRY_EVERY / BILLION);
+      continue;
+    }
+    if(failures >= AGC_RETRIES)
+      fprintf(stderr,"fobos AGC: gain change worked again after %d failures\n",failures);
+    failures = 0;
     last_change = now;
     // What the callback counts from here on is at the new gain
     pthread_mutex_lock(&sdr->clip_lock);
