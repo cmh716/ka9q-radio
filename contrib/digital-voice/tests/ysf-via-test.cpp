@@ -111,6 +111,13 @@ struct ysf_via_test {
     ok = fresh.call_serial_ == 0;
     std::printf("%s a header with no call before it ends none\n", ok ? "ok  " : "FAIL");
     failures += !ok;
+    ysf_decoder route(nullptr, nullptr); // only the route was decoded
+    std::strcpy(route.up_, "W1AW");
+    route.boundary(true, kFiHeader);
+    route.get_stats(&st);
+    ok = st.message[0] == '\0' && route.call_serial_ == 1;
+    std::printf("%s a route alone doesn't carry past a checked header (it ends that transmission)\n", ok ? "ok  " : "FAIL");
+    failures += !ok;
   }
   static void destination(char const *field, char const *want) {
     ysf_decoder d(nullptr, nullptr);

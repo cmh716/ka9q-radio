@@ -230,9 +230,11 @@ private:
       end_call();
       return true;
     }
-    if (fich_ok && fi == kFiHeader && (src_[0] != '\0' || dst_[0] != '\0' || gps_.valid())) {
-      call_serial_++;
-      new_transmission();
+    if (fich_ok && fi == kFiHeader) {
+      // A transmission was under way if anything of one is known: it ends
+      if (src_[0] != '\0' || dst_[0] != '\0' || down_[0] != '\0' || up_[0] != '\0' || gps_.valid())
+        call_serial_++;
+      new_transmission(); // always: nothing of the last carries into this one
     }
     return false;
   }
