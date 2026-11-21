@@ -91,13 +91,38 @@ int main() {
     check(a.size() > 100 && a.size() + b.size() > 256, "two reports longer together than the line's limit");
     dstar_gps g;
     std::string const joined = a + b + "\r"; // no line end after the first
-    bool got_first = false;
-    for (size_t i = 0; i < joined.size(); i += 5) {
+    for (size_t i = 0; i < joined.size(); i += 5)
       g.feed(reinterpret_cast<uint8_t const *>(joined.data() + i), static_cast<int>(std::min<size_t>(5, joined.size() - i)));
-      got_first = got_first || (g.valid() && near(g.latitude(), plat));
+    check(g.valid() && near(g.latitude(), 42 + 51.0 / 60), "the second (the latest) is taken");
+    // Codex's cases: a 255-byte report then another; and a "$$CRC" in the
+    // second of two run-together reports' comment
+    auto sized = [](std::string const& head, size_t total, char fill) { // a report of total bytes
+      return dprs(head + std::string(total - dprs(head).size(), fill));
+    };
+    std::string const long1 = sized("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>", 255, 'y');
+    check(long1.size() == 255, "a 255-byte report");
+    std::string const next = dprs("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>next");
+    check(position(long1 + next, 42 + 51.0 / 60, plon), "a 255-byte report, then another without a line end");
+    std::string const r142 = sized("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>", 142, 'p');
+    std::string const r158 = sized("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>see $$CRC1234,x", 158, 'q');
+    check(r142.size() == 142 && r158.size() == 158, "142- and 158-byte reports");
+    check(position(r142 + r158, 42 + 51.0 / 60, plon), "and run together, the second with \"$$CRC\" in its comment");
+    // Five reports run together past the buffer, its boundary slid across
+    // the last one's "$$CRC": the last is taken wherever the boundary falls
+    bool all = true;
+    for (int shift = 0; shift < 10; shift++) {
+      // The last report starts at 1018 ... 1027: the 1024th character is
+      // each of its "$$CRC" in turn, and just before and after
+      std::string run;
+      for (int k = 0; k < 3; k++)
+        run += sized("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>", 255, 'r');
+      run += sized("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>", 1018 + shift - 765, 'r');
+      std::string const last = dprs("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>last");
+      dstar_gps h;
+      deliver(h, run + last);
+      all = all && h.valid() && near(h.latitude(), 42 + 51.0 / 60);
     }
-    check(got_first, "the first of them, once the line fills");
-    check(g.valid() && near(g.latitude(), 42 + 51.0 / 60), "and the second, at its line end");
+    check(all, "past the buffer, wherever its boundary falls in the last report's start");
     dstar_gps noise;
     std::string const junk(600, 'z');
     deliver(noise, junk + dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>"));

@@ -46,31 +46,48 @@ public:
   }
 
   // One complete line; true if it gave a position. A report that lost its
-  // end runs into the next: if the whole line fails, try again from each
-  // later start of a report ($$CRC, or an NMEA sentence's $ttsss,)
+  // end runs into the next, and a report's comment may hold what looks like
+  // the start of one, so every span from a start of a report ($$CRC, or an
+  // NMEA sentence's "$ttsss,") to a later start or the line's end is tried;
+  // the checksum decides. The latest report that passes is taken. Only the
+  // last kMaxStarts starts are tried, so that noise can't make it slow
   bool line(std::string const& s) {
     last_ = s;
-    for (size_t at = 0; at != std::string::npos; at = next_start(s, at + 1))
-      if (report(s.substr(at)))
-        return true;
+    size_t starts[kMaxStarts];
+    size_t n = 0;
+    for (size_t at = s.empty() || s[0] != '$' ? next_start(s, 0) : 0; at != std::string::npos; at = next_start(s, at + 1)) {
+      if (n == kMaxStarts) {
+        std::memmove(starts, starts + 1, (kMaxStarts - 1) * sizeof starts[0]);
+        n--;
+      }
+      starts[n++] = at;
+    }
+    for (size_t i = n; i-- > 0;) {
+      for (size_t j = i + 1; j <= n; j++) { // the shortest span first
+        size_t const end = j < n ? starts[j] : s.size();
+        if (report(s.substr(starts[i], end - starts[i])))
+          return true;
+      }
+    }
     return false;
   }
 
-  static constexpr size_t kMaxLine = 256; // longer than any one report
+  static constexpr size_t kMaxLine = 1024;   // a few reports run together
+  static constexpr size_t kMaxReport = 256;  // longer than any one report
+  static constexpr size_t kMaxStarts = 16;
 
-  // The line is full without an end: reports have run together. What comes
-  // before the latest start of a report is tried as a line of its own; the
-  // collection goes on from that start. With no start in it, it's noise
+  // The line is full without an end: reports have run together. It is tried
+  // as a line, and the collection goes on with its last kMaxReport
+  // characters from their first '$': a report being received started there
+  // or later, so it is kept whole, a prefix just begun included
   bool overflow() {
-    size_t last = std::string::npos;
-    for (size_t at = next_start(line_, 1); at != std::string::npos; at = next_start(line_, at + 1))
-      last = at;
-    if (last == std::string::npos) {
-      line_.clear();
-      return false;
-    }
-    bool const got = line(line_.substr(0, last));
-    line_.erase(0, last);
+    bool const got = line(line_);
+    line_.erase(0, line_.size() - kMaxReport);
+    size_t const dollar = line_.find('$');
+    if (dollar == std::string::npos)
+      line_.clear(); // noise
+    else
+      line_.erase(0, dollar);
     return got;
   }
 
