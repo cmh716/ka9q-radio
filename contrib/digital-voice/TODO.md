@@ -9,10 +9,11 @@ for DMR, D-STAR and YSF.
 
 ## Next, in order
 
-1. [ ] **YSF GPS, live** (`ysf_gps.h`, V/D mode 2 frames 6 and 7, the
-   layout YSFGateway reads): a Yaesu radio with GPS on a YSF room. Look for
-   `position=` and `gps_line="00 22 62 ..."` in the -v log. Everything is
-   unit-tested only.
+1. [x] **YSF GPS, live** (`ysf_gps.h`, V/D mode 2 frames 6 and 7, the
+   layout YSFGateway reads): confirmed 2026-11-22 through the hotspot,
+   M9PZL's FT-991A (52.06683, 1.14217, Suffolk) and HB9ETH (47.33383,
+   8.11167, Aargau). Many radios send the no-position form (22 61), most
+   with radio type 0x2b (not in YSFGateway's table; perhaps an FT-70D).
 2. [ ] **DMR GPS**, if it can be tested: in all the logs so far no DMR call
    carried embedded GPS (no FLCO 8 in `lc=`); DMR radios send position as
    data (LRRP), which Brandmeister handles itself.

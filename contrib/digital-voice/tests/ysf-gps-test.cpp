@@ -61,6 +61,18 @@ int main() {
   check(fed(encode(1, 17, 0, false, 103, 51, 99, false), -(1 + 17.0 / 60), 103 + 51.99 / 60), "longitude 100-109");
   check(fed(encode(89, 59, 99, true, 179, 59, 99, true), 89 + 59.99 / 60, -(179 + 59.99 / 60)), "the extremes");
   {
+    // A live message, as received (M9PZL's FT-991A, 2026-11-22): 52.06683 N, 1.14217 E
+    msg live{{0x08, 0x22, 0x62, 0x5f, 0x27, 0x55, 0x32, 0x50, 0x54, 0x50, 0x31, 0x77, 0x60, 0x51, 0x6c, 0x20, 0x1c, 0x20, 0x03, 0xb1}};
+    ysf_gps g;
+    check(fed(live, 52 + 4.01 / 60, 1 + 8.53 / 60, &g) && std::strcmp(g.radio(), "FT-991A") == 0,
+          "a live message (M9PZL, FT-991A): 52.06683 N, 1.14217 E");
+    // and the no-position form many radios send (22 61): refused, no position
+    msg none{{0x01, 0x22, 0x61, 0x5f, 0x2b, 0x03, 0x11}};
+    ysf_gps h;
+    h.superframe();
+    check(!h.frame(6, 6, none.b, 4800) && !h.valid(), "a live no-position message (22 61): no position");
+  }
+  {
     ysf_gps g;
     fed(encode(42, 50, 12, true, 78, 36, 45, true), 0, 0, &g);
     check(std::strcmp(g.radio(), "FT-3D") == 0, "the radio's model");
