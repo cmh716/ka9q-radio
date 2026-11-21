@@ -56,7 +56,8 @@ public:
   // it, not a report. Of the rest the latest that passed is taken. Only the
   // last kMaxStarts starts are tried, so that noise can't make it slow
   bool line(std::string const& s) {
-    last_ = s;
+    // Unchecked: no report in it passed (yet). Cut, and marked so, to fit a report's room
+    last_ = s.size() <= kMaxReport ? s : s.substr(0, kMaxReport - 3) + "...";
     size_t starts[kMaxStarts];
     size_t n = 0;
     for (size_t at = s.empty() || s[0] != '$' ? next_start(s, 0) : 0; at != std::string::npos; at = next_start(s, at + 1)) {
@@ -129,6 +130,8 @@ public:
 
   // One report, the whole of s: its position, if it passes
   bool report(std::string const& s, double& lat, double& lon) {
+    if (s.size() > kMaxReport)
+      return false; // no report is so long
     bool ok = false;
     // NMEA says whether it has a fix; D-PRS doesn't, and a radio without one
     // may send zeros: there 0, 0 isn't taken
@@ -229,8 +232,8 @@ private:
   // NMEA RMC (status A) or GGA (fix quality > 0), checksum required
   static bool nmea(std::string const& s, double& lat, double& lon) {
     size_t const star = s.rfind('*');
-    if (star == std::string::npos || star + 3 > s.size())
-      return false;
+    if (star == std::string::npos || star + 3 != s.size())
+      return false; // the checksum ends the sentence: nothing unchecked after it
     unsigned sum = 0;
     for (size_t i = 1; i < star; i++)
       sum ^= static_cast<uint8_t>(s[i]);

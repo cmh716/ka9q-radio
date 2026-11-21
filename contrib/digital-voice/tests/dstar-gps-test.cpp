@@ -59,6 +59,14 @@ int main() {
   bad[10] = '9';
   check(none(bad), "NMEA with a wrong checksum");
   check(none("$GPRMC,123519,A,4250.1234,N,07836.4567,W,0,0,211126,,,A"), "NMEA without a checksum");
+  check(none(nmea("GPRMC,123519,A,4250.1234,N,07836.4567,W,0,0,211126,,,A") + "junk"), "NMEA with bytes after its checksum");
+  check(none(dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>" + std::string(300, 'z'))), "a D-PRS report longer than any (300 characters)");
+  {
+    dstar_gps g;
+    deliver(g, "$GPRMC," + std::string(400, 'x'));
+    std::string const l = g.last_line();
+    check(l.size() == dstar_gps::kMaxReport && l.compare(l.size() - 3, 3, "...") == 0, "an unchecked long line: cut, and marked");
+  }
 
   double const plat = 42 + 50.12 / 60, plon = -(78 + 36.45 / 60);
   std::string const packet = "KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>IC-705";
