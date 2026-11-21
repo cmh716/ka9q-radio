@@ -95,3 +95,60 @@ Integer, default 0. If 0 or 1 -> 0 dB; 2 -> +16 dB; 3 -> +33 dB (disregarded in 
 ### vga_gain (optional)
 
 Integer, default 0. 0 to +62 dB in 2 dB steps (disregarded in direct sample mode).
+
+The total gain is the LNA's plus the VGA's: `lna_gain = 2` and `vga_gain = 2` is
+20 dB. Too much gain overloads the A/D, which puts spurs and noise on every
+channel in the passband. radiod counts A/D samples at full scale (the A/D
+overrange count in status, as `control` shows it) and, when there are any,
+logs how many once a minute.
+
+### agc (optional)
+
+Boolean, default false (ignored in direct sample mode). Protects the A/D from
+overload: when samples reach full scale, or the level goes above
+`agc-high-threshold`, the gain comes down at once, at least 6 dB and enough to
+put the level 6 dB below the threshold. After `agc-hold` seconds without
+either, it goes back up 2 dB every 5 seconds, while that keeps the level 6 dB
+below the threshold, but never above `agc-max-gain`. Each cut is logged; the
+steps back up are logged with `-v`. A gain command (eg from `control`) turns
+the AGC off.
+
+It sees only the A/D. Overload in the analog stages before it, such as
+intermodulation from a strong signal outside the passband, is not detected:
+if it persists, set a lower gain or `agc-max-gain`. One strong signal anywhere
+in the passband lowers the gain, and the sensitivity, for every channel until
+it has been gone for `agc-hold` seconds.
+
+### agc-max-gain (optional)
+
+Decimal dB, default the gain set by `lna_gain` and `vga_gain`. The AGC never
+goes above it, so by default it only ever takes gain away. Set it higher (up to
+95) to let the AGC add gain when the band is quiet.
+
+### agc-min-gain (optional)
+
+Decimal dB, default 0. The AGC never goes below it.
+
+### agc-high-threshold (optional)
+
+Decimal dBFS, default -15. The average A/D level above which the gain comes
+down. Many signals together have peaks well above their average, so the level
+needs room below 0 dBFS.
+
+### agc-hold (optional)
+
+Decimal seconds, default 30. How long without overload before the gain starts
+going back up.
+
+Example, for a 50 MHz UHF tuning:
+
+```
+[fobos]
+device = fobos
+frequency = 444m6
+samprate = 50000000
+lna_gain = 2
+vga_gain = 2
+agc = yes
+agc-max-gain = 30
+```
