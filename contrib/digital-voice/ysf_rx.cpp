@@ -255,9 +255,17 @@ private:
   // callsign, room or ID has passed its CRC by chance ("3~^bl q"): left out
   void store_field(int fn, char call[11])
   {
+    // The field as sent, all 10 bytes, before any tidying: a control byte
+    // must not become a blank that trims away ("W1AW" + a stray byte)
+    static char const allowed[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 */-.#";
+    bool padding = false; // NUL padding may end a field (blanks or NULs after it only)
+    for (int i = 0; i < 10; i++) {
+      if (call[i] == '\0')
+        padding = true;
+      else if (std::strchr(allowed, call[i]) == nullptr || (padding && call[i] != ' '))
+        return;
+    }
     tidy_callsign(call);
-    if (std::strspn(call, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 */-.#") != std::strlen(call))
-      return;
     if (fn == 0 && std::strncmp(call, "*****", 5) == 0)
       std::strcpy(call, "ALL");
     char *const field[4] = {dst_, src_, down_, up_};

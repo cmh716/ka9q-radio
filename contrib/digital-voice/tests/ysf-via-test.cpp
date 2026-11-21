@@ -46,6 +46,18 @@ struct ysf_via_test {
       bool const kept = std::strcmp(d.dst_, "ALL") == 0;
       std::printf("%s a field with characters no callsign has (\"3~^bl q\"): left out\n", kept ? "ok  " : "FAIL");
       failures += !kept;
+      char stray[11] = "W1AW\x01     "; // a control byte, then padding
+      char src[11] = "MM3TWA    ";
+      d.store_field(1, src);
+      d.store_field(1, stray);
+      bool const same = std::strcmp(d.src_, "MM3TWA") == 0;
+      std::printf("%s a control byte in a field: not tidied into another caller (\"W1AW\")\n", same ? "ok  " : "FAIL");
+      failures += !same;
+      char nul_padded[11] = {'G', '4', 'S', 'P', 'F', 0, 0, 0, 0, 0, 0};
+      d.store_field(1, nul_padded);
+      bool const padded = std::strcmp(d.src_, "G4SPF") == 0;
+      std::printf("%s a field padded with NULs: taken\n", padded ? "ok  " : "FAIL");
+      failures += !padded;
     }
     position();
   }

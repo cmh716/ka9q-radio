@@ -619,7 +619,7 @@ void *statproc(void *arg){
     // A position (D-STAR or YSF GPS): remembered, whose and when, after the call.
     // Every status repeats the call's position: it is timed from when it
     // first came (new coordinates, sender or call), not from each repeat
-    if(sp->chan.dv.call_has_position){
+    if(sp->chan.dv.call_has_position && sp->chan.dv.call_src[0] != '\0'){ // only with whose it is
       if(!sp->have_position || sp->position_lat != sp->chan.dv.call_lat || sp->position_lon != sp->chan.dv.call_lon
 	 || strcmp(sp->position_call,sp->chan.dv.call_src) != 0 || sp->position_call_id != sp->chan.dv.call_id)
 	sp->position_time = gps_time_ns();
