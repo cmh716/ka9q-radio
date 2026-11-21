@@ -36,7 +36,9 @@ public:
         line_.clear();
       } else if (c == '$' && !line_.empty() && line_ != "$" && line_.compare(0, 2, "$$") != 0) {
         line_ = "$"; // a new NMEA sentence: the last lost its end (a D-PRS packet may hold a '$')
-      } else if (line_.size() < 200) {
+      } else {
+        if (line_.size() >= kMaxLine)
+          got |= overflow();
         line_ += c;
       }
     }
@@ -52,6 +54,24 @@ public:
       if (report(s.substr(at)))
         return true;
     return false;
+  }
+
+  static constexpr size_t kMaxLine = 256; // longer than any one report
+
+  // The line is full without an end: reports have run together. What comes
+  // before the latest start of a report is tried as a line of its own; the
+  // collection goes on from that start. With no start in it, it's noise
+  bool overflow() {
+    size_t last = std::string::npos;
+    for (size_t at = next_start(line_, 1); at != std::string::npos; at = next_start(line_, at + 1))
+      last = at;
+    if (last == std::string::npos) {
+      line_.clear();
+      return false;
+    }
+    bool const got = line(line_.substr(0, last));
+    line_.erase(0, last);
+    return got;
   }
 
   static size_t next_start(std::string const& s, size_t from) {

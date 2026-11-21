@@ -84,6 +84,24 @@ int main() {
           "NMEA after a D-PRS report cut short");
     check(position(dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>see $$CRC1234,x"), plat, plon),
           "a '$$CRC' in a valid report's comment: the report is still taken whole");
+    // Two long reports run together past the line's limit: both are taken
+    std::string const pad(90, 'x'); // about 136 bytes a report
+    std::string const a = dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>" + pad);
+    std::string const b = dprs("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>" + pad);
+    check(a.size() > 100 && a.size() + b.size() > 256, "two reports longer together than the line's limit");
+    dstar_gps g;
+    std::string const joined = a + b + "\r"; // no line end after the first
+    bool got_first = false;
+    for (size_t i = 0; i < joined.size(); i += 5) {
+      g.feed(reinterpret_cast<uint8_t const *>(joined.data() + i), static_cast<int>(std::min<size_t>(5, joined.size() - i)));
+      got_first = got_first || (g.valid() && near(g.latitude(), plat));
+    }
+    check(got_first, "the first of them, once the line fills");
+    check(g.valid() && near(g.latitude(), 42 + 51.0 / 60), "and the second, at its line end");
+    dstar_gps noise;
+    std::string const junk(600, 'z');
+    deliver(noise, junk + dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>"));
+    check(noise.valid() && near(noise.latitude(), plat), "a report after a long run of noise");
   }
 
   {
