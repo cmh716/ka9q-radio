@@ -98,6 +98,11 @@ typedef struct {
   // D-STAR: the transmission's text message (slow data), "" until complete;
   // YSF: the way it came, "via UPLINK/DOWNLINK"
   char message[32];
+  // DMR, for diagnosis: data and control bursts seen, by their slot type's
+  // data type (0 PI header, 1 voice LC header, 2 terminator, 3 CSBK, 4 MBC
+  // header, 5 MBC continuation, 6 data header, 7 rate 1/2 data, 8 rate 3/4
+  // data, 9 idle, 10 rate 1 data)
+  uint32_t dmr_burst_types[16];
   // D-STAR: the sender's position (D-PRS or NMEA in the slow data), and for
   // diagnosis the exact report that last passed its checksum, or the last
   // line if none in it did (a longest report, 256 characters, and its end)

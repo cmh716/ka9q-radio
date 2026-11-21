@@ -126,6 +126,7 @@ public:
     stats->dmr_cc = cc_;
     stats->dmr_lc_flcos = lc_flcos_;
     stats->dmr_lc_bad = lc_bad_;
+    std::memcpy(stats->dmr_burst_types, burst_types_, sizeof burst_types_);
     if (active_slot_ >= 0)
       stats->error_rate = slots_[active_slot_].error_rate();
     // The call last played, until it ends (terminator, or sync lost): not
@@ -323,6 +324,7 @@ private:
       return; // golay(20,8) reliably corrects at most 2 bit errors
     int const cc = (st[0] << 3) | (st[1] << 2) | (st[2] << 1) | st[3];
     int const type = (st[4] << 3) | (st[5] << 2) | (st[6] << 1) | st[7];
+    burst_types_[type]++; // for diagnosis: which kinds of data come at all
     cc_ = cc;
     call& c = calls_[chan];
     uint8_t info[96];
@@ -541,6 +543,7 @@ private:
   uint64_t voice_muted_ = 0;
   uint64_t lc_flcos_ = 0;   // FLCOs of the embedded LCs seen (bit n: FLCO n)
   uint64_t lc_bad_ = 0;     // embedded LCs that failed their checks
+  uint32_t burst_types_[16]{}; // data and control bursts by slot type data type (Golay checked)
 };
 
 } // namespace

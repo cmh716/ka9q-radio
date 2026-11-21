@@ -269,6 +269,25 @@ static char const *position_text(dv_stats const *st){
   return buf;
 }
 
+// DMR data and control bursts seen, for the -v log: "csbk=12 dhdr=1 r12=4"
+// ("-" if none): the kinds that could carry position or other data
+static char const *dmr_data_text(dv_stats const *st){
+  static __thread char buf[160];
+  static struct { int type; char const *name; } const kinds[] = {
+    {3,"csbk"},{4,"mbc"},{5,"mbc+"},{6,"dhdr"},{7,"r12"},{8,"r34"},{10,"r1"},
+  };
+  buf[0] = '\0';
+  for(size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++){
+    uint32_t const n = st->dmr_burst_types[kinds[i].type];
+    if(n == 0)
+      continue;
+    char item[32];
+    snprintf(item,sizeof item,"%s%s=%u",buf[0] ? "," : "",kinds[i].name,(unsigned)n);
+    strlcat(buf,item,sizeof buf);
+  }
+  return buf[0] ? buf : "-";
+}
+
 // DMR embedded LC FLCOs seen, for the -v log: "0,4,5" ("-" if none).
 // 0 group voice, 3 unit to unit, 4-7 talker alias, 8 GPS
 static char const *flco_list(uint64_t flcos){
@@ -794,14 +813,14 @@ int demod_dv(void *arg){
 	  fprintf(stderr,"%s DMR samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " bursts=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64
-		  " slot=%d cc=%d src=%s dst=%s%s%s%s%s errors=%.1f%% offset=%+.1f Hz lc=%s lc_bad=%" PRIu64 "\n",
+		  " slot=%d cc=%d src=%s dst=%s%s%s%s%s errors=%.1f%% offset=%+.1f Hz lc=%s lc_bad=%" PRIu64 " data=%s\n",
 		  chan->name,stats.samples,stats.symbols,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.active_slot,stats.dmr_cc,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
 		  stats.m17_encrypted ? " encrypted" : "",
 		  stats.talker_alias[0] ? " alias=\"" : "",stats.talker_alias,stats.talker_alias[0] ? "\"" : "",
-		  100.0f * stats.error_rate,stats.freq_offset,flco_list(stats.dmr_lc_flcos),stats.dmr_lc_bad);
+		  100.0f * stats.error_rate,stats.freq_offset,flco_list(stats.dmr_lc_flcos),stats.dmr_lc_bad,dmr_data_text(&stats));
 	else
 	  fprintf(stderr,"%s P25 samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " frames=%" PRIu64
