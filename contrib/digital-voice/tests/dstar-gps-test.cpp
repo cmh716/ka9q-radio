@@ -63,8 +63,13 @@ int main() {
   double const plat = 42 + 50.12 / 60, plon = -(78 + 36.45 / 60);
   std::string const packet = "KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>IC-705";
   check(position(dprs(packet), plat, plon), "D-PRS, CRC with the CR");
-  check(position(dprs(packet, false), plat, plon), "D-PRS, CRC without the CR");
-  check(position(dprs(packet, true, true), plat, plon), "D-PRS, CRC digits byte-swapped");
+  check(none(dprs(packet, false)), "D-PRS, CRC without the CR: not D-PRS's");
+  check(none(dprs(packet, true, true)), "D-PRS, CRC digits byte-swapped: not D-PRS's");
+  // Live reports, as received (KJ4VO, 2026-11-21)
+  check(position("$$CRCBBB2,KJ4VO>API52,DSTAR*:/211437z3417.34N/08351.09W[/", 34 + 17.34 / 60, -(83 + 51.09 / 60)),
+        "a live D-PRS report (KJ4VO)");
+  check(position("$$CRC70F2,KJ4VO>API52,DSTAR*:/211438z3417.34N/08351.09W[/", 34 + 17.34 / 60, -(83 + 51.09 / 60)),
+        "and the next");
   std::string wrong = dprs(packet);
   wrong[20] = 'X';
   check(none(wrong), "D-PRS with a wrong CRC");

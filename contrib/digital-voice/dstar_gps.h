@@ -152,8 +152,8 @@ public:
 
 private:
   // D-PRS: "$$CRC" 4 hex digits "," then an APRS packet. The CRC covers the
-  // packet; whether it includes the line's CR, and the digits' byte order,
-  // aren't settled here: any of the four is taken
+  // packet and the line's CR, the digits in the usual order (checked on live
+  // reports, KJ4VO's "$$CRCBBB2,KJ4VO>API52,DSTAR*:/211437z...")
   static bool dprs(std::string const& s, double& lat, double& lon) {
     if (s.size() < 11 || s[9] != ',')
       return false;
@@ -164,9 +164,7 @@ private:
       return false;
     std::string const packet = s.substr(10);
     std::string const with_cr = packet + "\r";
-    uint16_t const a = crc(packet.data(), packet.size()), b = crc(with_cr.data(), with_cr.size());
-    auto swap = [](uint16_t v) { return static_cast<uint16_t>((v >> 8) | (v << 8)); };
-    if (want != a && want != b && want != swap(a) && want != swap(b))
+    if (want != crc(with_cr.data(), with_cr.size()))
       return false;
     size_t const colon = packet.find(':');
     if (colon == std::string::npos)
