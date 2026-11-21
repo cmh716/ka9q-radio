@@ -102,7 +102,7 @@ typedef struct {
   // last GPS line received, checked or not (for diagnosis)
   bool has_position;
   double latitude, longitude; // degrees north, east
-  char gps_line[64];
+  char gps_line[256];
 } dv_stats;
 
 // P25 control channel events
