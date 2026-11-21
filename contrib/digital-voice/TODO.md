@@ -28,26 +28,42 @@ for DMR, D-STAR and YSF.
 6. [ ] **monitor: a wider Call field**, so less is truncated (talkgroup,
    talker or alias, locator, D-STAR text / YSF route).
 7. [ ] **A spectrum display for the VHF/UHF tunings**, the way UberSDR
-   shows HF. Look first at ka9q-web (`~/ka9q-web`, a web spectrum and
-   waterfall for ka9q-radio); extending it may be less work than a new app.
+   shows HF. ka9q-web (`~/ka9q-web`, a web spectrum and waterfall) is a
+   porting candidate, but doesn't build against this tree (it expects
+   older internal APIs). This tree's `powers` already polls radiod's
+   spectrum bins with the current protocol: a starting point for a viewer.
+8. [ ] **Activity finder**: log carriers that come up on frequencies not in
+   the configuration (frequency, time, length, a guess at the mode), to
+   find unknown users (the "AldenMystery" channels) and build the list.
+9. [ ] **NOAA weather radio alerts (SAME)**, 162.400-162.550 MHz: decode
+   the alert headers (event, counties, times); the weekly test is a ready
+   source.
+10. [ ] **Watchlist alerts**: notify, log or record when a talkgroup,
+    callsign, radio ID or tone is heard. Two-tone paging (3) is one
+    trigger: design them together.
+11. [ ] **POCSAG/FLEX paging** (hospitals, some fire departments).
+12. [ ] **APRS positions** (144.390): `aprs`/`aprsfeed` exist; feed their
+    positions into monitor's locator display with D-STAR's and YSF's.
+13. [ ] **Reporting to other systems** (MQTT, perhaps others): calls,
+    positions, alerts and receiver state as messages. Probably a wrapper
+    reading radiod's status stream (as monitor and pcmrecord do) rather
+    than code in radiod.
 
-## Ideas, not yet ordered
+## Ideas and open investigations
 
-- [ ] **Activity finder**: log carriers that come up on frequencies not in
-      the configuration (frequency, time, length, a guess at the mode), to
-      find unknown users (the "AldenMystery" channels) and build the list.
-- [ ] **NOAA weather radio alerts (SAME)**, 162.400-162.550 MHz: decode
-      the alert headers (event, counties, times); the weekly test is a
-      ready source.
-- [ ] **Watchlist alerts**: notify, log or record when a talkgroup,
-      callsign, radio ID or tone is heard. Two-tone paging is one trigger.
-- [ ] **POCSAG/FLEX paging** (hospitals, some fire departments).
-- [ ] **APRS positions** (144.390): `aprs`/`aprsfeed` exist; feed their
-      positions into monitor's locator display with D-STAR's and YSF's.
-- [ ] **Fobos self-generated tone**: at lna_gain 2 the level jumps about
-      24 dB between vga_gain 3 and 4 with no A/D clipping (2026-11-21), most
-      likely a tone of its own. Find its frequency; if it's a fixed spur, a
-      notch or another sample rate may allow more gain.
+- [ ] **Fobos: what limits the gain.** At lna_gain 2 the AGC cut the gain
+      whenever the wideband level jumped (about 24 dB between vga_gain 3
+      and 4, 2026-11-21) without samples at full scale in those decisions.
+      A tone of the Fobos's own is a hypothesis, not established: it could
+      be a signal, or the VGA step itself. Next: a fixed-gain comparison
+      (AGC off) at vga_gain 3 and 4, looking at the spectrum for a new
+      carrier, and its frequency; if it's a fixed spur, a notch or another
+      sample rate may allow more gain.
+- [ ] **D243/I243 audio dropouts** on an FM channel squelched by DCS:
+      compare the same transmission on a carrier-only FM channel and a
+      D243-gated one. monitor's shown polarity and radiod's squelch come
+      from separate decoder instances, so a flip in the display alone
+      doesn't show why the audio dropped.
 - [ ] Even out digital voice levels across modes, radios and talkers.
 - [ ] Recording: optionally notch CTCSS out of analog recordings
       (radiod's `ctcss-notch` does it for all of a channel's output).
@@ -71,11 +87,17 @@ for DMR, D-STAR and YSF.
       says it's encrypted, when the MAC_PTT is missed.
 - [ ] Control channel search: a real control channel change, a search past
       several dead frequencies; across sites (needs the band plan, NAC reset).
+- [ ] P25: multi-block trunking messages (PDU, DUID 12), which some systems
+      use for explicit and Phase 2 grants. A separate gap from multi-call
+      following: this decides which grants the decoder can see at all.
+- [ ] NXDN Type-D (no control channel), if a local system uses it.
 
 ## Done, and confirmed on the air
 
-- [x] P25 Phase 1/2, DMR, M17, YSF, D-STAR, NXDN48/96 decoders, DV_AUTO.
-- [x] P25 grant following and Phase 2 voice; control channel search.
+- [x] Decoders P25 Phase 1/2, DMR, YSF, D-STAR, NXDN48/96, DV_AUTO, heard
+      live; M17 on recordings only (no M17 radio yet).
+- [x] P25 grant following with Phase 2 voice, live; control channel
+      search, live. Following Phase 1 voice grants: recordings only.
 - [x] NXDN Type-C following, by direct frequency and by channel number
       (`nxdn-channels`), VHF and UHF.
 - [x] DMR: polarity inversion; idle bursts; **talker alias** (FLCO 4-7, all
@@ -89,7 +111,8 @@ for DMR, D-STAR and YSF.
       (`monitor --location`); callsign fields trimmed at both ends.
 - [x] **YSF**: destination `ALL` for a call to everyone; source callsigns.
 - [x] Fobos: A/D overload counting and logging; an opt-in AGC (`agc = yes`,
-      VGA only), which showed the overload was the tone above, not the A/D.
+      VGA only). On the live test it found no A/D clipping; what made it
+      cycle is the open question above.
 - [x] Frequency catalog (`frequency-catalog.py`) and `rr2radiod.py`:
       RadioReference and RepeaterBook downloads to a curated master list, a
       generated `50-conventional.conf` and monitor's names; overrides,
