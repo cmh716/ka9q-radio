@@ -119,6 +119,12 @@ struct session {
   double position_lat,position_lon;
   char position_call[24];
   int64_t position_time; // gps_time_ns when that position first came
+  // The last call heard, held on the dashboard after it ends, fading, until
+  // Call_hold has passed or another call replaces it
+  __typeof__(((chan_t *)0)->dv) held_call;
+  double held_tune_freq;
+  bool held_live;        // it's the call going on now
+  int64_t held_ended;    // when it ended (gps_time_ns), 0 if none held
   uint32_t position_call_id; // in which call
   bool notch_enable;         // Enable PL removal notch
   struct iir iir_left;       // State for PL removal filter
@@ -168,6 +174,7 @@ extern int Dit_length;
 extern int Channels;
 extern char const *Init;
 extern char const *Source; // Only accept from this domain name
+extern double Call_hold;    // seconds a call stays on the dashboard after it ends
 extern bool Have_location;  // --location given: distances and bearings to positions heard
 extern double My_lat,My_lon; // that location (or a default, for sorting repeaters.d only)
 

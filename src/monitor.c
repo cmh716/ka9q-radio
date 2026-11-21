@@ -107,6 +107,7 @@ _Atomic PaTime Last_callback_time;
 int64_t Last_error_time;
 sess_t Sessions[NSESSIONS];
 bool Have_location;
+double Call_hold = 600;
 double My_lat = 32.860455, My_lon = -117.188861; // the old built-in, until --location
 _Atomic bool Terminate;
 sess_t * _Atomic Best_session; // Session with highest SNR
@@ -212,6 +213,7 @@ int main(int argc,char * const argv[]){
     Playout = config_getfloat(Configtable,Audio,"playout",Playout) / 1000.; // convert ms to sec
     Repeater_tail = config_getfloat(Configtable,Repeater,"tail",Repeater_tail);
     Verbose = config_getboolean(Configtable,Display,"verbose",Verbose);
+    Call_hold = config_getfloat(Configtable,Display,"call-hold",Call_hold);
     char const *location = config_getstring(Configtable,Display,"location",NULL);
     if(location != NULL){
       if(!parse_location(location,&My_lat,&My_lon)){
@@ -593,6 +595,16 @@ void *statproc(void *arg){
 	  sp->callsign[0] = sp->id[0] = '\0';
       } else if(sp->talkgroup_ended == 0)
 	sp->talkgroup_ended = gps_time_ns();
+    }
+    // The call: held after it ends, for the dashboard
+    if(sp->chan.dv.call_dest[0] != '\0'){
+      sp->held_call = sp->chan.dv;
+      sp->held_tune_freq = sp->chan.tune.freq;
+      sp->held_live = true;
+      sp->held_ended = 0;
+    } else if(sp->held_live){
+      sp->held_live = false;
+      sp->held_ended = gps_time_ns();
     }
     // A position (D-STAR or YSF GPS): remembered, whose and when, after the call.
     // Every status repeats the call's position: it is timed from when it

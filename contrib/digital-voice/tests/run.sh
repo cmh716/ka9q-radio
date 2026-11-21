@@ -36,6 +36,17 @@ if [ -f ../../../src/config_paths.h ]; then
     -Wl,--gc-sections -lm \
     $(pkg-config --libs libbsd-overlay) -o out/monitor-tone-test
   out/monitor-tone-test
+  # The dashboard, drawn into ncurses's own screen and read back. Built with
+  # monitor's objects, and monitor.c with its main renamed
+  S=../../../src
+  cc $FLAGS -std=gnu11 -D_GNU_SOURCE $(pkg-config --cflags libbsd-overlay) -iquote $S -pthread \
+    -Dmain=monitor_real_main -c $S/monitor.c -o out/monitor-nomain.o
+  cc $FLAGS -std=gnu11 -D_GNU_SOURCE $(pkg-config --cflags libbsd-overlay) -iquote $S -pthread \
+    $S/monitor-display-test.c out/monitor-nomain.o $S/monitor-data.o $S/monitor-repeater.o $S/morse.o \
+    $S/database.o $S/talkgroup.o $S/locator.o $S/libdsp.a $S/libstatus.a $S/libradio.a \
+    -lopus -lportaudio $(pkg-config --silence-errors --libs alsa) -lsamplerate -liniparser -lncursesw -lcsv \
+    -lm -lpthread $(pkg-config --libs libbsd-overlay) -lrt -o out/monitor-display-test
+  out/monitor-display-test
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
     $(pkg-config --cflags libbsd-overlay) \
     -iquote ../../../src -iquote .. ../../../src/follow-test.c \

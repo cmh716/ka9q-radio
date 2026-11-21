@@ -156,7 +156,11 @@ followed (TG110 463.7250 1757). Between calls a trunked channel shows its state:
 CC R2 / CC N469 while its control channel is received, no CC when it is lost,
 CC search while other control channels are tried, LTR R1 for an LTR home
 repeater. Last is the time since the channel last sent audio (now, 4:07, 3h12,
-2d). Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
+2d). After a call ends it stays in Call, fading (normal for 30 seconds, then dim),
+until another call replaces it or `call-hold` seconds have passed (default 600,
+in the `[display]` section of the config file); then a trunked channel's state
+shows again. Call is as wide as the terminal allows, up to 64 columns.
+Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
 followed frequency in Call.
 
 A D-STAR or YSF call that sends its position (D-STAR's D-PRS or NMEA GPS in

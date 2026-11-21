@@ -344,52 +344,71 @@ static void ui_tone(sess_t const *sp,char *out,size_t size){
     snprintf(out,size,"%c%03d",sp->current_dcs_inverted ? 'I' : 'D',sp->current_dcs);
 }
 
-// The call in progress: talkgroup (or destination callsign) and talker, and
-// on a trunked channel the voice frequency it is following. Between calls, a
-// trunked channel's state: "CC R2", "no CC", "CC search", "LTR R1".
-// brief: without the followed frequency, for a narrow screen
-static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
+typedef __typeof__(((chan_t *)0)->dv) dv_t;
+
+// A call: talkgroup (or destination callsign) and talker, and on a trunked
+// channel the voice frequency it is following (tune: where the channel is).
+// brief: without the followed frequency, for a narrow column
+static void ui_call_text(dv_t const *dv,double tune,bool brief,char *out,size_t size){
   out[0] = '\0';
-  char const *dest = sp->chan.dv.call_dest;
-  if(dest[0] == '\0'){
-    char const *s = sp->chan.dv.source;
-    if(strncmp(s,"CC ",3) == 0 || strcmp(s,"no CC") == 0 || strcmp(s,"CC search") == 0
-       || strncmp(s,"LTR R",5) == 0)
-      strlcpy(out,s,size);
+  char const *dest = dv->call_dest;
+  if(dest[0] == '\0')
     return;
-  }
   // "110", "TG 110" or "TG110" is talkgroup 110; anything else (a private
   // call "U2000", a callsign) as it is
   if(strncmp(dest,"TG",2) == 0)
     dest += dest[2] == ' ' ? 3 : 2;
   bool const number = dest[0] != '\0' && strspn(dest,"0123456789") == strlen(dest);
-  snprintf(out,size,"%s%s",number ? "TG" : "",number ? dest : sp->chan.dv.call_dest);
-  double const freq = sp->chan.dv.call_freq;
-  if(!brief && freq > 0 && fabs(freq - sp->chan.tune.freq) > 100){
+  snprintf(out,size,"%s%s",number ? "TG" : "",number ? dest : dv->call_dest);
+  double const freq = dv->call_freq;
+  if(!brief && freq > 0 && fabs(freq - tune) > 100){
     char where[24];
     snprintf(where,sizeof where," %.4f",freq * 1e-6);
     strlcat(out,where,size);
   }
   // The talker: by alias (DMR talker alias) when one has come, else ID
-  char const *talker = sp->chan.dv.call_alias[0] != '\0' ? sp->chan.dv.call_alias : sp->chan.dv.call_src;
+  char const *talker = dv->call_alias[0] != '\0' ? dv->call_alias : dv->call_src;
   if(talker[0] != '\0'){
     strlcat(out," ",size);
     strlcat(out,talker,size);
   }
   // where they are (D-STAR or YSF GPS), as a locator
-  if(sp->chan.dv.call_has_position){
+  if(dv->call_has_position){
     char grid[8];
-    latlon_to_locator(sp->chan.dv.call_lat,sp->chan.dv.call_lon,grid,sizeof grid);
+    latlon_to_locator(dv->call_lat,dv->call_lon,grid,sizeof grid);
     if(grid[0] != '\0'){
       strlcat(out," ",size);
       strlcat(out,grid,size);
     }
   }
-  // and what they've written (D-STAR's text message), if there's room
-  if(sp->chan.dv.call_message[0] != '\0'){
+  // and what they've written (D-STAR's text, YSF's route), if there's room
+  if(dv->call_message[0] != '\0'){
     strlcat(out," ",size);
-    strlcat(out,sp->chan.dv.call_message,size);
+    strlcat(out,dv->call_message,size);
   }
+}
+
+// How the Call column shows a channel: the call going on, else the last one,
+// held for Call_hold after it ended, fading (normal for 30 s, then dim);
+// else a trunked channel's state: "CC R2", "no CC", "CC search", "LTR R1".
+// Returns how faded a held call is: 1 normal, 2 dim; 0 for a call going on
+// or a state (they take the row's look)
+static int ui_call(sess_t const *sp,int64_t now,bool brief,char *out,size_t size){
+  if(sp->chan.dv.call_dest[0] != '\0'){
+    ui_call_text(&sp->chan.dv,sp->chan.tune.freq,brief,out,size);
+    return 0;
+  }
+  if(sp->held_ended != 0 && now - sp->held_ended < (int64_t)(Call_hold * BILLION)){
+    ui_call_text(&sp->held_call,sp->held_tune_freq,brief,out,size);
+    if(out[0] != '\0')
+      return now - sp->held_ended < 30 * (int64_t)BILLION ? 1 : 2;
+  }
+  out[0] = '\0';
+  char const *s = sp->chan.dv.source;
+  if(strncmp(s,"CC ",3) == 0 || strcmp(s,"no CC") == 0 || strcmp(s,"CC search") == 0
+     || strncmp(s,"LTR R",5) == 0)
+    strlcpy(out,s,size);
+  return 0;
 }
 
 // in as exactly width columns: cut, or padded with spaces. Counts UTF-8
@@ -502,13 +521,19 @@ static void dashboard(void){
            Nfds > 1 ? " (+ more)" : "",Source != NULL ? " [source filtered]" : "");
   ui_text(2,2,line,A_DIM,UI_FRAME);
   ui_rule(3," CHANNELS ");
-  // Below 100 columns: no Config, SNR or Gain (the details panel has them)
+  // Below 100 columns: no Config, SNR or Gain (the details panel has them).
+  // Call takes what the terminal has beyond the other columns and some room
+  // for Channel; the followed frequency only when it's wide enough
   bool const narrow = COLS < 100;
+  int const fixed = narrow ? 35 : 61; // the other columns and their spaces
+  int call_width = COLS - 3 - fixed - (narrow ? 12 : 20);
+  call_width = narrow ? max(16,min(call_width,48)) : max(22,min(call_width,64));
+  bool const brief = call_width < 30;
   if(narrow)
-    snprintf(line,sizeof line,"  %10s %-7s %6s %-16s %5s %s","Frequency","Detect","Tone","Call","Last","Channel");
+    snprintf(line,sizeof line,"  %10s %-7s %6s %-*s %5s %s","Frequency","Detect","Tone",call_width,"Call","Last","Channel");
   else
-    snprintf(line,sizeof line,"  %10s  %-8s %-8s %6s %-22s %5s %6s %6s  %s","Frequency","Config","Detect",
-             "Tone","Call","Last","SNR","Gain","Channel");
+    snprintf(line,sizeof line,"  %10s  %-8s %-8s %6s %-*s %5s %6s %6s  %s","Frequency","Config","Detect",
+             "Tone",call_width,"Call","Last","SNR","Gain","Channel");
   ui_text(table_header,2,line,A_BOLD,UI_FRAME);
   for(int i=0; i<Sessions_per_screen && First_session+i<count; i++){
     int const index = First_session+i;
@@ -525,10 +550,10 @@ static void dashboard(void){
     if(isfinite(sp->snr)) snprintf(snr,sizeof snr,"%.1f",sp->snr);
     if(muted(sp)) strlcpy(gain,"mute",sizeof gain);
     else snprintf(gain,sizeof gain,"%+.0f",voltage2dB(sp->gain));
-    char tone[16],full[128],call[128],last[16];
+    char tone[16],full[192],call[320],last[16];
     ui_tone(sp,tone,sizeof tone);
-    ui_call(sp,narrow,full,sizeof full);
-    ui_fit(call,sizeof call,full,narrow ? 16 : 22);
+    int const held = ui_call(sp,now,brief,full,sizeof full);
+    ui_fit(call,sizeof call,full,call_width);
     ui_last(sp,now,last,sizeof last);
     if(narrow)
       snprintf(line,sizeof line,"%c %10.5f %-7.7s %6.6s %s %5.5s %s",index == Current ? '>' : ' ',
@@ -552,6 +577,15 @@ static void dashboard(void){
     mvhline(row,1,' ',COLS-3);
     attrset(A_NORMAL);
     ui_text(row,2,line,attr,pair);
+    // A held call, drawn again over its column, fading as it ages
+    if(held != 0 && index != Current){
+      char prefix[64];
+      if(narrow)
+        snprintf(prefix,sizeof prefix,"%c %10.5f %-7.7s %6.6s ",' ',sp->chan.tune.freq/1e6,detected,tone);
+      else
+        snprintf(prefix,sizeof prefix,"%c %10.5f  %-8.8s %-8.8s %6.6s ",' ',sp->chan.tune.freq/1e6,configured,detected,tone);
+      ui_text(row,2 + (int)strlen(prefix),call,held == 1 ? A_NORMAL : A_DIM,strcmp(detected,"-") != 0 && strcmp(detected,"FM") != 0 ? UI_DIGITAL : UI_FRAME);
+    }
   }
   if(count == 0)
     ui_text(table_header+1,2,"Waiting for multicast audio and status...",A_DIM,UI_FRAME);

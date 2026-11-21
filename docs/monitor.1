@@ -51,8 +51,12 @@ received, no CC when it is lost, CC search while other control channels are
 tried, LTR R1 for an LTR home repeater. Last is the time since the channel
 last sent audio: now, 4:07 (minutes and seconds), 3h12, 2d.
 .P
-Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
-followed frequency in Call.
+After a call ends it stays in Call, fading (normal for 30 seconds, then
+dim), until another call replaces it or call\-hold seconds have passed
+(default 600; call\-hold in the [display] section of the configuration
+file); then a trunked channel's state shows again. Call is as wide as the
+terminal allows, up to 64 columns. Terminals narrower than 100 columns leave
+out Config, SNR and Gain, and a narrow Call the followed frequency.
 .P
 A D-STAR or YSF call that sends its position (D-STAR's D-PRS or NMEA GPS in
 the slow data, the GPS message of a YSF radio such as an FT-3D)
