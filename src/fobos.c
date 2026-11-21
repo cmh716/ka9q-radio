@@ -88,15 +88,15 @@ struct sdrstate {
   float covariance;             // I*Q covariance excluding DC
   float beta,q_gain;            // I/Q phase and gain balancing
   float rho;                    // sine of phase error
-  float scale;                 // Scale samples for #bits and front end gain
+  _Atomic float scale;         // Scale samples for #bits and front end gain; the callback loads it once a block
   pthread_t monitor_thread;
   _Atomic enum state state;
 
   // A/D overload protection (fobos_agc)
   pthread_t agc_thread;
   pthread_mutex_t gain_lock;   // fobos_gain (a command) and the AGC both set the gain
-  float agc_max_gain;          // dB
-  float agc_min_gain;          // dB
+  int agc_lna;                 // the LNA setting the AGC keeps
+  int agc_vga_min,agc_vga_max; // the VGA steps it moves between
   float agc_high_threshold;    // dBFS: above it, the gain comes down
   float agc_hold;              // seconds without overload before the gain goes back up
 };
@@ -109,6 +109,8 @@ static int64_t const AGC_TICK = BILLION / 10;      // the AGC looks every 100 ms
 static int64_t const AGC_SETTLE = BILLION / 5;     // after a cut, before another
 static int64_t const AGC_RAISE_EVERY = 5 * (int64_t)BILLION; // between steps up
 static int64_t const OVERLOAD_REPORT = 60 * (int64_t)BILLION;
+static int const FOBOS_BUFFER_COUNT = 16;    // the library's sample buffers
+static int const FOBOS_BUFFER_LENGTH = 65536;
 
 #ifdef RAW
 static void fobos_raw_callback(const uint16_t * restrict samples, uint32_t complex_count, void *ctx);
@@ -117,7 +119,7 @@ static void rx_callback(float * restrict buf, unsigned buf_length, void * restri
 #endif
 static void *fobos_monitor(void *p);
 static void *fobos_agc(void *p);
-static float set_gain(struct sdrstate *sdr,float gain);
+static void set_stages(struct sdrstate *sdr,int lna,int vga);
 static int lna_dB(int lna);
 
 static int find_serial_position(const char *serials, const char *serialnumcfg) {
@@ -318,19 +320,30 @@ int fobos_setup(struct frontend *const frontend, dictionary const * const dictio
     frontend->rf_atten = 0;
     frontend->rf_level_cal = -7.1; // very rough approximation, needs to be measured
     frontend->rf_agc = config_getboolean(dictionary, section, "agc", false);
-    sdr->agc_max_gain = config_getfloat(dictionary, section, "agc-max-gain", frontend->rf_gain);
-    sdr->agc_min_gain = config_getfloat(dictionary, section, "agc-min-gain", 0);
+    // The AGC keeps the LNA as set, and moves the VGA between the steps
+    // the limits (total gain, dB) allow: the lowest at or above the
+    // minimum, the highest at or below the maximum
+    float const max_gain = config_getfloat(dictionary, section, "agc-max-gain", frontend->rf_gain);
+    float const min_gain = config_getfloat(dictionary, section, "agc-min-gain", 0);
     sdr->agc_high_threshold = config_getfloat(dictionary, section, "agc-high-threshold", AGC_HIGH_THRESHOLD);
     sdr->agc_hold = config_getfloat(dictionary, section, "agc-hold", AGC_HOLD);
-    if(sdr->agc_min_gain < 0)
-      sdr->agc_min_gain = 0;
-    if(sdr->agc_max_gain > 33 + 62)
-      sdr->agc_max_gain = 33 + 62;
-    if(sdr->agc_max_gain < sdr->agc_min_gain)
-      sdr->agc_max_gain = sdr->agc_min_gain;
-    if(frontend->rf_agc)
-      fprintf(stderr,"fobos AGC on: gain %.0f to %.0f dB, down above %.1f dBFS or at A/D full scale, up after %.0f s\n",
-	      sdr->agc_min_gain,sdr->agc_max_gain,sdr->agc_high_threshold,sdr->agc_hold);
+    sdr->agc_lna = sdr->lna_gain;
+    int const lna = lna_dB(sdr->lna_gain);
+    sdr->agc_vga_min = (int)ceilf((min_gain - lna) / 2);
+    sdr->agc_vga_max = (int)floorf((max_gain - lna) / 2);
+    if(sdr->agc_vga_min < 0)
+      sdr->agc_vga_min = 0;
+    if(sdr->agc_vga_max > 31)
+      sdr->agc_vga_max = 31;
+    if(sdr->agc_vga_max < sdr->agc_vga_min)
+      sdr->agc_vga_max = sdr->agc_vga_min;
+    if(frontend->rf_agc){
+      fprintf(stderr,"fobos AGC on: lna_gain %d, vga_gain %d to %d (gain %d to %d dB), down above %.1f dBFS or at A/D full scale, up after %.0f s\n",
+	      sdr->agc_lna,sdr->agc_vga_min,sdr->agc_vga_max,lna + 2 * sdr->agc_vga_min,lna + 2 * sdr->agc_vga_max,
+	      sdr->agc_high_threshold,sdr->agc_hold);
+      if(sdr->vga_gain < sdr->agc_vga_min || sdr->vga_gain > sdr->agc_vga_max)
+	fprintf(stderr,"fobos AGC: vga_gain %d is outside that: the AGC will move it in\n",sdr->vga_gain);
+    }
   }
   if(sdr->direct_sampling && config_getboolean(dictionary, section, "agc", false))
     fprintf(stderr,"fobos: agc ignored in direct sample mode (no gain control)\n");
@@ -373,18 +386,10 @@ static int lna_dB(int lna){
   return lna == 3 ? 33 : lna == 2 ? 16 : 0;
 }
 
-// Set the MAX2830's gain, LNA first (the noise figure is better with more LNA
-// gain), then the VGA in 2 dB steps; round down. The A/D scaling follows so
-// that levels in dBm stay right. Returns the gain set
-static float set_gain(struct sdrstate *sdr,float gain){
+// Set the MAX2830's LNA (0-3) and VGA (0-31, 2 dB steps), with gain_lock
+// held. The A/D scaling follows so that levels in dBm stay right
+static void set_stages(struct sdrstate *sdr,int lna,int vga){
   struct frontend * const frontend = sdr->frontend;
-  if(gain < 0)
-    gain = 0;
-  int const lna = gain >= 33 ? 3 : gain >= 16 ? 2 : 0;
-  int vga = (int)((gain - lna_dB(lna)) / 2);
-  if(vga > 31)
-    vga = 31;
-  pthread_mutex_lock(&sdr->gain_lock);
   int result = fobos_rx_set_lna_gain(sdr->dev, lna);
   if (result != FOBOS_ERR_OK)
     fprintf(stderr, "fobos_rx_set_lna_gain(%d): %s\n",lna, fobos_rx_error_name(result));
@@ -396,36 +401,55 @@ static float set_gain(struct sdrstate *sdr,float gain){
   else
     sdr->vga_gain = vga;
   frontend->rf_gain = 2 * sdr->vga_gain + lna_dB(sdr->lna_gain);
-  sdr->scale = scale_AD(frontend);
-  pthread_mutex_unlock(&sdr->gain_lock);
-  return frontend->rf_gain;
+  atomic_store_explicit(&sdr->scale, scale_AD(frontend), memory_order_relaxed);
 }
 
+// A gain command: turns the AGC off, and sets the total gain LNA first (the
+// noise figure is better with more LNA gain), then the VGA; rounds down
 float fobos_gain(struct frontend * const frontend, float gain){
   assert(frontend != NULL);
   struct sdrstate * const sdr = (struct sdrstate *)frontend->context;
   if(sdr->direct_sampling)
     return 0; // the MAX2830 is bypassed
+  if(gain < 0)
+    gain = 0;
+  int const lna = gain >= 33 ? 3 : gain >= 16 ? 2 : 0;
+  int vga = (int)((gain - lna_dB(lna)) / 2);
+  if(vga > 31)
+    vga = 31;
+  pthread_mutex_lock(&sdr->gain_lock);
   if(frontend->rf_agc)
     fprintf(stderr,"manual gain setting, turning off AGC\n");
-  frontend->rf_agc = false;
-  return set_gain(sdr,gain);
+  frontend->rf_agc = false; // under the lock: the AGC can't then overwrite this
+  set_stages(sdr,lna,vga);
+  float const set = frontend->rf_gain;
+  pthread_mutex_unlock(&sdr->gain_lock);
+  return set;
 }
 
-// A/D overload protection. Every 100 ms: samples at full scale, or a level
-// above agc-high-threshold, bring the gain down at once (at least 6 dB, enough
-// to put the level AGC_HEADROOM below the threshold). After agc-hold seconds
-// with neither, it goes up 2 dB every 5 s, to
-// agc-max-gain, while that keeps the level AGC_HEADROOM below. With the AGC off, or in direct sample mode, overloads are
-// still reported, once a minute at most
+// A/D overload protection. It moves only the VGA, keeping the configured LNA
+// setting, between the steps agc-min-gain and agc-max-gain allow. Every
+// 100 ms: samples at full scale, or a level above agc-high-threshold, bring
+// the gain down at once (at least 6 dB, enough to put the level AGC_HEADROOM
+// below the threshold). After agc-hold seconds with neither, it goes up one
+// step (2 dB) every 5 s while that keeps the level AGC_HEADROOM below. With
+// the AGC off, or in direct sample mode, overloads are still reported, once a
+// minute at most.
+// The level (if_power) and the count of samples at full scale belong to the
+// sample callback, which smooths and counts them: this only reads them
 static void *fobos_agc(void *p){
   struct sdrstate * const sdr = (struct sdrstate *)p;
   struct frontend * const frontend = sdr->frontend;
   pthread_setname("fobos-agc");
+  // Samples already in the library's buffers when the gain changes were
+  // taken at the old gain: their overloads don't call for another cut
+  int64_t const stale = (int64_t)(BILLION * (double)FOBOS_BUFFER_COUNT * FOBOS_BUFFER_LENGTH / frontend->samprate) + AGC_TICK;
+  int64_t const settle = stale > AGC_SETTLE ? stale : AGC_SETTLE;
   uint64_t last_over = frontend->overranges;
   uint64_t report_clips = 0;
+  uint64_t pending = 0; // full scale samples since the last cut (or ever)
   int64_t now = gps_time_ns();
-  int64_t report_time = now, last_change = now, quiet_since = now;
+  int64_t report_time = now, last_change = now - settle, quiet_since = now;
   enum state s;
   while((s = atomic_load(&sdr->state)) == RUNNING || s == STARTING){
     struct timespec const tick = {.tv_sec = 0, .tv_nsec = AGC_TICK};
@@ -435,7 +459,11 @@ static void *fobos_agc(void *p){
     uint64_t const clips = over - last_over;
     last_over = over;
     report_clips += clips;
-    float const dBFS = frontend->if_power > 0 ? power2dB(frontend->if_power * scale_ADpower2FS(frontend)) : -INFINITY;
+    pending += clips;
+    if(now - last_change < stale)
+      pending = 0; // taken before the last change took effect
+    float const power = frontend->if_power;
+    float const dBFS = power > 0 ? power2dB(power * scale_ADpower2FS(frontend)) : -INFINITY;
     if(now - report_time >= OVERLOAD_REPORT){
       if(report_clips != 0)
 	fprintf(stderr,"fobos: A/D overload, %'llu samples at full scale in %.0f s (gain %.0f dB, %.1f dBFS)\n",
@@ -446,36 +474,39 @@ static void *fobos_agc(void *p){
     if(!frontend->rf_agc || sdr->direct_sampling)
       continue;
     float const target = sdr->agc_high_threshold - AGC_HEADROOM;
-    if(clips != 0 || dBFS > target)
+    if(pending != 0 || dBFS > target)
       quiet_since = now;
-    float const old_gain = frontend->rf_gain;
-    float new_gain = old_gain;
-    if(clips != 0 || dBFS > sdr->agc_high_threshold){
-      if(now - last_change < AGC_SETTLE)
-	continue; // the last cut hasn't shown in the level yet
-      float cut = clips != 0 ? AGC_STEP_DOWN : 0;
+    if(now - last_change < settle)
+      continue; // the last change hasn't shown in the level yet; overloads stay pending
+    int const old_vga = sdr->vga_gain;
+    int new_vga = old_vga;
+    if(pending != 0 || dBFS > sdr->agc_high_threshold){
+      float cut = pending != 0 ? AGC_STEP_DOWN : 0;
       if(isfinite(dBFS) && dBFS - target > cut)
 	cut = dBFS - target;
-      new_gain = old_gain - cut;
-      if(new_gain < sdr->agc_min_gain)
-	new_gain = sdr->agc_min_gain;
+      new_vga = old_vga - (int)ceilf(cut / 2);
+      if(new_vga < sdr->agc_vga_min)
+	new_vga = sdr->agc_vga_min;
     } else if(now - quiet_since >= (int64_t)(sdr->agc_hold * BILLION) && now - last_change >= AGC_RAISE_EVERY
-	      && old_gain < sdr->agc_max_gain && dBFS + AGC_STEP_UP <= target){
-      new_gain = old_gain + AGC_STEP_UP;
-      if(new_gain > sdr->agc_max_gain)
-	new_gain = sdr->agc_max_gain;
+	      && old_vga < sdr->agc_vga_max && dBFS + AGC_STEP_UP <= target){
+      new_vga = old_vga + 1;
     }
-    if(new_gain == old_gain || !frontend->rf_agc) // a command may just have turned it off
+    if(new_vga == old_vga)
       continue;
-    float const set = set_gain(sdr,new_gain);
-    if(set == old_gain)
-      continue; // rounded to the same setting
+    float const old_gain = frontend->rf_gain;
+    pthread_mutex_lock(&sdr->gain_lock);
+    bool const on = frontend->rf_agc; // a gain command may just have turned it off
+    if(on)
+      set_stages(sdr,sdr->agc_lna,new_vga);
+    float const set = frontend->rf_gain;
+    pthread_mutex_unlock(&sdr->gain_lock);
+    if(!on)
+      continue;
     last_change = now;
-    // The level follows the gain: don't wait 20 ms of smoothing to see it
-    frontend->if_power *= dB2power(set - old_gain);
     if(set < old_gain || Verbose) // a cut always; the slow climb back with -v
       fprintf(stderr,"fobos AGC: gain %.0f -> %.0f dB (lna %d, vga %d): %'llu samples at full scale, %.1f dBFS\n",
-	      old_gain,set,sdr->lna_gain,sdr->vga_gain,(unsigned long long)clips,dBFS);
+	      old_gain,set,sdr->agc_lna,new_vga,(unsigned long long)pending,dBFS);
+    pending = 0;
   }
   return NULL;
 }
@@ -483,8 +514,8 @@ static void *fobos_monitor(void *p) {
   struct sdrstate *const sdr = (struct sdrstate *)p;
   assert(sdr != NULL);
   pthread_setname("fobos-mon");
-  int const buffer_count = 16;
-  int const buffer_length = 65536;
+  int const buffer_count = FOBOS_BUFFER_COUNT;
+  int const buffer_length = FOBOS_BUFFER_LENGTH;
 
   stick_core();
 #if RAW
@@ -726,16 +757,17 @@ static void fobos_raw_callback(uint16_t const * restrict samples, uint32_t sampc
   float * const restrict wptr = (float *)frontend->in.input_write_pointer.c;
   assert(wptr != NULL);
 
+  float const scale = atomic_load_explicit(&sdr->scale, memory_order_relaxed);
   // samples contains 2 * complex_count words:
   // samples[] = Q0 I0 Q1 I1 ...
   // Each word contains an unsigned 14-bit offset-binary value in bits 0–13.
 #if defined(__x86_64__)
   if(__builtin_cpu_supports("avx2") &&  __builtin_cpu_supports("popcnt"))
-    fobos_convert_avx2(wptr, samples, sampcount, sdr->scale, sdr->direct_sampling,
+    fobos_convert_avx2(wptr, samples, sampcount, scale, sdr->direct_sampling,
 			 sdr->beta, sdr->q_gain, &dc_q, &dc_i, &q_energy, &i_energy, &iq_sum, &clips);
   else
 #endif
-    fobos_convert_scalar(wptr, samples, sampcount, sdr->scale, sdr->direct_sampling,
+    fobos_convert_scalar(wptr, samples, sampcount, scale, sdr->direct_sampling,
 			 sdr->beta, sdr->q_gain, &dc_q, &dc_i, &q_energy, &i_energy, &iq_sum, &clips);
 
   float const mean_q = (float)dc_q / sampcount;
@@ -789,6 +821,7 @@ static void rx_callback(float const * restrict buf, unsigned sampcount, void *ct
     assert(Power_alpha > 0 && Power_alpha <= 1);
   }
   float in_energy = 0;
+  float const scale = atomic_load_explicit(&sdr->scale, memory_order_relaxed);
   // Cast to real float to help vectorization; complex values are always IQIQ...
   float * const restrict wptr = (float *)frontend->in.input_write_pointer.c;
   assert(wptr != NULL);
@@ -796,11 +829,13 @@ static void rx_callback(float const * restrict buf, unsigned sampcount, void *ct
   for (unsigned int n = 0; n < sampcount*2; n++) { // twice as many real samples as complex
     float const samp = buf[n];
     in_energy += samp * samp;       // Calculate energy of the sample
-    wptr[n] = samp * (float)sdr->scale;    // Store sample in write pointer buffer
+    wptr[n] = samp * scale;    // Store sample in write pointer buffer
   }
   write_cfilter(&frontend->in, NULL,sampcount); // Update write pointer, invoke FFT
   frontend->samples += sampcount;
-  frontend->samp_since_over += sampcount; // implement overrange counts later
+  // The library's float samples are already scaled: samples at full scale
+  // aren't counted here (only in the raw callback, which RAW selects)
+  frontend->samp_since_over += sampcount;
 
   if (isfinite(in_energy))
     frontend->if_power += Power_alpha * (in_energy / sampcount - frontend->if_power);

@@ -105,13 +105,17 @@ logs how many once a minute.
 ### agc (optional)
 
 Boolean, default false (ignored in direct sample mode). Protects the A/D from
-overload: when samples reach full scale, or the level goes above
+overload by moving `vga_gain`; `lna_gain` stays as set. When samples reach full scale, or the level goes above
 `agc-high-threshold`, the gain comes down at once, at least 6 dB and enough to
 put the level 6 dB below the threshold. After `agc-hold` seconds without
 either, it goes back up 2 dB every 5 seconds, while that keeps the level 6 dB
 below the threshold, but never above `agc-max-gain`. Each cut is logged; the
 steps back up are logged with `-v`. A gain command (eg from `control`) turns
 the AGC off.
+
+With the LNA fixed the AGC has the VGA's range: `lna_gain = 2` gives 16 to
+78 dB. So set the highest gain you want (eg `vga_gain = 15`, 46 dB) and let the
+AGC take it down when it must, rather than the lowest that never overloads.
 
 It sees only the A/D. Overload in the analog stages before it, such as
 intermodulation from a strong signal outside the passband, is not detected:
@@ -121,13 +125,15 @@ it has been gone for `agc-hold` seconds.
 
 ### agc-max-gain (optional)
 
-Decimal dB, default the gain set by `lna_gain` and `vga_gain`. The AGC never
-goes above it, so by default it only ever takes gain away. Set it higher (up to
-95) to let the AGC add gain when the band is quiet.
+Decimal dB, total gain, default the gain set by `lna_gain` and `vga_gain`. The
+AGC never goes above it (the highest VGA step at or below it), so by default it
+only ever takes gain away. Set it higher to let the AGC add gain when the band
+is quiet.
 
 ### agc-min-gain (optional)
 
-Decimal dB, default 0. The AGC never goes below it.
+Decimal dB, total gain, default 0. The AGC never goes below it (the lowest VGA
+step at or above it), nor below the LNA's gain with the VGA at 0.
 
 ### agc-high-threshold (optional)
 
@@ -148,7 +154,8 @@ device = fobos
 frequency = 444m6
 samprate = 50000000
 lna_gain = 2
-vga_gain = 2
+vga_gain = 15
 agc = yes
-agc-max-gain = 30
 ```
+
+starts at 46 dB, and the AGC goes as low as 16 dB when it must.
