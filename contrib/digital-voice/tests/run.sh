@@ -93,6 +93,8 @@ cc $FLAGS -I$TOP -o out/dvtest dvtest.c $LIB -lcodec2 -lstdc++ -lm
 [ -d data ] || { echo "no recordings: run ./fetch.sh first"; exit 1; }
 cc $FLAGS -I$TOP call-serial-test.c $LIB -lcodec2 -lstdc++ -lm -o out/call-serial-test
 out/call-serial-test
+cc $FLAGS -I$TOP auto-diag-test.c $LIB -lcodec2 -lstdc++ -lm -o out/auto-diag-test
+out/auto-diag-test data/voice-dmr.c64
 
 P2KEY="-n 443 -w BEE00 -y 445" # the voice-p25-phase2 system
 fail=0

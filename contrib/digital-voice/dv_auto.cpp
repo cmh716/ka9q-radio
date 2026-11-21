@@ -139,6 +139,7 @@ public:
     // terminator or another call was decoded later in the same IQ block.
     if (playing_ != nullptr) {
       *stats = *playing_;
+      dmr_diagnostics(stats);
       return;
     }
     if (owner_ >= 0) {
@@ -172,6 +173,23 @@ public:
         stats->recent_sync_modes |= 1U << kModes[i];
       if(frame_seen_[i] && samples_ - frame_seen_[i] <= DV_IQ_SAMPRATE)
         stats->recent_frame_modes |= 1U << kModes[i];
+    }
+    dmr_diagnostics(stats);
+  }
+
+  // The DMR receiver's diagnostic counters (embedded LC types, data and
+  // control bursts), whatever mode is playing: data alone, with no voice,
+  // never makes DMR the mode playing
+  void dmr_diagnostics(dv_stats *stats) const
+  {
+    for (size_t i = 0; i < kNumModes; i++) {
+      if (kModes[i] != DV_DMR)
+        continue;
+      dv_stats st;
+      sub_[i]->get_stats(&st);
+      stats->dmr_lc_flcos = st.dmr_lc_flcos;
+      stats->dmr_lc_bad = st.dmr_lc_bad;
+      std::memcpy(stats->dmr_burst_types, st.dmr_burst_types, sizeof st.dmr_burst_types);
     }
   }
 

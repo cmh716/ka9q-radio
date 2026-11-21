@@ -764,6 +764,11 @@ int demod_dv(void *arg){
           char framed[96],sync[96];
           dv_activity_names(framed,sizeof framed,stats.recent_frame_modes);
           dv_activity_names(sync,sizeof sync,stats.recent_sync_modes);
+	  // The DMR receiver's counters, whatever mode plays: data alone never
+	  // makes DMR the mode playing
+	  bool dmr_seen = stats.dmr_lc_flcos != 0;
+	  for(int t = 0; t < 16; t++)
+	    dmr_seen = dmr_seen || stats.dmr_burst_types[t] != 0;
 	  fprintf(stderr,"%s DIGITAL samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64 " framed=%s sync=%s active=%s offset=%+.1f Hz%s%s%s%s%s%s%s%s\n",
 		  chan->name,stats.samples,stats.syncs,stats.frames,
@@ -771,8 +776,8 @@ int demod_dv(void *arg){
 		  chan->dv.source[0] ? chan->dv.source : "-",stats.freq_offset,
 		  position_text(&stats), // D-STAR's, while it is the mode playing
 		  stats.gps_line[0] ? " gps_line=\"" : "",stats.gps_line,stats.gps_line[0] ? "\"" : "",
-		  stats.active_mode == DV_DMR ? " lc=" : "",stats.active_mode == DV_DMR ? flco_list(stats.dmr_lc_flcos) : "",
-		  stats.active_mode == DV_DMR ? " data=" : "",stats.active_mode == DV_DMR ? dmr_data_text(&stats) : ""); // DMR's, while it plays
+		  dmr_seen ? " lc=" : "",dmr_seen ? flco_list(stats.dmr_lc_flcos) : "",
+		  dmr_seen ? " data=" : "",dmr_seen ? dmr_data_text(&stats) : ""); // the DMR receiver's, once it has seen anything
         } else if(is_nxdn && stats.tsbks + stats.tsbk_errors != 0)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " control=%" PRIu64 "/%" PRIu64 " RAN=%u offset=%+.1f Hz\n",
