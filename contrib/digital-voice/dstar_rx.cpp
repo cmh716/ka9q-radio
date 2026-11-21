@@ -507,7 +507,7 @@ private:
   // The sync lost, though the transmission may go on (a fade): everything
   // but the text message, which radios send only near the start. It stays,
   // its sender's, for a relock to pick up (get_stats shows it only once the
-  // source is that sender again)
+  // source is that sender again); unless its sender wasn't yet known
   void lose_lock()
   {
     header_valid_ = false;
@@ -519,6 +519,8 @@ private:
     block_len_ = 0;
     src_[0] = dst_[0] = '\0';
     text_have_ = 0; // a part-assembled message: its blocks may be stale by the relock
+    if (message_owner_[0] == '\0')
+      clear_message(); // whose it was isn't known: after the relock it could seem anyone's
   }
 
   static constexpr size_t kMaxGolayErrors = 6; // two Golay(24,12) words, 3 each

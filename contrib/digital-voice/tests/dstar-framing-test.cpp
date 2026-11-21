@@ -112,6 +112,7 @@ struct dstar_framing_test {
     check(std::strcmp(st.message, "Before the callsign") == 0, "a message before the callsign is its", st.message);
 
     lock_loss();
+    unowned_lock_loss();
 
     dstar_decoder header_block(nullptr, nullptr);
     slow_block(header_block, 0x55, "KD2TY");
@@ -203,6 +204,23 @@ struct dstar_framing_test {
       bits_of(d, kEot, 48);                                // the end of the transmission
       check(d.message_[0] == '\0' && reported(d).empty(), "the end-of-transmission marker clears it");
     }
+  }
+
+  // Text whose sender wasn't known when the lock went isn't given to the
+  // callsign decoded after the relock
+  static void unowned_lock_loss() {
+    dstar_decoder d(nullptr, nullptr);
+    zeros(d, 72);
+    superframe(d, {});
+    superframe(d, text_blocks("Richard NE England  ")); // no callsign yet
+    check(d.message_[0] != '\0' && d.message_owner_[0] == '\0', "text complete, its sender unknown");
+    zeros(d, 4 * kSuperframe * kFrameBits);
+    check(!d.locked_, "the fade loses the lock");
+    superframe(d, {});
+    superframe(d, {});
+    superframe(d, header_blocks("G4SPF"));
+    check(std::strcmp(d.src_, "G4SPF") == 0, "relocked on a callsign", d.src_);
+    check(reported(d).empty(), "the unowned text isn't that callsign's", reported(d).c_str());
   }
 
   // One 6-byte slow data block, as the two frames that carry it
