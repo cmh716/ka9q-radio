@@ -523,8 +523,9 @@ static void *fobos_agc(void *p){
     last_all = all;
     // Overloads at the current gain since the last change: kept through the settle
     pthread_mutex_lock(&sdr->clip_lock);
-    uint64_t const pending = sdr->clips_fresh - last_fresh;
+    uint64_t const fresh = sdr->clips_fresh;
     pthread_mutex_unlock(&sdr->clip_lock);
+    uint64_t const pending = fresh - last_fresh;
     float const power = atomic_load_explicit(&sdr->power, memory_order_relaxed);
     float const dBFS = power > 0 ? power2dB(power * scale_ADpower2FS(frontend)) : -INFINITY;
     pthread_mutex_lock(&sdr->gain_lock);
@@ -560,8 +561,13 @@ static void *fobos_agc(void *p){
 	      && old_vga < sdr->agc_vga_max && dBFS + AGC_STEP_UP <= target){
       new_vga = old_vga + 1;
     }
-    if(new_vga == old_vga)
+    if(new_vga == old_vga){
+      // At the floor already: nothing to cut. These overloads are dealt
+      // with (quiet_since, set above, holds the gain from this one), so they
+      // mustn't keep holding it once the band is clear
+      last_fresh = fresh;
       continue;
+    }
     if(failures >= AGC_RETRIES && now - last_failure < AGC_RETRY_EVERY)
       continue; // the device keeps refusing: try again less often
     pthread_mutex_lock(&sdr->gain_lock);
