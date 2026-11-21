@@ -299,7 +299,7 @@ private:
         if (locked_ && ++missed_ <= 2) {
           expect_sync_ += kSuperframe * kFrameBits;
         } else if (locked_ || bits_ > expect_sync_ + kFrameBits) {
-          end_call();
+          lose_lock();
           return;
         }
       }
@@ -398,7 +398,12 @@ private:
   // superframe boundary (the header's repetition fills most of each), but
   // blocks older than that may be another message's, and must not make a
   // hybrid with this one's. A block that changes starts it again (a new
-  // message). The last complete message stays until the next completes
+  // message). The last complete message stays until the next completes.
+  // The blocks carry no message number or check, so a message changed
+  // within a transmission, in the superframe after the last's block 0 went,
+  // could still combine that block 0 with its own blocks 1-3. A radio's
+  // message is set before it transmits, and a new transmission's header
+  // clears it, so this would take a sender changing it mid-transmission
   void text_block(int index, uint8_t const *chars)
   {
     if (index > 3)
@@ -491,7 +496,19 @@ private:
   // call_serial_ advances only on a definitive end (an end-of-transmission
   // marker, or the signal lost); a lost sync lock ends the call's state but
   // not its identity, which radiod holds through a brief fade
+  // A definitive end (the end-of-transmission marker, the signal lost):
+  // the text message goes with it
   void end_call()
+  {
+    lose_lock();
+    clear_message();
+  }
+
+  // The sync lost, though the transmission may go on (a fade): everything
+  // but the text message, which radios send only near the start. It stays,
+  // its sender's, for a relock to pick up (get_stats shows it only once the
+  // source is that sender again)
+  void lose_lock()
   {
     header_valid_ = false;
     header_left_ = 0;
@@ -501,7 +518,7 @@ private:
     header_.clear();
     block_len_ = 0;
     src_[0] = dst_[0] = '\0';
-    clear_message();
+    text_have_ = 0; // a part-assembled message: its blocks may be stale by the relock
   }
 
   static constexpr size_t kMaxGolayErrors = 6; // two Golay(24,12) words, 3 each
