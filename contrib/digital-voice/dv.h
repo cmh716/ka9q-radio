@@ -91,6 +91,10 @@ typedef struct {
   uint32_t recent_frame_modes;
   // DMR talker alias of the current call, UTF-8, "" until complete
   char talker_alias[64];
+  // DMR, for diagnosis: the FLCOs of the embedded LCs that passed their
+  // checks (bit n: FLCO n), and how many failed them
+  uint64_t dmr_lc_flcos;
+  uint64_t dmr_lc_bad;
 } dv_stats;
 
 // P25 control channel events

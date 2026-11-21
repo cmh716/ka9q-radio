@@ -257,6 +257,21 @@ struct dv_audio_queue {
   int absent; // samples without IDs, independent of the number of PCM frames
 };
 
+// DMR embedded LC FLCOs seen, for the -v log: "0,4,5" ("-" if none).
+// 0 group voice, 3 unit to unit, 4-7 talker alias, 8 GPS
+static char const *flco_list(uint64_t flcos){
+  static __thread char buf[200];
+  buf[0] = '\0';
+  for(int i = 0; i < 64; i++){
+    if(flcos & ((uint64_t)1 << i)){
+      char n[8];
+      snprintf(n,sizeof n,"%s%d",buf[0] ? "," : "",i);
+      strlcat(buf,n,sizeof buf);
+    }
+  }
+  return buf[0] ? buf : "-";
+}
+
 // Control channel events (site, band plan, voice grants), logged with -v
 // and passed to the grant follower, if any
 struct dv_events {
@@ -730,13 +745,14 @@ int demod_dv(void *arg){
 	  fprintf(stderr,"%s DMR samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " bursts=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64
-		  " slot=%d cc=%d src=%s dst=%s%s errors=%.1f%% offset=%+.1f Hz\n",
+		  " slot=%d cc=%d src=%s dst=%s%s%s%s%s errors=%.1f%% offset=%+.1f Hz lc=%s lc_bad=%" PRIu64 "\n",
 		  chan->name,stats.samples,stats.symbols,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.active_slot,stats.dmr_cc,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
 		  stats.m17_encrypted ? " encrypted" : "",
-		  100.0f * stats.error_rate,stats.freq_offset);
+		  stats.talker_alias[0] ? " alias=\"" : "",stats.talker_alias,stats.talker_alias[0] ? "\"" : "",
+		  100.0f * stats.error_rate,stats.freq_offset,flco_list(stats.dmr_lc_flcos),stats.dmr_lc_bad);
 	else
 	  fprintf(stderr,"%s P25 samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " frames=%" PRIu64

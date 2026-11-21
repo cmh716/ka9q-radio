@@ -124,6 +124,8 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + (inverted_ ? -1 : 1) * fsk4_->fine_offset_hz();
     stats->active_slot = active_slot_ + 1;
     stats->dmr_cc = cc_;
+    stats->dmr_lc_flcos = lc_flcos_;
+    stats->dmr_lc_bad = lc_bad_;
     if (active_slot_ >= 0)
       stats->error_rate = slots_[active_slot_].error_rate();
     // The call last played, until it ends (terminator, or sync lost): not
@@ -395,7 +397,7 @@ private:
       embedded_lc(frag, c);
   }
 
-  static void embedded_lc(std::vector<uint8_t> const& frag, call& c)
+  void embedded_lc(std::vector<uint8_t> const& frag, call& c)
   {
     bool data[128] = {};
     for (unsigned a = 0, b = 0; a < 128; a++) { // unpacked downwards in columns
@@ -405,14 +407,18 @@ private:
         b -= 127;
     }
     for (unsigned a = 0; a < 112; a += 16)
-      if (!CHamming::decode16114(data + a))
+      if (!CHamming::decode16114(data + a)) {
+        lc_bad_++;
         return;
+      }
     for (unsigned a = 0; a < 16; a++) {
       bool p = false;
       for (unsigned r = 0; r < 128; r += 16)
         p ^= data[a + r];
-      if (p)
+      if (p) {
+        lc_bad_++;
         return;
+      }
     }
     uint8_t bits[72];
     int n = 0;
@@ -431,9 +437,12 @@ private:
     unsigned sum = 0;
     for (int i = 0; i < 9; i++)
       sum += lc[i];
-    if (rx != sum % 31)
+    if (rx != sum % 31) {
+      lc_bad_++;
       return;
+    }
     int const flco = lc[0] & 0x3f;
+    lc_flcos_ |= uint64_t{1} << flco;
     if (flco >= 4 && flco <= 7) { // talker alias header, blocks 1-3
       if (lc[1] == 0) // FID: standard (ETSI TS 102 361-2 7.1.1.4)
         talker_alias(c, flco - 4, lc + 2);
@@ -530,6 +539,8 @@ private:
   uint64_t bursts_ = 0;
   uint64_t voice_decoded_ = 0;
   uint64_t voice_muted_ = 0;
+  uint64_t lc_flcos_ = 0;   // FLCOs of the embedded LCs seen (bit n: FLCO n)
+  uint64_t lc_bad_ = 0;     // embedded LCs that failed their checks
 };
 
 } // namespace
