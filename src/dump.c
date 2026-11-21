@@ -311,9 +311,11 @@ void dump_metadata(FILE *fp,uint8_t const * const buffer,size_t length,bool newl
     case CALL_SOURCE:
     case CALL_MODE:
     case CALL_SYSTEM:
+    case CALL_ALIAS:
       {
 	char *p = decode_string(cp,optlen);
-	fprintf(fp,"call %s %s",type == CALL_DEST ? "dest" : type == CALL_SOURCE ? "source" : type == CALL_MODE ? "mode" : "system",p != NULL ? p : "");
+	fprintf(fp,"call %s %s",type == CALL_DEST ? "dest" : type == CALL_SOURCE ? "source" : type == CALL_MODE ? "mode"
+		: type == CALL_ALIAS ? "alias" : "system",p != NULL ? p : "");
 	FREE(p);
       }
       break;

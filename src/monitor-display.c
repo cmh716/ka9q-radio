@@ -369,10 +369,34 @@ static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
     snprintf(where,sizeof where," %.4f",freq * 1e-6);
     strlcat(out,where,size);
   }
-  if(sp->chan.dv.call_src[0] != '\0'){
+  // The talker: by alias (DMR talker alias) when one has come, else ID
+  char const *talker = sp->chan.dv.call_alias[0] != '\0' ? sp->chan.dv.call_alias : sp->chan.dv.call_src;
+  if(talker[0] != '\0'){
     strlcat(out," ",size);
-    strlcat(out,sp->chan.dv.call_src,size);
+    strlcat(out,talker,size);
   }
+}
+
+// in as exactly width columns: cut, or padded with spaces. Counts UTF-8
+// characters, not bytes (a talker alias may have accents), each one column,
+// and never cuts one in half
+static void ui_fit(char *out,size_t size,char const *in,int width){
+  size_t o = 0;
+  int cols = 0;
+  for(size_t i = 0; in[i] != '\0' && cols < width;){
+    size_t n = 1;
+    while((in[i+n] & 0xc0) == 0x80) // continuation bytes
+      n++;
+    if(o + n + 1 > size)
+      break;
+    memcpy(out + o,in + i,n);
+    o += n;
+    i += n;
+    cols++;
+  }
+  for(; cols < width && o + 1 < size; cols++)
+    out[o++] = ' ';
+  out[o] = '\0';
 }
 
 // How long since the channel last sent audio: "now", "4:07", "3h12", "2d"
@@ -456,15 +480,16 @@ static void dashboard(void){
     if(isfinite(sp->snr)) snprintf(snr,sizeof snr,"%.1f",sp->snr);
     if(muted(sp)) strlcpy(gain,"mute",sizeof gain);
     else snprintf(gain,sizeof gain,"%+.0f",voltage2dB(sp->gain));
-    char tone[16],call[64],last[16];
+    char tone[16],full[128],call[128],last[16];
     ui_tone(sp,tone,sizeof tone);
-    ui_call(sp,narrow,call,sizeof call);
+    ui_call(sp,narrow,full,sizeof full);
+    ui_fit(call,sizeof call,full,narrow ? 16 : 22);
     ui_last(sp,now,last,sizeof last);
     if(narrow)
-      snprintf(line,sizeof line,"%c %10.5f %-7.7s %6.6s %-16.16s %5.5s %s",index == Current ? '>' : ' ',
+      snprintf(line,sizeof line,"%c %10.5f %-7.7s %6.6s %s %5.5s %s",index == Current ? '>' : ' ',
                sp->chan.tune.freq/1e6,detected,tone,call,last,name);
     else
-      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6.6s %-22.22s %5.5s %6s %6s  %s",index == Current ? '>' : ' ',
+      snprintf(line,sizeof line,"%c %10.5f  %-8.8s %-8.8s %6.6s %s %5.5s %6s %6s  %s",index == Current ? '>' : ' ',
                sp->chan.tune.freq/1e6,configured,detected,tone,call,last,snr,gain,name);
     attr_t attr = recent ? A_BOLD : A_DIM;
     int pair = UI_FRAME;
@@ -499,9 +524,11 @@ static void dashboard(void){
         snprintf(slot,sizeof slot,"%d",sp->chan.dv.call_slot+1);
       char tone[16];
       ui_tone(sp,tone,sizeof tone);
+      char source[96];
+      snprintf(source,sizeof source,"%s%s%s%s",sp->chan.dv.call_src[0] ? sp->chan.dv.call_src : "-",
+               sp->chan.dv.call_alias[0] ? " (" : "",sp->chan.dv.call_alias,sp->chan.dv.call_alias[0] ? ")" : "");
       snprintf(line,sizeof line,"Detected: %s | Tone: %s | Source: %s | Destination: %s | Slot: %s",ui_detected(sp),tone,
-               sp->chan.dv.call_src[0] ? sp->chan.dv.call_src : "-",
-               sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : "-",slot);
+               source,sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : "-",slot);
       ui_text(table_end+3,2,line,A_NORMAL,UI_DIGITAL);
       snprintf(line,sizeof line,"SSRC %u | Gain %+.0f dB | SNR %.1f dB | %s | %s",sp->ssrc,
                voltage2dB(sp->gain),sp->snr,muted(sp) ? "MUTED" : "Audio enabled",

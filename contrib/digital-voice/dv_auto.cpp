@@ -161,7 +161,7 @@ public:
         stats->syncs += st.syncs;
         stats->frames += st.frames;
       }
-      stats->src_call[0] = stats->dst_call[0] = '\0';
+      stats->src_call[0] = stats->dst_call[0] = stats->talker_alias[0] = '\0';
       stats->active_mode = -1;
       stats->m17_can = -1;
     }

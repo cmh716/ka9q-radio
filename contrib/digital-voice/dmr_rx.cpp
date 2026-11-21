@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "dv_decoder.h"
@@ -17,6 +18,7 @@
 #include "upstream/frame_sync_magics.h"
 #include "dv_ambe.h"
 #include "dmr_idle.h"
+#include "dmr_alias.h"
 #include "upstream/bptc19696.h"
 #include "upstream/ezpwd/rs"
 #include "upstream/golay2087.h"
@@ -131,6 +133,8 @@ public:
       if (c.have_ids) {
         std::snprintf(stats->src_call, sizeof stats->src_call, "%u", c.source);
         std::snprintf(stats->dst_call, sizeof stats->dst_call, "%s%u", c.group ? "TG " : "", c.destination);
+        if (c.alias.complete())
+          std::snprintf(stats->talker_alias, sizeof stats->talker_alias, "%s", c.alias.text());
       }
       stats->m17_encrypted = c.encrypted;
     }
@@ -339,7 +343,7 @@ private:
       c.group = flco == 0;                  // group voice call (3 = unit to unit)
       c.encrypted = (lc[2] & 0x40) != 0;    // service options: privacy
       c.destination = (lc[3] << 16) | (lc[4] << 8) | lc[5];
-      c.source = (lc[6] << 16) | (lc[7] << 8) | lc[8];
+      set_source(c, (lc[6] << 16) | (lc[7] << 8) | lc[8]);
       c.have_ids = true;
       break;
     }
@@ -430,14 +434,32 @@ private:
     if (rx != sum % 31)
       return;
     int const flco = lc[0] & 0x3f;
+    if (flco >= 4 && flco <= 7) { // talker alias header, blocks 1-3
+      if (lc[1] == 0) // FID: standard (ETSI TS 102 361-2 7.1.1.4)
+        talker_alias(c, flco - 4, lc + 2);
+      return;
+    }
     if (flco != 0 && flco != 3)
       return; // not a voice call LC (group or unit to unit)
     c.group = flco == 0;
     if (lc[2] & 0x40)
       c.encrypted = true;
     c.destination = (lc[3] << 16) | (lc[4] << 8) | lc[5];
-    c.source = (lc[6] << 16) | (lc[7] << 8) | lc[8];
+    set_source(c, (lc[6] << 16) | (lc[7] << 8) | lc[8]);
     c.have_ids = true;
+  }
+
+  // A different talker's alias isn't this one's
+  static void set_source(call& c, unsigned source)
+  {
+    if (c.have_ids && source != c.source)
+      c.alias.reset();
+    c.source = source;
+  }
+
+  static void talker_alias(call& c, int part, uint8_t const *payload)
+  {
+    c.alias.add(part, payload);
   }
 
   // rx_sync::codeword(), CODEWORD_DMR case (dv_ambe2450)
@@ -494,6 +516,7 @@ private:
     bool group = true;
     bool encrypted = false;
     unsigned source = 0, destination = 0;
+    dmr_talker_alias alias; // embedded LC, FLCO 4-7
   };
   call calls_[2];
   std::vector<uint8_t> emb_lc_[2]; // embedded LC fragments being collected

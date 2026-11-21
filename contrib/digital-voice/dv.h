@@ -89,6 +89,8 @@ typedef struct {
   // Bit N corresponds to dv_mode N; multiple bits preserve ambiguity.
   uint32_t recent_sync_modes;
   uint32_t recent_frame_modes;
+  // DMR talker alias of the current call, UTF-8, "" until complete
+  char talker_alias[64];
 } dv_stats;
 
 // P25 control channel events

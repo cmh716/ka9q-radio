@@ -213,6 +213,7 @@ struct channel {
     char call_dest[24];           // talkgroup, target unit or destination callsign
     char call_src[24];            // source unit ID or callsign
     char call_mode[8];            // "P25", "DMR", ...
+    char call_alias[64];          // the talker's alias (DMR talker alias), UTF-8; display only, not an ID
     char system[32];              // the radio system this channel is on, as "system" in the config names it ("" if none)
     uint32_t call_id;             // changes with each call, 0 = none; published as its audio starts and ends
     double call_freq;             // where the call is (a followed call's voice channel), Hz

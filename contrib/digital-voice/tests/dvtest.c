@@ -99,7 +99,7 @@ int main(int argc, char **argv)
   uint64_t samples = 0, noise_samples = (uint64_t)(noise * DV_IQ_SAMPRATE);
   bool lost_done = false;
   uint64_t zeros_left = 0;
-  char last[160] = "";
+  char last[240] = "";
   for (;;) {
     size_t n;
     if (zeros_left > 0) {
@@ -131,11 +131,12 @@ int main(int argc, char **argv)
     }
     dv_stats s;
     dv_get_stats(d, &s);
-    char now[160];
-    snprintf(now, sizeof now, "mode %s slot %d src %s dst %s%s",
+    char now[240];
+    snprintf(now, sizeof now, "mode %s slot %d src %s dst %s%s%s%s%s",
              mode != DV_AUTO ? dv_mode_name(mode) : s.active_mode >= 0 ? dv_mode_name(s.active_mode) : "-",
              s.active_slot, s.src_call[0] ? s.src_call : "-", s.dst_call[0] ? s.dst_call : "-",
-             s.m17_encrypted ? " encrypted" : "");
+             s.m17_encrypted ? " encrypted" : "",
+             s.talker_alias[0] ? " alias \"" : "", s.talker_alias, s.talker_alias[0] ? "\"" : "");
     if (strcmp(now, last) != 0) {
       printf("%7.2f %s\n", Now, now);
       strcpy(last, now);

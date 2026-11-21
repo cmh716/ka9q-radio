@@ -232,6 +232,7 @@ struct dv_call {
   char dest[sizeof ((chan_t *)0)->dv.call_dest];
   char src[sizeof ((chan_t *)0)->dv.call_src];
   char mode[sizeof ((chan_t *)0)->dv.call_mode];
+  char alias[sizeof ((chan_t *)0)->dv.call_alias]; // the talker's, for display: not part of the call's identity
   uint32_t id;
   double freq;
   int slot;
@@ -307,6 +308,7 @@ static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *fol
   if(dest != NULL)
     strlcpy(call->dest,dest,sizeof call->dest);
   strlcpy(call->src,st->src_call,sizeof call->src);
+  strlcpy(call->alias,st->talker_alias,sizeof call->alias);
   strlcpy(call->mode,dv_mode_name(m),sizeof call->mode);
 }
 
@@ -372,11 +374,17 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
       }
     }
   } else {
-    // Same call: take any ID that has filled in
+    // Same call: take any ID that has filled in, and the talker's alias,
+    // which comes some superframes into the call
     if(cur->dest[0] == '\0')
       strlcpy(cur->dest,seen->dest,sizeof cur->dest);
     if(cur->src[0] == '\0')
       strlcpy(cur->src,seen->src,sizeof cur->src);
+    if(seen->alias[0] != '\0' && strcmp(cur->alias,seen->alias) != 0){
+      if(Verbose > 1)
+	fprintf(stderr,"%s call %u: %s is \"%s\"\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->alias);
+      strlcpy(cur->alias,seen->alias,sizeof cur->alias);
+    }
   }
 }
 
@@ -384,13 +392,21 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
 // previous one onto the network first, then send status
 static void publish_call(chan_t *chan,struct dv_call const *call){
   if(call->id == chan->dv.call_id && strcmp(call->dest,chan->dv.call_dest) == 0
-     && strcmp(call->src,chan->dv.call_src) == 0)
+     && strcmp(call->src,chan->dv.call_src) == 0){
+    // The same call. Its talker's alias may have come: show it, but it is
+    // no change of call (no new timestamp for recorders to split at)
+    if(strcmp(call->alias,chan->dv.call_alias) != 0){
+      strlcpy(chan->dv.call_alias,call->alias,sizeof chan->dv.call_alias);
+      push_status(chan);
+    }
     return;
+  }
   if(call->id != chan->dv.call_id)
     send_output(chan,NULL,0,false); // flush: the old call's last packet goes first
   strlcpy(chan->dv.call_dest,call->dest,sizeof chan->dv.call_dest);
   strlcpy(chan->dv.call_src,call->src,sizeof chan->dv.call_src);
   strlcpy(chan->dv.call_mode,call->mode,sizeof chan->dv.call_mode);
+  strlcpy(chan->dv.call_alias,call->alias,sizeof chan->dv.call_alias);
   chan->dv.call_id = call->id;
   chan->dv.call_freq = call->freq;
   chan->dv.call_slot = call->slot;
@@ -534,7 +550,7 @@ int demod_dv(void *arg){
   chan->tp2 = 0; // decoded frames (P25) or bursts (DMR)
   chan->p25.have_nac = false;
   chan->dv.source[0] = '\0';
-  chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = '\0';
+  chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = chan->dv.call_alias[0] = '\0';
   chan->dv.call_id = 0;
   chan->dv.call_freq = chan->tune.freq;
   chan->dv.call_slot = -1;
