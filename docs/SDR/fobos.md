@@ -135,6 +135,10 @@ is quiet.
 Decimal dB, total gain, default 0. The AGC never goes below it (the lowest VGA
 step at or above it), nor below the LNA's gain with the VGA at 0.
 
+If the configured `vga_gain` is outside these limits, radiod starts at the
+nearest step inside them. If they leave no VGA step at all (eg `agc-max-gain`
+below the LNA's gain), radiod says so and leaves the AGC off.
+
 ### agc-high-threshold (optional)
 
 Decimal dBFS, default -15. The average A/D level above which the gain comes
