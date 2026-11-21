@@ -594,7 +594,7 @@ void *statproc(void *arg){
       } else if(sp->talkgroup_ended == 0)
 	sp->talkgroup_ended = gps_time_ns();
     }
-    // A position (D-STAR GPS): remembered, whose and when, after the call.
+    // A position (D-STAR or YSF GPS): remembered, whose and when, after the call.
     // Every status repeats the call's position: it is timed from when it
     // first came (new coordinates, sender or call), not from each repeat
     if(sp->chan.dv.call_has_position){

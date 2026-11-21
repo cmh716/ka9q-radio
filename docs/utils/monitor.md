@@ -159,7 +159,8 @@ repeater. Last is the time since the channel last sent audio (now, 4:07, 3h12,
 2d). Terminals narrower than 100 columns leave out Config, SNR and Gain, and the
 followed frequency in Call.
 
-A D-STAR call that sends its position (D-PRS or NMEA GPS in the slow data)
+A D-STAR or YSF call that sends its position (D-STAR's D-PRS or NMEA GPS in
+the slow data, the GPS message of a YSF radio such as an FT-3D)
 shows the sender's locator after their callsign in Call (CQCQCQ KD2TYY
 FN02qu).
 

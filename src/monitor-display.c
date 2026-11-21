@@ -376,7 +376,7 @@ static void ui_call(sess_t const *sp,bool brief,char *out,size_t size){
     strlcat(out," ",size);
     strlcat(out,talker,size);
   }
-  // where they are (D-STAR GPS), as a locator
+  // where they are (D-STAR or YSF GPS), as a locator
   if(sp->chan.dv.call_has_position){
     char grid[8];
     latlon_to_locator(sp->chan.dv.call_lat,sp->chan.dv.call_lon,grid,sizeof grid);

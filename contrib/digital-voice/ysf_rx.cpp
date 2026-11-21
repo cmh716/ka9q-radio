@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "dv_decoder.h"
+#include "ysf_gps.h"
 #include "dv_frontend.h"
 #include "upstream/bit_utils.h"
 #include "upstream/check_frame_sync.h"
@@ -141,6 +142,16 @@ public:
     std::memcpy(stats->src_call, src_, sizeof src_);
     std::memcpy(stats->dst_call, dst_, sizeof dst_);
     via(stats->message, sizeof stats->message);
+    // The position is its sender's, as with D-STAR
+    if (gps_.valid() && src_[0] != '\0'
+        && (std::strcmp(src_, position_owner_) == 0 || position_owner_[0] == '\0')) {
+      stats->has_position = true;
+      stats->latitude = gps_.latitude();
+      stats->longitude = gps_.longitude();
+    }
+    if (gps_.last_message()[0] != '\0')
+      std::snprintf(stats->gps_line, sizeof stats->gps_line, "%s%s%s", gps_.last_message(),
+                    gps_.radio()[0] ? " " : "", gps_.radio());
     stats->m17_can = -1;
   }
 
@@ -206,6 +217,8 @@ private:
   {
     dt_ = kDtVd1; // OP25 starts muted until a FICH says voice
     src_[0] = dst_[0] = down_[0] = up_[0] = '\0';
+    gps_.reset();
+    position_owner_[0] = '\0';
   }
 
   // A callsign field of the data channel, frame fn 0-3: destination,
@@ -241,10 +254,11 @@ private:
     // rx_sync::ysf_sync(): the data type persists until a FICH decodes
     uint32_t fich;
     int fi = kFiCommunication;
-    int fn = -1;
+    int fn = -1, ft = -1;
     if (ysf_decode_fich(&viterbi_, dibits + kSyncDibits, fich)) {
       fi = (fich >> 30) & 3;
       fn = (fich >> 19) & 7;
+      ft = (fich >> 16) & 7; // the superframe's last frame number
       dt_ = (fich >> 8) & 3;
     }
     if (fi == kFiTerminator) {
@@ -256,14 +270,21 @@ private:
     bool const fullrate = dt_ == kDtVoiceFr;
 
     // V/D mode 2 communication frames carry callsigns in their data channel,
-    // one field per frame number: destination, source, downlink, uplink, ...
-    if (dt_ == kDtVd2 && fi == kFiCommunication && fn >= 0 && fn <= 3) {
+    // one field per frame number: destination, source, downlink, uplink;
+    // frames 6 and 7 a GPS message
+    if (dt_ == kDtVd2 && fi == kFiCommunication && fn == 0)
+      gps_.superframe();
+    if (dt_ == kDtVd2 && fi == kFiCommunication && ((fn >= 0 && fn <= 3) || fn == 6 || fn == 7)) {
       uint8_t dch[100];
       for (int v = 0; v < 5; v++)
         std::memcpy(dch + 20 * v, dibits + v * 72 + 120, 20);
       char call[11];
-      if (ysf_decode_dch_vd2(&viterbi_, dch, call))
-        store_field(fn, call);
+      if (ysf_decode_dch_vd2(&viterbi_, dch, call)) {
+        if (fn <= 3)
+          store_field(fn, call);
+        else if (gps_.frame(fn, ft, reinterpret_cast<uint8_t const *>(call)))
+          std::memcpy(position_owner_, src_, sizeof src_); // whose: "" if not yet known
+      }
     }
 
     // Header frames carry no voice
@@ -370,6 +391,8 @@ private:
   char dst_[12]{};
   char down_[12]{};  // downlink: the gateway or room the call came down from
   char up_[12]{};    // uplink: the repeater or node it went up through
+  ysf_gps gps_;      // the position, from frames 6 and 7
+  char position_owner_[12]{}; // whose: src_ when it came
   uint64_t symbols_ = 0;
   uint64_t syncs_ = 0;
   uint64_t frames_ = 0;

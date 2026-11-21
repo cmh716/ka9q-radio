@@ -234,7 +234,7 @@ struct dv_call {
   char mode[sizeof ((chan_t *)0)->dv.call_mode];
   char alias[sizeof ((chan_t *)0)->dv.call_alias]; // the talker's, for display: not part of the call's identity
   char message[sizeof ((chan_t *)0)->dv.call_message]; // the transmission's text: display only, too
-  bool has_position;   // the sender's position (D-STAR GPS): display only
+  bool has_position;   // the sender's position (D-STAR or YSF GPS): display only
   double lat,lon;
   uint32_t id;
   double freq;

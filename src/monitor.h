@@ -113,7 +113,7 @@ struct session {
   bool talkgroup_named;  // callsign and id are a P25 call's talkgroup, not a repeater
   int64_t talkgroup_ended; // when that call ended (gps_time_ns), 0 while it lasts
   float distance;     // meters, if known
-  // The last position a call on this channel sent (D-STAR GPS): kept after
+  // The last position a call on this channel sent (D-STAR or YSF GPS): kept after
   // the call, with whose it was and when
   bool have_position;
   double position_lat,position_lon;
