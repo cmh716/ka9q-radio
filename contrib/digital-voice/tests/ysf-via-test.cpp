@@ -32,6 +32,19 @@ struct ysf_via_test {
     check("**********", "*****", "");
     check("N0CALL", "N0CALL", "via N0CALL");
     check("", "", "");
+    destination("**********", "ALL");
+    destination("*********", "ALL");
+    destination("CQCQCQ    ", "CQCQCQ");
+    destination("K*        ", "K*");
+  }
+  static void destination(char const *field, char const *want) {
+    ysf_decoder d(nullptr, nullptr);
+    char call[11];
+    std::snprintf(call, sizeof call, "%s", field);
+    d.store_field(0, call);
+    bool const ok = std::strcmp(d.dst_, want) == 0;
+    std::printf("%s destination \"%s\": \"%s\"\n", ok ? "ok  " : "FAIL", field, d.dst_);
+    failures += !ok;
   }
 };
 int ysf_via_test::failures = 0;

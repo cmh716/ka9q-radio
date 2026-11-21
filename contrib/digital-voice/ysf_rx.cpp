@@ -208,6 +208,18 @@ private:
     src_[0] = dst_[0] = down_[0] = up_[0] = '\0';
   }
 
+  // A callsign field of the data channel, frame fn 0-3: destination,
+  // source, downlink, uplink. A call to everyone has its destination all
+  // '*' (the fill of an unused field): "ALL", as D-STAR's is "CQCQCQ"
+  void store_field(int fn, char call[11])
+  {
+    tidy_callsign(call);
+    if (fn == 0 && call[0] == '*' && std::strspn(call, "*") == std::strlen(call))
+      std::strcpy(call, "ALL");
+    char *const field[4] = {dst_, src_, down_, up_};
+    std::strncpy(field[fn], call, sizeof src_ - 1);
+  }
+
   // The way the call came: "via UPLINK/DOWNLINK" (the repeater or node it
   // went up through, the gateway or room it came down from), blank fields
   // and the radios' "*****" fill left out; "" when neither is known
@@ -250,11 +262,8 @@ private:
       for (int v = 0; v < 5; v++)
         std::memcpy(dch + 20 * v, dibits + v * 72 + 120, 20);
       char call[11];
-      if (ysf_decode_dch_vd2(&viterbi_, dch, call)) {
-        tidy_callsign(call);
-        char *const field[4] = {dst_, src_, down_, up_};
-        std::strncpy(field[fn], call, sizeof src_ - 1);
-      }
+      if (ysf_decode_dch_vd2(&viterbi_, dch, call))
+        store_field(fn, call);
     }
 
     // Header frames carry no voice
