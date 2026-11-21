@@ -96,6 +96,7 @@ void tidy_callsign(char s[11])
 }
 
 class ysf_decoder : public dv_decoder {
+  friend struct ysf_via_test;
 public:
   ysf_decoder(dv_pcm_callback callback, void *user_data)
     : callback_(callback), user_data_(user_data), frontend_(350.0f), fsk4_(DV_RRC_TAPS, kDeviation)
@@ -139,6 +140,7 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + fsk4_.fine_offset_hz();
     std::memcpy(stats->src_call, src_, sizeof src_);
     std::memcpy(stats->dst_call, dst_, sizeof dst_);
+    via(stats->message, sizeof stats->message);
     stats->m17_can = -1;
   }
 
@@ -203,7 +205,22 @@ private:
   void end_call()
   {
     dt_ = kDtVd1; // OP25 starts muted until a FICH says voice
-    src_[0] = dst_[0] = '\0';
+    src_[0] = dst_[0] = down_[0] = up_[0] = '\0';
+  }
+
+  // The way the call came: "via UPLINK/DOWNLINK" (the repeater or node it
+  // went up through, the gateway or room it came down from), blank fields
+  // and the radios' "*****" fill left out; "" when neither is known
+  void via(char *out, size_t size) const
+  {
+    auto known = [](char const *s) { return s[0] != '\0' && std::strspn(s, "*") != std::strlen(s); };
+    bool const up = known(up_), down = known(down_);
+    if (up && down && std::strcmp(up_, down_) != 0)
+      std::snprintf(out, size, "via %s/%s", up_, down_);
+    else if (up || down)
+      std::snprintf(out, size, "via %s", up ? up_ : down_);
+    else
+      out[0] = '\0';
   }
 
   void frame(uint8_t const *dibits)
@@ -228,14 +245,15 @@ private:
 
     // V/D mode 2 communication frames carry callsigns in their data channel,
     // one field per frame number: destination, source, downlink, uplink, ...
-    if (dt_ == kDtVd2 && fi == kFiCommunication && (fn == 0 || fn == 1)) {
+    if (dt_ == kDtVd2 && fi == kFiCommunication && fn >= 0 && fn <= 3) {
       uint8_t dch[100];
       for (int v = 0; v < 5; v++)
         std::memcpy(dch + 20 * v, dibits + v * 72 + 120, 20);
       char call[11];
       if (ysf_decode_dch_vd2(&viterbi_, dch, call)) {
         tidy_callsign(call);
-        std::strncpy(fn == 1 ? src_ : dst_, call, sizeof src_ - 1);
+        char *const field[4] = {dst_, src_, down_, up_};
+        std::strncpy(field[fn], call, sizeof src_ - 1);
       }
     }
 
@@ -341,6 +359,8 @@ private:
 
   char src_[12]{};
   char dst_[12]{};
+  char down_[12]{};  // downlink: the gateway or room the call came down from
+  char up_[12]{};    // uplink: the repeater or node it went up through
   uint64_t symbols_ = 0;
   uint64_t syncs_ = 0;
   uint64_t frames_ = 0;

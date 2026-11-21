@@ -179,7 +179,7 @@ enum status_type {
   CALL_TIMESTAMP, // Digital voice: RTP timestamp of the stream's first sample this call change applies to
   CALL_SYSTEM,    // Digital voice: the configured name of the radio system this channel is on ("" if none)
   CALL_ALIAS,     // Digital voice: the talker's alias (DMR talker alias), UTF-8, "" if none or not yet complete
-  CALL_MESSAGE,   // Digital voice: the transmission's text message (D-STAR slow data), "" if none or not yet complete
+  CALL_MESSAGE,   // Digital voice: the transmission's text: D-STAR text message, YSF "via" uplink/downlink; "" if none
 };
 
 /**

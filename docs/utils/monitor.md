@@ -144,7 +144,7 @@ shows the NAC last received (N293; a following channel's is its control channel'
 
 The Call column shows the call in progress: talkgroup (TG2000), the radio
 a private call is to (U2000) or the destination callsign, the talker (their DMR talker alias once it has come, a few seconds into
-the call, else their ID, then any D-STAR text message), and on a trunked channel the voice frequency being
+the call, else their ID, then any D-STAR text message or the way a YSF call came, via UPLINK/DOWNLINK), and on a trunked channel the voice frequency being
 followed (TG110 463.7250 1757). Between calls a trunked channel shows its state:
 CC R2 / CC N469 while its control channel is received, no CC when it is lost,
 CC search while other control channels are tried, LTR R1 for an LTR home

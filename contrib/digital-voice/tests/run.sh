@@ -59,6 +59,9 @@ out/auto-call-test
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dstar-framing-test.cpp \
   $LIB -lcodec2 -lm -o out/dstar-framing-test
 out/dstar-framing-test
+c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream ysf-via-test.cpp \
+  $LIB -lcodec2 -lm -o out/ysf-via-test
+out/ysf-via-test
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dmr-idle-test.cpp \
   $LIB -lcodec2 -lm -o out/dmr-idle-test
 c++ $FLAGS -std=c++17 -I$TOP -I$TOP/upstream dmr-polarity-test.cpp \
