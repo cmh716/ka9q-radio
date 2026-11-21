@@ -34,8 +34,8 @@ public:
         if (!line_.empty())
           got |= line(line_);
         line_.clear();
-      } else if (c == '$' && !line_.empty() && !(line_ == "$" && c == '$')) {
-        line_ = "$"; // a new sentence: the last lost its end
+      } else if (c == '$' && !line_.empty() && line_ != "$" && line_.compare(0, 2, "$$") != 0) {
+        line_ = "$"; // a new NMEA sentence: the last lost its end (a D-PRS packet may hold a '$')
       } else if (line_.size() < 200) {
         line_ += c;
       }
@@ -48,11 +48,13 @@ public:
     last_ = s;
     double lat, lon;
     bool ok = false;
+    // NMEA says whether it has a fix; D-PRS doesn't, and a radio without one
+    // may send zeros: there 0, 0 isn't taken
     if (s.compare(0, 5, "$$CRC") == 0)
-      ok = dprs(s, lat, lon);
+      ok = dprs(s, lat, lon) && !(lat == 0 && lon == 0);
     else if (s.size() > 6 && s[0] == '$')
       ok = nmea(s, lat, lon);
-    if (!ok || !(std::fabs(lat) <= 90) || !(std::fabs(lon) <= 180) || (lat == 0 && lon == 0))
+    if (!ok || !(std::fabs(lat) <= 90) || !(std::fabs(lon) <= 180))
       return false;
     lat_ = lat;
     lon_ = lon;

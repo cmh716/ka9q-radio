@@ -118,7 +118,8 @@ struct session {
   bool have_position;
   double position_lat,position_lon;
   char position_call[24];
-  int64_t position_time; // gps_time_ns of the last report
+  int64_t position_time; // gps_time_ns when that position first came
+  uint32_t position_call_id; // in which call
   bool notch_enable;         // Enable PL removal notch
   struct iir iir_left;       // State for PL removal filter
   struct iir iir_right;

@@ -72,6 +72,9 @@ int main() {
   check(position(dprs("KD2TYY>API705,DSTAR*:=4250.  N/07836.  W>"), 42 + 50.0 / 60, -(78 + 36.0 / 60)), "D-PRS with position ambiguity");
   check(position(dprs("KD2TYY>API705,DSTAR*:!/5L!!<*e7>{?!"), 49.5, -72.75), "D-PRS compressed (the APRS spec's example)");
   check(none(dprs("KD2TYY>API705,DSTAR*:>status text only")), "D-PRS status, no position");
+  check(position(dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>cost $5 $GP"), plat, plon), "D-PRS with '$' in its comment");
+  check(position(nmea("GPRMC,000000,A,0000.0000,N,00000.0000,E,0,0,211126,,,A"), 0, 0), "NMEA with a fix at 0, 0");
+  check(none(dprs("KD2TYY>API705,DSTAR*:!0000.00N/00000.00E>")), "D-PRS at 0, 0 (perhaps no fix): not taken");
 
   {
     dstar_gps g;

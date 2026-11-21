@@ -166,5 +166,10 @@ FN02qu).
 Larger terminals show caller, destination, timeslot, signal, and packet details
 for the selected channel, and the last position heard on it: the sender, the
 locator and latitude,longitude, the distance and bearing with --location, and
-how long ago once the call has ended. Smaller terminals use a compact table. Press `v` to
+how long since that position came once the call has ended.
+
+radiod sends the positions it decodes on its status stream, as it does the
+callsigns and the audio: they are what the stations broadcast, and D-PRS
+normally reaches the APRS network too. --location is only monitor's own point
+of reference; it is not sent anywhere. Smaller terminals use a compact table. Press `v` to
 switch between the dashboard and full diagnostics; `h` opens keyboard help.

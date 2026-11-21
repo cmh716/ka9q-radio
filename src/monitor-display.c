@@ -415,8 +415,8 @@ static void ui_fit(char *out,size_t size,char const *in,int width){
 }
 
 // The last position a call on this channel sent: "Position: KD2TYY FN02qu
-// 42.83530,-78.60750 | 23 km 284 deg | now" (distance and bearing with
-// --location; the age once the call has gone)
+// 42.83530,-78.60750 | 23 km 284 deg | 3:12 ago" (distance and bearing with
+// --location; once the call has gone, how long since that position came)
 static void ui_position(sess_t const *sp,char *out,size_t size){
   if(!sp->have_position){
     strlcpy(out,"Position: -",size);
