@@ -75,6 +75,16 @@ int main() {
   check(position(dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>cost $5 $GP"), plat, plon), "D-PRS with '$' in its comment");
   check(position(nmea("GPRMC,000000,A,0000.0000,N,00000.0000,E,0,0,211126,,,A"), 0, 0), "NMEA with a fix at 0, 0");
   check(none(dprs("KD2TYY>API705,DSTAR*:!0000.00N/00000.00E>")), "D-PRS at 0, 0 (perhaps no fix): not taken");
+  {
+    // A report that lost its line end runs into the next: the next is still taken
+    std::string const first = dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>first");
+    std::string const second = dprs("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>second");
+    check(position(first.substr(0, first.size() - 3) + second, 42 + 51.0 / 60, plon), "D-PRS after one cut short, no line end between");
+    check(position(first.substr(0, 30) + nmea("GPRMC,123519,A,4250.1234,N,07836.4567,W,0,0,211126,,,A"), lat, lon),
+          "NMEA after a D-PRS report cut short");
+    check(position(dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>see $$CRC1234,x"), plat, plon),
+          "a '$$CRC' in a valid report's comment: the report is still taken whole");
+  }
 
   {
     dstar_gps g;

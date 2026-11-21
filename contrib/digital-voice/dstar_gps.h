@@ -43,9 +43,33 @@ public:
     return got;
   }
 
-  // One complete line; true if it gave a position
+  // One complete line; true if it gave a position. A report that lost its
+  // end runs into the next: if the whole line fails, try again from each
+  // later start of a report ($$CRC, or an NMEA sentence's $ttsss,)
   bool line(std::string const& s) {
     last_ = s;
+    for (size_t at = 0; at != std::string::npos; at = next_start(s, at + 1))
+      if (report(s.substr(at)))
+        return true;
+    return false;
+  }
+
+  static size_t next_start(std::string const& s, size_t from) {
+    for (size_t i = s.find('$', from); i != std::string::npos; i = s.find('$', i + 1)) {
+      if (s.compare(i, 5, "$$CRC") == 0)
+        return i;
+      if (i + 6 < s.size() && s[i + 6] == ',') {
+        bool upper = true;
+        for (size_t k = i + 1; k < i + 6; k++)
+          upper = upper && std::isupper(static_cast<unsigned char>(s[k]));
+        if (upper)
+          return i;
+      }
+    }
+    return std::string::npos;
+  }
+
+  bool report(std::string const& s) {
     double lat, lon;
     bool ok = false;
     // NMEA says whether it has a fix; D-PRS doesn't, and a radio without one
