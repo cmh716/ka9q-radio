@@ -341,9 +341,25 @@ int fobos_setup(struct frontend *const frontend, dictionary const * const dictio
     sdr->agc_lna = sdr->lna_gain;
     int const lna = lna_dB(sdr->lna_gain);
     // The VGA steps inside the limits: none, and the AGC stays off
-    int const vga_min = min_gain <= lna ? 0 : (int)ceilf((min_gain - lna) / 2);
-    int const vga_max = max_gain >= lna + 62 ? 31 : (int)floorf((max_gain - lna) / 2);
-    if(frontend->rf_agc && (!isfinite(min_gain) || !isfinite(max_gain) || vga_min > 31 || vga_max < 0 || vga_min > vga_max)){
+    // Checked before conversion: a NaN, infinite or out of range value would
+    // make the integer conversion undefined
+    bool const limits = isfinite(min_gain) && isfinite(max_gain)
+      && min_gain <= lna + 62 && max_gain >= lna && min_gain <= max_gain;
+    int vga_min = 0, vga_max = 31;
+    if(limits){
+      vga_min = min_gain <= lna ? 0 : (int)ceilf((min_gain - lna) / 2);         // 1..31
+      vga_max = max_gain >= lna + 62 ? 31 : (int)floorf((max_gain - lna) / 2);  // 0..30
+    }
+    if(!isfinite(sdr->agc_high_threshold) || sdr->agc_high_threshold > 0){
+      fprintf(stderr,"fobos: agc-high-threshold %.1f is not a level below 0 dBFS, using %.1f\n",
+	      sdr->agc_high_threshold,AGC_HIGH_THRESHOLD);
+      sdr->agc_high_threshold = AGC_HIGH_THRESHOLD;
+    }
+    if(!isfinite(sdr->agc_hold) || sdr->agc_hold < 0 || sdr->agc_hold > 86400){
+      fprintf(stderr,"fobos: agc-hold %.1f is not 0 to 86400 seconds, using %.0f\n",sdr->agc_hold,AGC_HOLD);
+      sdr->agc_hold = AGC_HOLD;
+    }
+    if(frontend->rf_agc && (!limits || vga_min > vga_max)){
       fprintf(stderr,"fobos: agc-min-gain %.1f and agc-max-gain %.1f leave no VGA step with lna_gain %d (%d to %d dB): AGC off\n",
 	      min_gain,max_gain,sdr->lna_gain,lna,lna + 62);
       frontend->rf_agc = false;
