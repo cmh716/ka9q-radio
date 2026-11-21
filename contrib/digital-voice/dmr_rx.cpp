@@ -255,10 +255,12 @@ private:
         break;
       }
       case DMR_T1_VOICE_SYNC_MAGIC:
+      case DMR_T1_DATA_SYNC_MAGIC:  // direct mode (simplex): the sync names the slot
         shift_reg_ = 0;
         chan_ = 0;
         break;
       case DMR_T2_VOICE_SYNC_MAGIC:
+      case DMR_T2_DATA_SYNC_MAGIC:
         shift_reg_ = 1;
         chan_ = 1;
         break;
@@ -268,8 +270,9 @@ private:
       slot_type_[chan_] = sl_sync; // dmr_slot::load_slot: voice/data decision follows the latest sync
       if (is_voice_sync(sl_sync))
         voice_burst_[chan_] = 0; // burst A of a voice superframe
-      if (sl_sync == DMR_BS_DATA_SYNC_MAGIC || sl_sync == DMR_MS_DATA_SYNC_MAGIC)
-        data_burst(bits + 24, chan_);
+      if (sl_sync == DMR_BS_DATA_SYNC_MAGIC || sl_sync == DMR_MS_DATA_SYNC_MAGIC
+          || sl_sync == DMR_T1_DATA_SYNC_MAGIC || sl_sync == DMR_T2_DATA_SYNC_MAGIC)
+        data_burst(bits + 24, chan_); // headers, terminators and data, direct mode's too
     } else {
       shift_reg_ = (shift_reg_ << 1) + ((chan_ + 1) % 2);
       chan_ = slot_ids[shift_reg_ & 7];
