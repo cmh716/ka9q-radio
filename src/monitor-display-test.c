@@ -102,6 +102,17 @@ int main(void){
   strcpy(sp->chan.dv.call_alias,"A VERY LONG TALKER ALIAS OF 27");
   dashboard();
   check(find_row("TG3100 A VERY LONG TALKER ALIAS OF 27") >= 0,"200 columns: the long alias whole");
+  // A position shown only beside whose it is
+  strcpy(sp->chan.dv.call_dest,"ALL");
+  sp->chan.dv.call_src[0] = sp->chan.dv.call_alias[0] = sp->chan.dv.call_message[0] = '\0';
+  sp->chan.dv.call_has_position = true;
+  sp->chan.dv.call_lat = 47.33383;
+  sp->chan.dv.call_lon = 8.11167;
+  dashboard();
+  check(find_row("ALL") >= 0 && find_row("JN47") < 0,"a position with no talker: no locator");
+  strcpy(sp->chan.dv.call_src,"HB9ETH");
+  dashboard();
+  check(find_row("ALL HB9ETH JN47bi") >= 0,"with the talker: the locator beside them");
   endwin();
   delscreen(scr);
   puts(Failures ? "Monitor display tests FAILED" : "Monitor display tests passed");

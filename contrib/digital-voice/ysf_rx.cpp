@@ -248,12 +248,17 @@ private:
   }
 
   // A callsign field of the data channel, frame fn 0-3: destination,
-  // source, downlink, uplink. A call to everyone has its destination all
-  // '*' (the fill of an unused field): "ALL", as D-STAR's is "CQCQCQ"
+  // source, downlink, uplink. A call to everyone has its destination '*'
+  // fill, all of it or the first five and the sender's 5-character radio ID
+  // ("*****EAFAJ"): "ALL", as D-STAR's is "CQCQCQ", however a superframe
+  // has it, lest the call seem to change. A field with characters no
+  // callsign, room or ID has passed its CRC by chance ("3~^bl q"): left out
   void store_field(int fn, char call[11])
   {
     tidy_callsign(call);
-    if (fn == 0 && call[0] == '*' && std::strspn(call, "*") == std::strlen(call))
+    if (std::strspn(call, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 */-.#") != std::strlen(call))
+      return;
+    if (fn == 0 && std::strncmp(call, "*****", 5) == 0)
       std::strcpy(call, "ALL");
     char *const field[4] = {dst_, src_, down_, up_};
     std::strncpy(field[fn], call, sizeof src_ - 1);

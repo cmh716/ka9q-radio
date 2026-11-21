@@ -37,6 +37,16 @@ struct ysf_via_test {
     destination("*********", "ALL");
     destination("CQCQCQ    ", "CQCQCQ");
     destination("K*        ", "K*");
+    destination("*****EAFAJ", "ALL");
+    {
+      ysf_decoder d(nullptr, nullptr);
+      char ok_field[11] = "**********", junk[11] = "3~^bl q   ";
+      d.store_field(0, ok_field);
+      d.store_field(0, junk);
+      bool const kept = std::strcmp(d.dst_, "ALL") == 0;
+      std::printf("%s a field with characters no callsign has (\"3~^bl q\"): left out\n", kept ? "ok  " : "FAIL");
+      failures += !kept;
+    }
     position();
   }
   // A GPS message from frames 6 and 7: reported with its sender, cleared at the end

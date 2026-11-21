@@ -372,8 +372,9 @@ static void ui_call_text(dv_t const *dv,double tune,bool brief,char *out,size_t 
     strlcat(out," ",size);
     strlcat(out,talker,size);
   }
-  // where they are (D-STAR or YSF GPS), as a locator
-  if(dv->call_has_position){
+  // where they are (D-STAR or YSF GPS), as a locator: only beside whose
+  // position it is
+  if(dv->call_has_position && talker[0] != '\0'){
     char grid[8];
     latlon_to_locator(dv->call_lat,dv->call_lon,grid,sizeof grid);
     if(grid[0] != '\0'){
