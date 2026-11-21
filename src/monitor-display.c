@@ -398,7 +398,7 @@ static int ui_call(sess_t const *sp,int64_t now,bool brief,char *out,size_t size
     ui_call_text(&sp->chan.dv,sp->chan.tune.freq,brief,out,size);
     return 0;
   }
-  if(sp->held_ended != 0 && now - sp->held_ended < (int64_t)(Call_hold * BILLION)){
+  if(sp->held_ended != 0 && now - sp->held_ended < Call_hold){
     ui_call_text(&sp->held_call,sp->held_tune_freq,brief,out,size);
     if(out[0] != '\0')
       return now - sp->held_ended < 30 * (int64_t)BILLION ? 1 : 2;

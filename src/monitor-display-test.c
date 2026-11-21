@@ -80,7 +80,7 @@ int main(void){
   dashboard();
   r = find_row("TG9 KD2TYY");
   check(r >= 0 && (attr_at(r,"TG9 KD2TYY") & A_DIM),"60 s after: dim");
-  sp->held_ended = gps_time_ns() - (int64_t)(Call_hold + 1) * BILLION;
+  sp->held_ended = gps_time_ns() - Call_hold - BILLION;
   dashboard();
   check(find_row("TG9 KD2TYY") < 0,"after the hold: gone");
 

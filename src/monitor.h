@@ -174,7 +174,7 @@ extern int Dit_length;
 extern int Channels;
 extern char const *Init;
 extern char const *Source; // Only accept from this domain name
-extern double Call_hold;    // seconds a call stays on the dashboard after it ends
+extern int64_t Call_hold;   // how long a call stays on the dashboard after it ends, ns
 extern bool Have_location;  // --location given: distances and bearings to positions heard
 extern double My_lat,My_lon; // that location (or a default, for sorting repeaters.d only)
 

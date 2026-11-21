@@ -37,8 +37,10 @@ if [ -f ../../../src/config_paths.h ]; then
     $(pkg-config --libs libbsd-overlay) -o out/monitor-tone-test
   out/monitor-tone-test
   # The dashboard, drawn into ncurses's own screen and read back. Built with
-  # monitor's objects, and monitor.c with its main renamed
+  # monitor's objects (made first: current, whatever was built before), and
+  # monitor.c with its main renamed
   S=../../../src
+  make -s -C $S monitor
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE $(pkg-config --cflags libbsd-overlay) -iquote $S -pthread \
     -Dmain=monitor_real_main -c $S/monitor.c -o out/monitor-nomain.o
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE $(pkg-config --cflags libbsd-overlay) -iquote $S -pthread \
