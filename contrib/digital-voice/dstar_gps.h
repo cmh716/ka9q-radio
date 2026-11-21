@@ -18,7 +18,9 @@ public:
   bool valid() const { return valid_; }
   double latitude() const { return lat_; }   // degrees north
   double longitude() const { return lon_; }  // degrees east
-  char const *last_line() const { return last_.c_str(); } // the last line, checked or not (diagnosis)
+  // For diagnosis: the exact report that last passed its checksum, or the
+  // last line if none in it did
+  char const *last_line() const { return last_.c_str(); }
 
   void reset() {
     valid_ = false;
@@ -84,6 +86,7 @@ public:
     }
     if (best == kMaxStarts)
       return false;
+    last_ = s.substr(starts[best], found[best].end - starts[best]); // what passed, exactly
     lat_ = found[best].lat;
     lon_ = found[best].lon;
     valid_ = true;

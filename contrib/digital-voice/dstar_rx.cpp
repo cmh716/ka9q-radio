@@ -192,6 +192,7 @@ public:
       stats->latitude = gps_.latitude();
       stats->longitude = gps_.longitude();
     }
+    static_assert(sizeof stats->gps_line > dstar_gps::kMaxReport, "room for a whole report and its end");
     std::snprintf(stats->gps_line, sizeof stats->gps_line, "%s", gps_.last_line());
     stats->m17_can = -1;
   }

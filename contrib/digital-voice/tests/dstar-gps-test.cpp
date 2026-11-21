@@ -131,6 +131,15 @@ int main() {
     std::string const after = dprs("KD2TYY>API705,DSTAR*:!4251.00N/07836.45W>after");
     check(position(outer.substr(0, outer.size() - 4) + after, 42 + 51.0 / 60, plon) ,
           "that report cut short, then another: the other (the quoted sentence isn't taken)");
+    {
+      // The diagnostic line is the report that passed, exactly
+      dstar_gps d;
+      deliver(d, outer.substr(0, outer.size() - 4) + after);
+      check(d.last_line() == after, "the diagnostic line is the span that passed, not the whole line");
+      dstar_gps f;
+      deliver(f, "$GPRMC,no checksum");
+      check(std::string(f.last_line()) == "$GPRMC,no checksum", "and the line itself when nothing in it passed");
+    }
     dstar_gps noise;
     std::string const junk(600, 'z');
     deliver(noise, junk + dprs("KD2TYY>API705,DSTAR*:!4250.12N/07836.45W>"));
