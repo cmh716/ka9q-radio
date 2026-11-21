@@ -216,6 +216,30 @@ private:
   void end_call()
   {
     dt_ = kDtVd1; // OP25 starts muted until a FICH says voice
+    new_transmission();
+  }
+
+  // What a frame's FICH says of the transmission. A terminator ends it (true:
+  // nothing more to do with the frame). A header (its FICH checked) starts
+  // one: one still under way lost its terminator, and its callers and
+  // position are not the new one's
+  bool boundary(bool fich_ok, int fi)
+  {
+    if (fi == kFiTerminator) {
+      call_serial_++;
+      end_call();
+      return true;
+    }
+    if (fich_ok && fi == kFiHeader && (src_[0] != '\0' || dst_[0] != '\0' || gps_.valid())) {
+      call_serial_++;
+      new_transmission();
+    }
+    return false;
+  }
+
+  // Forget the transmission's callers and position
+  void new_transmission()
+  {
     src_[0] = dst_[0] = down_[0] = up_[0] = '\0';
     gps_.reset();
     position_owner_[0] = '\0';
@@ -258,17 +282,15 @@ private:
     uint32_t fich;
     int fi = kFiCommunication;
     int fn = -1, ft = -1;
-    if (ysf_decode_fich(&viterbi_, dibits + kSyncDibits, fich)) {
+    bool const fich_ok = ysf_decode_fich(&viterbi_, dibits + kSyncDibits, fich);
+    if (fich_ok) {
       fi = (fich >> 30) & 3;
       fn = (fich >> 19) & 7;
       ft = (fich >> 16) & 7; // the superframe's last frame number
       dt_ = (fich >> 8) & 3;
     }
-    if (fi == kFiTerminator) {
-      call_serial_++;
-      end_call();
-      return;
-    }
+    if (boundary(fich_ok, fi))
+      return; // a terminator
     bool const unmute = dt_ == kDtVd2 || dt_ == kDtVoiceFr;
     bool const fullrate = dt_ == kDtVoiceFr;
 

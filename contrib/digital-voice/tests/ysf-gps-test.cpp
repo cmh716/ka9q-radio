@@ -44,6 +44,16 @@ static bool fed(msg const& m, double lat, double lon, ysf_gps* keep = nullptr) {
   return got && std::fabs(g.latitude() - lat) < 1e-6 && std::fabs(g.longitude() - lon) < 1e-6;
 }
 
+// A message the decoder must refuse: the last frame doesn't complete a
+// position, and a fresh decoder is left with none
+static bool rejected(msg const& m) {
+  ysf_gps g;
+  g.superframe();
+  g.frame(6, 7, m.b, 4800);
+  bool const got = g.frame(7, 7, m.b + 10, 4800 + 480);
+  return !got && !g.valid();
+}
+
 int main() {
   check(fed(encode(42, 50, 12, true, 78, 36, 45, true), 42 + 50.12 / 60, -(78 + 36.45 / 60)), "N and W, longitude 10-99");
   check(fed(encode(33, 52, 7, false, 151, 12, 50, false), -(33 + 52.07 / 60), 151 + 12.50 / 60), "S and E, longitude 110-179");
@@ -58,11 +68,11 @@ int main() {
   }
   msg bad = encode(42, 50, 12, true, 78, 36, 45, true);
   bad.b[19] ^= 1;
-  check(!fed(bad, 0, 0), "a wrong sum");
+  check(rejected(bad), "a wrong sum");
   msg sig = encode(42, 50, 12, true, 78, 36, 45, true);
   sig.b[2] = 0x63;
   sig.b[19] = static_cast<uint8_t>(sig.b[19] + 1);
-  check(!fed(sig, 0, 0), "not a GPS message (signature)");
+  check(rejected(sig), "not a GPS message (signature)");
   {
     ysf_gps g;
     msg m = encode(42, 50, 12, true, 78, 36, 45, true);
@@ -84,7 +94,7 @@ int main() {
     early.b[3] = 0x03;
     early.b[4] = static_cast<uint8_t>(early.b[0] + early.b[1] + early.b[2] + early.b[3]);
     early.b[18] = 0x00; // no marker after the position
-    check(!fed(early, 0, 0), "a summed end marker before the position: refused");
+    check(rejected(early), "a summed end marker before the position: refused");
   }
   {
     ysf_gps g;

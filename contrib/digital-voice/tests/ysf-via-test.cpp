@@ -81,6 +81,36 @@ struct ysf_via_test {
     ok = ok && !st.has_position;
     std::printf("%s a fix before the callsign goes to the first callsign only\n", ok ? "ok  " : "FAIL");
     failures += !ok;
+
+    // A new header without the last call's terminator: the last caller and
+    // their position go, and the call ends (its serial advances)
+    ysf_decoder h(nullptr, nullptr);
+    std::strcpy(h.src_, "MM3TWA");
+    std::strcpy(h.dst_, "ALL");
+    h.gps_.frame(6, 7, m, 4800);
+    if (h.gps_.frame(7, 7, m + 10, 5280))
+      std::memcpy(h.position_owner_, h.src_, sizeof h.src_);
+    uint64_t const serial = h.call_serial_;
+    h.boundary(true, kFiCommunication);
+    h.boundary(false, kFiHeader); // a header whose FICH failed: can't be sure
+    ok = std::strcmp(h.src_, "MM3TWA") == 0 && h.gps_.valid() && h.call_serial_ == serial;
+    std::printf("%s a communication frame, or an unchecked header, changes nothing\n", ok ? "ok  " : "FAIL");
+    failures += !ok;
+    h.boundary(true, kFiHeader);
+    h.get_stats(&st);
+    ok = h.src_[0] == '\0' && h.dst_[0] == '\0' && !h.gps_.valid() && !st.has_position && h.call_serial_ == serial + 1;
+    std::printf("%s a checked header with no terminator before it: a new transmission\n", ok ? "ok  " : "FAIL");
+    failures += !ok;
+    std::strcpy(h.src_, "G4SPF"); // the new caller, their GPS frames missed
+    h.get_stats(&st);
+    ok = !st.has_position;
+    std::printf("%s and the new caller doesn't get the old position\n", ok ? "ok  " : "FAIL");
+    failures += !ok;
+    ysf_decoder fresh(nullptr, nullptr);
+    fresh.boundary(true, kFiHeader);
+    ok = fresh.call_serial_ == 0;
+    std::printf("%s a header with no call before it ends none\n", ok ? "ok  " : "FAIL");
+    failures += !ok;
   }
   static void destination(char const *field, char const *want) {
     ysf_decoder d(nullptr, nullptr);
