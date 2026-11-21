@@ -182,7 +182,10 @@ public:
     stats->freq_offset = frontend_.frequency_offset_hz() + dc_ * kDeviation;
     std::memcpy(stats->src_call, src_, sizeof src_);
     std::memcpy(stats->dst_call, dst_, sizeof dst_);
-    std::memcpy(stats->message, message_, sizeof message_);
+    // The message is its sender's: not reported while the source is
+    // unknown or another's (after a relock), lest it go with another call
+    if (src_[0] != '\0' && std::strcmp(src_, message_owner_) == 0)
+      std::memcpy(stats->message, message_, sizeof message_);
     stats->m17_can = -1;
   }
 
@@ -324,10 +327,8 @@ private:
     }
     if (!locked_) {
       header_.clear();
-      if (!header_valid_) {
-        src_[0] = dst_[0] = '\0';
-        clear_message();
-      }
+      if (!header_valid_)
+        src_[0] = dst_[0] = '\0'; // the message stays, its sender's (get_stats)
     }
     locked_ = true;
     missed_ = 0;
@@ -348,6 +349,7 @@ private:
     if (frame_index_ == 0) {
       header_.clear(); // slow data restarts with each superframe
       block_len_ = 0;
+      superframes_++;
     } else
       slow_data(bits + kVoiceBits);
     frame_index_ = (frame_index_ + 1) % kSuperframe;
@@ -385,22 +387,29 @@ private:
       if ((crc & 0xff) == h[39] && (crc >> 8) == h[40]) {
         set_call(dst_, h + 19);   // UR
         set_call(src_, h + 27);   // MY
+        adopt_message();
       }
       header_.clear();
     }
   }
 
-  // One of the text message's four blocks. Complete once all four are in;
-  // a block that changes starts it again (a new message)
+  // One of the text message's four blocks. Complete once all four are in
+  // from this superframe and the last: the blocks often straddle a
+  // superframe boundary (the header's repetition fills most of each), but
+  // blocks older than that may be another message's, and must not make a
+  // hybrid with this one's. A block that changes starts it again (a new
+  // message). The last complete message stays until the next completes
   void text_block(int index, uint8_t const *chars)
   {
     if (index > 3)
       return;
-    if ((text_have_ & (1u << index)) && std::memcmp(text_ + 5 * index, chars, 5) != 0) {
+    for (int k = 0; k < 4; k++)
+      if ((text_have_ & (1u << k)) && superframes_ - text_superframe_[k] > 1)
+        text_have_ &= ~(1u << k); // too old
+    if ((text_have_ & (1u << index)) && std::memcmp(text_ + 5 * index, chars, 5) != 0)
       text_have_ = 0;
-      message_[0] = '\0';
-    }
     std::memcpy(text_ + 5 * index, chars, 5);
+    text_superframe_[index] = superframes_;
     text_have_ |= 1u << index;
     if (text_have_ != 0xf)
       return;
@@ -410,12 +419,21 @@ private:
     while (n > 0 && message_[n - 1] == ' ')
       n--;
     message_[n] = '\0';
+    std::memcpy(message_owner_, src_, sizeof src_); // "" if not yet known
+  }
+
+  // A message completed before its sender's callsign was known is theirs
+  void adopt_message()
+  {
+    if (message_[0] != '\0' && message_owner_[0] == '\0')
+      std::memcpy(message_owner_, src_, sizeof src_);
   }
 
   void clear_message()
   {
     text_have_ = 0;
     message_[0] = '\0';
+    message_owner_[0] = '\0';
   }
 
   static void set_call(char out[12], uint8_t const *c)
@@ -530,7 +548,10 @@ private:
   char dst_[12]{};
   uint8_t text_[20]{};     // the text message's blocks as they come
   unsigned text_have_ = 0; // bit n: block n received
+  uint64_t text_superframe_[4]{}; // the superframe each came in
+  uint64_t superframes_ = 0;
   char message_[24]{};     // the message, once all four blocks are in
+  char message_owner_[12]{}; // whose: src_ when it completed
 
   // Vocoder
   p25p2_vf interleaver_;

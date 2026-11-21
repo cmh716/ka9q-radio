@@ -402,8 +402,11 @@ static void track_call(chan_t const *chan,struct dv_call *cur,struct dv_call con
 	fprintf(stderr,"%s call %u: %s is \"%s\"\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->alias);
       strlcpy(cur->alias,seen->alias,sizeof cur->alias);
     }
-    if(seen->message[0] != '\0' && strcmp(cur->message,seen->message) != 0){
-      if(Verbose > 1)
+    // The message, as the decoder has it now, even "": a YSF route can go
+    // blank (unlike an ID, it isn't lost in a fade: decoders keep it to the
+    // call's end). Still the same call: publish_call() sends it alone
+    if(strcmp(cur->message,seen->message) != 0){
+      if(Verbose > 1 && seen->message[0] != '\0')
 	fprintf(stderr,"%s call %u: %s says \"%s\"\n",chan->name,cur->id,cur->src[0] ? cur->src : "?",seen->message);
       strlcpy(cur->message,seen->message,sizeof cur->message);
     }

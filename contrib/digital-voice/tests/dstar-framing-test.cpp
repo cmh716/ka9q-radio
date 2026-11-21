@@ -64,14 +64,49 @@ struct dstar_framing_test {
     send_message(partial, "ABCDEFGHIJKLMNOPQRST", {2});
     check(std::strcmp(partial.message_, "ABCDEFGHIJKLMNOPQRST") == 0, "the fourth completes it");
     send_message(partial, "Second message here ", {1});
-    check(partial.message_[0] == '\0', "a changed block starts a new message");
+    check(std::strcmp(partial.message_, "ABCDEFGHIJKLMNOPQRST") == 0, "a changed block: the last message stays meanwhile");
     send_message(partial, "Second message here ", {0, 2, 3});
-    check(std::strcmp(partial.message_, "Second message here") == 0, "and the new one completes");
+    check(std::strcmp(partial.message_, "Second message here") == 0, "and the new one replaces it");
+
+    // Straddling a superframe boundary completes; blocks two superframes
+    // apart (perhaps another message's) don't make a hybrid
+    dstar_decoder straddle(nullptr, nullptr);
+    send_message(straddle, "ABCDEFGHIJKLMNOPQRST", {0, 1});
+    straddle.superframes_++;
+    send_message(straddle, "ABCDEFGHIJKLMNOPQRST", {2, 3});
+    check(std::strcmp(straddle.message_, "ABCDEFGHIJKLMNOPQRST") == 0, "blocks from two consecutive superframes");
+    dstar_decoder hybrid(nullptr, nullptr);
+    send_message(hybrid, "AAAAABBBBBCCCCCDDDDD", {0});
+    hybrid.superframes_ += 2;
+    send_message(hybrid, "WWWWWXXXXXYYYYYZZZZZ", {1, 2, 3});
+    check(hybrid.message_[0] == '\0', "no hybrid from blocks two superframes apart", hybrid.message_);
+    send_message(hybrid, "WWWWWXXXXXYYYYYZZZZZ", {0});
+    check(std::strcmp(hybrid.message_, "WWWWWXXXXXYYYYYZZZZZ") == 0, "the new message's own block 0 completes it");
     dstar_decoder junk(nullptr, nullptr);
     send_message(junk, "A\x01" "B\x7f" "C" "               ", {0, 1, 2, 3}); // 5 + 15 spaces
     check(std::strcmp(junk.message_, "A B C") == 0, "unprintable characters as spaces", junk.message_);
     junk.signal_lost();
     check(junk.message_[0] == '\0', "signal loss forgets it");
+    // The message is its sender's: hidden while another callsign is on
+    dstar_decoder owner(nullptr, nullptr);
+    std::strcpy(owner.src_, "M0HPL");
+    send_message(owner, "Richard NE England  ", {0, 1, 2, 3});
+    dv_stats st;
+    owner.get_stats(&st);
+    check(std::strcmp(st.message, "Richard NE England") == 0, "reported with its sender", st.message);
+    std::strcpy(owner.src_, "G4SPF");
+    owner.get_stats(&st);
+    check(st.message[0] == '\0', "not with another callsign", st.message);
+    std::strcpy(owner.src_, "M0HPL");
+    owner.get_stats(&st);
+    check(std::strcmp(st.message, "Richard NE England") == 0, "again once its sender is back (a relock)", st.message);
+    dstar_decoder early(nullptr, nullptr);
+    send_message(early, "Before the callsign ", {0, 1, 2, 3});
+    std::strcpy(early.src_, "M0HPL");
+    early.adopt_message();
+    early.get_stats(&st);
+    check(std::strcmp(st.message, "Before the callsign") == 0, "a message before the callsign is its", st.message);
+
     dstar_decoder header_block(nullptr, nullptr);
     slow_block(header_block, 0x55, "KD2TY");
     check(header_block.text_have_ == 0, "a header block is not text");
