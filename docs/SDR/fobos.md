@@ -119,7 +119,15 @@ AGC take it down when it must, rather than the lowest that never overloads.
 
 It sees only the A/D. Overload in the analog stages before it, such as
 intermodulation from a strong signal outside the passband, is not detected:
-if it persists, set a lower gain or `agc-max-gain`. One strong signal anywhere
+if it persists, set a lower gain or `agc-max-gain`.
+
+Samples already queued in the driver when the gain changes were taken at the
+old gain, so samples at full scale among them don't count toward another cut
+(otherwise nearly every cut would bring a second). The driver can't tell
+exactly which queued samples came before the change: it leaves out as many
+as its buffers hold, 22 ms at 50 MHz sample rate (139 ms at 8 MHz). A burst
+of overload shorter than that, just after a cut, can go unanswered, if the
+average level stays below `agc-high-threshold`. One strong signal anywhere
 in the passband lowers the gain, and the sensitivity, for every channel until
 it has been gone for `agc-hold` seconds.
 
@@ -141,8 +149,8 @@ below the LNA's gain), radiod says so and leaves the AGC off.
 
 ### agc-high-threshold (optional)
 
-Decimal dBFS, default -15. The average A/D level above which the gain comes
-down. Many signals together have peaks well above their average, so the level
+Decimal dBFS, -80 to below 0, default -15. The average A/D level above which
+the gain comes down. Many signals together have peaks well above their average, so the level
 needs room below 0 dBFS.
 
 ### agc-hold (optional)

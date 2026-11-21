@@ -350,8 +350,8 @@ int fobos_setup(struct frontend *const frontend, dictionary const * const dictio
       vga_min = min_gain <= lna ? 0 : (int)ceilf((min_gain - lna) / 2);         // 1..31
       vga_max = max_gain >= lna + 62 ? 31 : (int)floorf((max_gain - lna) / 2);  // 0..30
     }
-    if(!isfinite(sdr->agc_high_threshold) || sdr->agc_high_threshold > 0){
-      fprintf(stderr,"fobos: agc-high-threshold %.1f is not a level below 0 dBFS, using %.1f\n",
+    if(!isfinite(sdr->agc_high_threshold) || sdr->agc_high_threshold >= 0 || sdr->agc_high_threshold < -80){
+      fprintf(stderr,"fobos: agc-high-threshold %.1f is not a level from -80 to below 0 dBFS, using %.1f\n",
 	      sdr->agc_high_threshold,AGC_HIGH_THRESHOLD);
       sdr->agc_high_threshold = AGC_HIGH_THRESHOLD;
     }
@@ -532,7 +532,9 @@ static void *fobos_agc(void *p){
       float cut = pending != 0 ? AGC_STEP_DOWN : 0;
       if(isfinite(dBFS) && dBFS - target > cut)
 	cut = dBFS - target;
-      new_vga = old_vga - (int)ceilf(cut / 2);
+      // No more steps than there are: the conversion stays in range
+      float const steps = ceilf(cut / 2);
+      new_vga = steps >= old_vga - sdr->agc_vga_min ? sdr->agc_vga_min : old_vga - (int)steps;
       if(new_vga < sdr->agc_vga_min)
 	new_vga = sdr->agc_vga_min;
     } else if(now - quiet_since >= (int64_t)(sdr->agc_hold * BILLION) && now - last_change >= AGC_RAISE_EVERY
