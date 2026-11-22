@@ -26,7 +26,6 @@ on a per-channel basis by selecting output filter type BEAM and calling set_filt
 #include <fobos.h>
 #include <iniparser/iniparser.h>
 #include <pthread.h>
-#include <poll.h>
 #include <unistd.h>
 #include <string.h>
 #include <strings.h>
@@ -615,7 +614,8 @@ static void *fobos_agc(void *p){
   }
   return NULL;
 }
-// Watchdog: samples have come and stopped, or (given longer) never began.
+// Watchdog: samples have come and stopped, or (given longer) never began:
+// exit with EX_IOERR (74), silently (see below).
 // A thread of its own that only reads the sample count: the AGC thread may
 // block on the very device that has stalled (a gain write, gain_lock). Its
 // own clock is monotonic, so that a step of the wall clock can't make or
@@ -641,18 +641,9 @@ static void *fobos_watchdog(void *p){
       moved = now;
     } else if(atomic_load(&sdr->state) == RUNNING
 	      && now - moved > (samples != 0 ? sdr->stall_timeout : 3 * sdr->stall_timeout)){
-      // Said if it can be said at once: stderr may be a full pipe (through
-      // tee), or held by a thread blocked writing to it, and nothing may
-      // stop the exit. No stdio (its lock): one write(2), and only once
-      // poll says the pipe has room (PIPE_BUF), waiting a second at most
-      char msg[160];
-      int const n = snprintf(msg,sizeof msg,"fobos: no samples for %.0f s%s: the device has stalled. Exiting (EX_IOERR) to be reset and restarted\n",
-			     (double)(now - moved) / BILLION,samples != 0 ? "" : " since starting");
-      struct pollfd pfd = {.fd = STDERR_FILENO, .events = POLLOUT};
-      if(n > 0 && poll(&pfd,1,1000) == 1 && (pfd.revents & POLLOUT)){
-	ssize_t const w = write(STDERR_FILENO,msg,(size_t)min(n,(int)sizeof msg - 1));
-	(void)w;
-      }
+      // Nothing is written: stderr may be a pipe (through tee) that another
+      // thread can fill or hold at any moment, and any write could then
+      // block the exit. Status 74 says it; a wrapper or service logs it
       _exit(EX_IOERR);
     }
   }
