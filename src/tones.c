@@ -78,7 +78,9 @@ struct session {
   bool rtp_init;                       // the next fields hold the last packet's
   uint16_t next_seq;
   uint32_t next_ts;
-  int rejected;                        // packets in a row taken for late or repeated
+  int rejected;                        // packets in a row taken for late, each following the last
+  uint16_t rejected_seq;               // the last of them
+  uint32_t rejected_ts;
   bool quiet;                          // the detector has been fed the end of the transmission
   // a page being recorded
   FILE *wav;
@@ -375,6 +377,7 @@ static void quiet(struct session *sp){
   }
   sp->zeros = zeros + (uint64_t)looks * TD_HOP;
   sp->rtp_init = false; // the next transmission's numbering is its own
+  sp->rejected = 0;
 }
 
 // A session's resources, given back
@@ -560,11 +563,21 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     int32_t const ts_step = (int32_t)(rtp.timestamp - sp->next_ts);
     if(seq_step < 0 || ts_step < 0){
       // Late, or a duplicate. But a sender restarted with the same SSRC
-      // numbers from behind: half a second of them is a new transmission
-      if(++sp->rejected < 25)
+      // numbers from behind: half a second of packets that follow one
+      // another (each the next sequence number, a later timestamp) is a new
+      // transmission. Repeats of one packet aren't
+      if(sp->rejected > 0 && rtp.seq == sp->rejected_seq && rtp.timestamp == sp->rejected_ts)
+	return; // the last rejected again: no progress
+      if(sp->rejected > 0 && rtp.seq == (uint16_t)(sp->rejected_seq + 1)
+	 && (int32_t)(rtp.timestamp - sp->rejected_ts) > 0)
+	sp->rejected++;    // the run goes on
+      else
+	sp->rejected = 1;  // a run starts here
+      sp->rejected_seq = rtp.seq;
+      sp->rejected_ts = rtp.timestamp;
+      if(sp->rejected < 25)
 	return;
       quiet(sp); // forgets the numbering
-      sp->rejected = 0;
     } else
       sp->rejected = 0;
   }
