@@ -563,14 +563,15 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     int32_t const ts_step = (int32_t)(rtp.timestamp - sp->next_ts);
     if(seq_step < 0 || ts_step < 0){
       // Late, or a duplicate. But a sender restarted with the same SSRC
-      // numbers from behind: half a second of packets that follow one
-      // another (each the next sequence number, a later timestamp) is a new
-      // transmission. Repeats of one packet aren't
+      // numbers from behind: 25 packets that follow one another (each a
+      // few sequence numbers on at most, its timestamp later, within
+      // Rtp_gap) are a new transmission. Repeats of one packet aren't
       if(sp->rejected > 0 && rtp.seq == sp->rejected_seq && rtp.timestamp == sp->rejected_ts)
 	return; // the last rejected again: no progress
-      if(sp->rejected > 0 && rtp.seq == (uint16_t)(sp->rejected_seq + 1)
-	 && (int32_t)(rtp.timestamp - sp->rejected_ts) > 0)
-	sp->rejected++;    // the run goes on
+      int16_t const seq_on = (int16_t)(rtp.seq - sp->rejected_seq);
+      int32_t const ts_on = (int32_t)(rtp.timestamp - sp->rejected_ts);
+      if(sp->rejected > 0 && seq_on >= 1 && seq_on <= 8 && ts_on > 0 && ts_on <= Rtp_gap * clock)
+	sp->rejected++;    // the run goes on (a few packets lost in it, on a lossy stream, allowed)
       else
 	sp->rejected = 1;  // a run starts here
       sp->rejected_seq = rtp.seq;
