@@ -78,6 +78,7 @@ struct session {
   bool rtp_init;                       // the next fields hold the last packet's
   uint16_t next_seq;
   uint32_t next_ts;
+  int rejected;                        // packets in a row taken for late or repeated
   bool quiet;                          // the detector has been fed the end of the transmission
   // a page being recorded
   FILE *wav;
@@ -557,8 +558,18 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   if(sp->rtp_init && clock > 0){
     int16_t const seq_step = (int16_t)(rtp.seq - sp->next_seq);
     int32_t const ts_step = (int32_t)(rtp.timestamp - sp->next_ts);
-    if(seq_step < 0 || ts_step < 0)
-      return; // late, or a duplicate
+    if(seq_step < 0 || ts_step < 0){
+      // Late, or a duplicate. But a sender restarted with the same SSRC
+      // numbers from behind: half a second of them is a new transmission
+      if(++sp->rejected < 25)
+	return;
+      quiet(sp); // forgets the numbering
+      sp->rejected = 0;
+    } else
+      sp->rejected = 0;
+  }
+  if(sp->rtp_init && clock > 0){
+    int32_t const ts_step = (int32_t)(rtp.timestamp - sp->next_ts);
     double const missing = (double)ts_step / clock;
     if(missing > Rtp_gap)
       quiet(sp);
@@ -582,7 +593,8 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     if(n > 0){
       audio(sp,out,n);
       expect(sp,&rtp,(uint32_t)n * (48000 / TD_SAMPRATE));
-    }
+    } else
+      expect(sp,&rtp,0); // undecodable: the next packet fills its time, once
     return;
   }
   if(samprate <= 0 || channels <= 0)
