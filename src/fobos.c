@@ -60,6 +60,7 @@ static char const *Fobos_keys[] = {
   "lna_gain",
   "samprate",
   "serial",
+  "stall-timeout",
   "vga_gain",
   NULL
 };
@@ -110,6 +111,7 @@ struct sdrstate {
   uint64_t clips_fresh;
   float agc_high_threshold;    // dBFS: above it, the gain comes down
   float agc_hold;              // seconds without overload before the gain goes back up
+  int64_t stall_timeout;       // ns without samples before radiod gives up on the device; 0: never
 };
 static float const AGC_HIGH_THRESHOLD = -15; // dBFS
 static float const AGC_HOLD = 30;            // seconds
@@ -390,6 +392,16 @@ int fobos_setup(struct frontend *const frontend, dictionary const * const dictio
     fprintf(stderr,"fobos: agc ignored in direct sample mode (no gain control)\n");
   pthread_mutex_init(&sdr->gain_lock,NULL);
   pthread_mutex_init(&sdr->clip_lock,NULL);
+  {
+    // The Fobos can stop sending samples without leaving the bus (a firmware
+    // or USB stall), and radiod would wait for ever. With no samples for
+    // this long it exits with EX_IOERR (74), for a wrapper to reset the
+    // device and start it again. 0 never gives up
+    double const t = config_getdouble(dictionary, section, "stall-timeout", 5);
+    sdr->stall_timeout = isfinite(t) && t > 0 && t <= 3600 ? (int64_t)(t * BILLION) : 0;
+    if(!(isfinite(t) && t >= 0 && t <= 3600))
+      fprintf(stderr,"fobos: stall-timeout %g is not 0 to 3600 s: off\n",t);
+  }
   // Set Clock Source
   result = fobos_rx_set_clk_source(sdr->dev, clk_sourcecfg);
   if (result != FOBOS_ERR_OK) {
@@ -511,6 +523,8 @@ static void *fobos_agc(void *p){
   uint64_t report_clips = 0;
   int64_t now = gps_time_ns();
   int64_t report_time = now, last_change = now - AGC_SETTLE, quiet_since = now;
+  uint64_t last_samples = 0;
+  int64_t samples_moved = now; // when the sample count last advanced
   int failures = 0;      // gain changes the device refused in a row
   int64_t last_failure = 0;
   enum state s;
@@ -518,6 +532,19 @@ static void *fobos_agc(void *p){
     struct timespec const tick = {.tv_sec = 0, .tv_nsec = AGC_TICK};
     nanosleep(&tick,NULL);
     now = gps_time_ns();
+    // Watchdog: samples have come, and stopped (a clean shutdown ends this loop first)
+    uint64_t const samples = atomic_load(&sdr->samples_in);
+    if(samples != last_samples){
+      last_samples = samples;
+      samples_moved = now;
+    } else if(sdr->stall_timeout != 0 && atomic_load(&sdr->state) == RUNNING
+	      && now - samples_moved > (samples != 0 ? sdr->stall_timeout : 3 * sdr->stall_timeout)){
+      // Stopped, or (given longer to start) never began
+      fprintf(stderr,"fobos: no samples for %.0f s%s: the device has stalled. Exiting (EX_IOERR) to be reset and restarted\n",
+	      (double)(now - samples_moved) / BILLION,samples != 0 ? "" : " since starting");
+      fflush(stderr);
+      _exit(EX_IOERR);
+    }
     uint64_t const all = atomic_load(&sdr->clips_all);
     report_clips += all - last_all;
     last_all = all;

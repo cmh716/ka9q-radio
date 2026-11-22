@@ -171,3 +171,21 @@ agc = yes
 ```
 
 starts at 46 dB, and the AGC goes as low as 16 dB when it must.
+
+### stall-timeout (optional)
+
+Decimal seconds, default 5; 0 turns it off. The Fobos can stop sending
+samples without leaving the USB bus (a firmware or USB stall), and radiod would
+then wait for ever, every channel silent; restarting radiod doesn't help, and
+only resetting the device (or unplugging it) does. With no samples for this
+long (three times as long if none have come since starting), radiod logs
+"fobos: no samples ... the device has stalled" and exits with status 74
+(EX_IOERR), so that a wrapper or service can reset the Fobos and start radiod
+again, eg:
+
+```
+sudo usbreset 16d0:132e    # the Fobos's USB vendor:product
+```
+
+If a USB reset doesn't revive it, a port power cycle may (uhubctl, where the
+hub supports it).
