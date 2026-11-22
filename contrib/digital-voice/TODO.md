@@ -62,11 +62,16 @@ for DMR, D-STAR and YSF.
       (AGC off) at vga_gain 3 and 4, looking at the spectrum for a new
       carrier, and its frequency; if it's a fixed spur, a notch or another
       sample rate may allow more gain.
-- [ ] **D243/I243 audio dropouts** on an FM channel squelched by DCS:
-      compare the same transmission on a carrier-only FM channel and a
-      D243-gated one. monitor's shown polarity and radiod's squelch come
-      from separate decoder instances, so a flip in the display alone
-      doesn't show why the audio dropped.
+- [x] **D243/I243 audio dropouts** (Lancaster FD, 453.500, DCS 243):
+      solved 2026-11-22 (5e7c9781). A paging tone, lifted by PM
+      pre-emphasis to ~56 times the code's power in the discriminator
+      output the squelch decodes, beat with the bit clock through the DCS
+      decoder's two filter stages; six stages at 200 Hz hold the code
+      through it. Found from a page recorded on an unsquelched channel at
+      the same time. Still to look at: after a transmission's turn-off
+      code the squelch seemed to stay shut ~2 s, though the code was back
+      in 0.4 s (the squelched recording's gaps are compressed, so not
+      certain).
 - [ ] Even out digital voice levels across modes, radios and talkers.
 - [ ] Recording: optionally notch CTCSS out of analog recordings
       (radiod's `ctcss-notch` does it for all of a channel's output).
