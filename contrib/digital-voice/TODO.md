@@ -17,10 +17,12 @@ for DMR, D-STAR and YSF.
 2. [ ] **DMR GPS**, if it can be tested: in all the logs so far no DMR call
    carried embedded GPS (no FLCO 8 in `lc=`); DMR radios send position as
    data (LRRP), which Brandmeister handles itself.
-3. [ ] **Two-tone sequential paging (fire/EMS)**: recognise a
-   department's two-tone page on an analog channel; log it, and start or
-   tag a recording or run a command. Shares an alert mechanism with the
-   watchlist (below).
+3. [ ] **Two-tone sequential paging (fire/EMS)**: `tones` (src/tones.c,
+   tone-detect.c): watches radiod's streams, logs each page by department,
+   records it with the dispatch after it, and runs a command for chosen
+   departments (contrib/page-alert-ntfy.sh: ntfy with the recording).
+   Tested on synthesised pages end to end; live test on
+   fire-dispatch.local (Lancaster FD, DCS 243) waiting.
 4. [ ] **P25 multi-call following** (`p25-voice-channels = N`): one
    control-channel decode, N tuners, one output stream each.
 5. [ ] **monitor: receiver summary**: the front end's level, A/D overloads,

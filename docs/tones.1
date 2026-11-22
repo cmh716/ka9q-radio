@@ -1,0 +1,69 @@
+.TH "TONES" "1" "November 22, 2026" "ka9q-radio" "ka9q-radio Manual"
+.SH NAME
+tones \- detect fire/EMS paging tones on radiod streams, record and announce them
+.SH SYNOPSIS
+.B tones
+.RI "[options] group ..."
+.SH DESCRIPTION
+tones listens to radiod audio streams (Opus or PCM) on the multicast groups
+given, and finds two-tone sequential pages (a tone A, then a tone B, as fire
+and EMS dispatch use to alert a department) and long tones. Each page is
+written to standard output and to a CSV log, named by the department whose
+tones it matches; pages that match none are logged as "unknown", with their
+tones, which is how a department's tones can be found.
+.P
+Each page is recorded, from half a second before its first tone until the
+channel has been quiet for a few seconds (radiod sends nothing while a
+channel is squelched), as 8 kHz WAV named by its time, department and
+frequency, eg 20261122T120314_Alden_453.500.wav. Further pages in the same
+transmission go in the same recording. Once the recording is complete, the
+command is run if any of its pages is a department in the notify list, with
+the page in its environment: PAGE_DEPARTMENTS, PAGE_TONES, PAGE_TIME,
+PAGE_FREQ, PAGE_FILE.
+.P
+A tone is one steady peak with most of the audio's power between 270 and
+3400 Hz, above CTCSS and DCS; tones of at least 0.4 s, the second starting
+within 0.3 s of the first's end, make a page; a tone of 4 s or more alone is
+a long tone. Tones match a department within 1.5%.
+.SH OPTIONS
+.TP
+.B "\-t file, \-\-departments file"
+The departments: lines of name, tone A and tone B in Hz, separated by commas
+or tabs (a table pasted from a spreadsheet or web page does); tone B empty or
+0 for a long tone. Lines without numbers, such as a header, are skipped.
+.TP
+.B "\-d dir, \-\-pages dir"
+Where the recordings go (made if need be). Default ./pages.
+.TP
+.B "\-l file, \-\-log file"
+The CSV log. Default pages.csv in the recordings' directory.
+.TP
+.B "\-c command, \-\-command command"
+Run (by /bin/sh) once a page's recording is complete, for the departments
+in \-n.
+.TP
+.B "\-n names, \-\-notify names"
+The departments to run the command for, separated by commas, or * for all.
+.TP
+.B "\-q seconds, \-\-quiet seconds"
+How long the channel must be quiet to end a recording. Default 5.
+.TP
+.B "\-m seconds, \-\-max seconds"
+The longest recording. Default 120.
+.TP
+.B "\-T fraction, \-\-tolerance fraction"
+How close a tone must be to a department's. Default 0.015.
+.TP
+.B "\-v, \-\-verbose"
+Say which streams are heard.
+.SH EXAMPLES
+Alden's pages announced on a phone through ntfy, with the recording, and
+every page logged and recorded:
+.PP
+.nf
+tones \-t departments.csv \-d ~/pages \-n Alden \\
+  \-c "NTFY_TOPIC=my\-long\-secret\-topic ~/ka9q\-radio/contrib/page\-alert\-ntfy.sh" \\
+  fire\-dispatch.local
+.fi
+.SH SEE ALSO
+radiod(8), monitor(1), pcmrecord(1)
