@@ -324,6 +324,8 @@ static void wav_write(struct session *sp,float const *x,int n){
   sp->wav_samples += n;
 }
 
+static void alert(struct session const *sp,char const *file,char const *failed);
+
 // The recording is complete: close it, and tell (the command) if wanted
 static void finish_recording(struct session *sp){
   if(sp->wav == NULL)
@@ -346,6 +348,12 @@ static void finish_recording(struct session *sp){
   } else
     printf("%s  recorded %s (%.0f s)\n",sp->page_time,sp->wav_path,(double)sp->wav_samples / TD_SAMPRATE);
   fflush(stdout);
+  alert(sp,sp->wav_path,failed);
+}
+
+// The command, if any of the recording's pages is a department in the
+// notify list: with the recording (file), or, if it failed, without (why)
+static void alert(struct session const *sp,char const *file,char const *failed){
   bool tell = false;
   char departments[512] = "";
   for(int i = 0; i < sp->n_departments; i++){
@@ -364,7 +372,7 @@ static void finish_recording(struct session *sp){
     setenv("PAGE_TONES",sp->tones,1);
     setenv("PAGE_TIME",sp->page_time,1);
     setenv("PAGE_FREQ",freq,1);
-    setenv("PAGE_FILE",failed == NULL ? sp->wav_path : "",1);
+    setenv("PAGE_FILE",failed == NULL ? file : "",1);
     if(failed != NULL)
       setenv("PAGE_ERROR",failed,1);
     execl("/bin/sh","sh","-c",Command,(char *)NULL);
@@ -423,6 +431,11 @@ static void page(struct session *sp,struct td_event const *ev){
   }
   // The recording
   if(sp->wav == NULL){
+    // This page's own, kept first: if the recording can't start, the alert still goes
+    sp->n_departments = 0;
+    sp->tones[0] = '\0';
+    snprintf(sp->page_time,sizeof sp->page_time,"%s",when);
+    char const *failed = NULL;
     char safe[80];
     safe_name(safe,sizeof safe,name);
     char at_file[32];
@@ -441,25 +454,31 @@ static void page(struct session *sp,struct td_event const *ev){
     sp->wav = fd >= 0 ? fdopen(fd,"w+") : NULL;
     if(sp->wav == NULL){
       fprintf(stderr,"%s: %s\n",sp->wav_path,strerror(errno));
+      failed = "can't create the recording";
       if(fd >= 0)
 	close(fd);
-      return;
-    }
-    sp->failed = NULL;
-    if(Ogg){
-      if(!ogg_begin(sp)){
+    } else {
+      sp->failed = NULL;
+      if(Ogg && !ogg_begin(sp)){
 	fprintf(stderr,"%s: can't start the Opus encoder\n",sp->wav_path);
+	failed = "can't start the Opus encoder";
 	fclose(sp->wav);
 	sp->wav = NULL;
-	return;
-      }
-    } else
-      wav_header(sp->wav,0);
+      } else if(!Ogg)
+	wav_header(sp->wav,0);
+    }
+    if(failed != NULL){
+      if(fd >= 0)
+	unlink(sp->wav_path); // nothing in it worth keeping
+      printf("%s  recording %s failed: %s\n",when,sp->wav_path,failed);
+      fflush(stdout);
+      snprintf(sp->departments[sp->n_departments++],sizeof sp->departments[0],"%s",name);
+      snprintf(sp->tones,sizeof sp->tones,"%s",tones);
+      alert(sp,"",failed);
+      return;
+    }
     sp->wav_samples = 0;
     sp->rec_started = sp->last_audio = monotonic();
-    sp->n_departments = 0;
-    sp->tones[0] = '\0';
-    snprintf(sp->page_time,sizeof sp->page_time,"%s",when);
     // From half a second before its first tone, as far as the ring reaches
     uint64_t const ring = sizeof sp->ring / sizeof sp->ring[0];
     uint64_t from = start > TD_SAMPRATE / 2 ? start - TD_SAMPRATE / 2 : 0;
