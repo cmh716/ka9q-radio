@@ -5,7 +5,8 @@ tones \- detect fire/EMS paging tones on radiod streams, record and announce the
 .B tones
 .RI "[options] group ..."
 .SH DESCRIPTION
-tones listens to radiod audio streams (Opus or PCM) on the multicast groups
+tones listens to radiod audio streams (Opus, or PCM: 16-bit or float, any
+rate) on the multicast groups
 given, and finds two-tone sequential pages (a tone A, then a tone B, as fire
 and EMS dispatch use to alert a department) and long tones. Each page is
 written to standard output and to a CSV log, named by the department whose
@@ -14,8 +15,8 @@ tones, which is how a department's tones can be found.
 .P
 Each page is recorded, from half a second before its first tone until the
 channel has been quiet for a few seconds (radiod sends nothing while a
-channel is squelched), as 8 kHz WAV named by its time, department and
-frequency, eg 20261122T120314_Alden_453.500.wav. Further pages in the same
+channel is squelched), as 8 kHz WAV (or Ogg Opus, with \-F ogg) named by
+its time, department and frequency, eg 20261122T120314_Alden_453.500.wav. Further pages in the same
 transmission go in the same recording. Once the recording is complete, the
 command is run if any of its pages is a department in the notify list, with
 the page in its environment: PAGE_DEPARTMENTS, PAGE_TONES, PAGE_TIME,
@@ -57,6 +58,10 @@ The longest recording. Default 120.
 .TP
 .B "\-T fraction, \-\-tolerance fraction"
 How close a tone must be to a department's. Default 0.015.
+.TP
+.B "\-F wav|ogg, \-\-format wav|ogg"
+The recordings' format: WAV (16-bit, 8 kHz; the default) or Ogg Opus (16
+kb/s, about an eighth the size; .ogg).
 .TP
 .B "\-v, \-\-verbose"
 Say which streams are heard.

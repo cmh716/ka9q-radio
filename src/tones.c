@@ -20,6 +20,7 @@
 #include <locale.h>
 #include <math.h>
 #include <netinet/in.h>
+#include <ogg/ogg.h>
 #include <opus/opus.h>
 #include <samplerate.h>
 #include <signal.h>
@@ -56,6 +57,7 @@ static char const *Notify;             // comma separated department names, or "
 static double Quiet_seconds = 5;       // a recording ends after this long without audio
 static double Max_seconds = 120;       // or at this length
 static double Tolerance = 0.015;
+static bool Ogg;                       // record Ogg Opus, not WAV
 static struct td_department Departments[MAX_DEPARTMENTS];
 static int N_departments;
 
@@ -83,7 +85,14 @@ struct session {
   uint32_t rejected_ts;
   bool quiet;                          // the detector has been fed the end of the transmission
   // a page being recorded
-  FILE *wav;
+  FILE *wav;                           // the recording (WAV or Ogg Opus)
+  // Ogg Opus recording: 20 ms frames of 8 kHz
+  OpusEncoder *enc;
+  ogg_stream_state os;
+  int16_t frame[TD_SAMPRATE / 50];
+  int frame_fill;
+  int64_t granule;                     // 48 kHz units
+  int64_t packetno;
   char wav_path[512];
   uint64_t wav_samples;
   double rec_started;                  // monotonic seconds
@@ -200,12 +209,78 @@ static void wav_header(FILE *fp,uint32_t samples){
   fseek(fp,0,SEEK_END);
 }
 
+// Ogg Opus: pages written as they fill (flush forces the last out)
+static void ogg_pages(struct session *sp,bool flush){
+  ogg_page og;
+  while(flush ? ogg_stream_flush(&sp->os,&og) : ogg_stream_pageout(&sp->os,&og)){
+    fwrite(og.header,1,og.header_len,sp->wav);
+    fwrite(og.body,1,og.body_len,sp->wav);
+  }
+}
+static bool ogg_begin(struct session *sp){
+  int error;
+  sp->enc = opus_encoder_create(TD_SAMPRATE,1,OPUS_APPLICATION_VOIP,&error);
+  if(sp->enc == NULL)
+    return false;
+  opus_encoder_ctl(sp->enc,OPUS_SET_BITRATE(16000)); // speech, and the tones clean
+  opus_int32 lookahead = 0;
+  opus_encoder_ctl(sp->enc,OPUS_GET_LOOKAHEAD(&lookahead));
+  ogg_stream_init(&sp->os,(int)(random() & 0x7fffffff));
+  sp->frame_fill = 0;
+  sp->packetno = 0;
+  uint16_t const preskip = (uint16_t)(lookahead * (48000 / TD_SAMPRATE));
+  sp->granule = 0; // the encoded audio, in 48 kHz units, pre-skip included (RFC 7845)
+  // OpusHead (RFC 7845)
+  uint8_t head[19] = {'O','p','u','s','H','e','a','d',1,1,(uint8_t)(preskip & 0xff),(uint8_t)(preskip >> 8),
+		      TD_SAMPRATE & 0xff,(TD_SAMPRATE >> 8) & 0xff,0,0,0,0,0};
+  ogg_packet op = {.packet = head,.bytes = sizeof head,.b_o_s = 1,.granulepos = 0,.packetno = sp->packetno++};
+  ogg_stream_packetin(&sp->os,&op);
+  ogg_pages(sp,true);
+  // OpusTags: the vendor, no comments
+  static char const vendor[] = "ka9q-radio tones";
+  uint8_t tags[8 + 4 + sizeof vendor - 1 + 4];
+  memcpy(tags,"OpusTags",8);
+  uint32_t const vl = sizeof vendor - 1;
+  tags[8] = vl & 0xff; tags[9] = (vl >> 8) & 0xff; tags[10] = 0; tags[11] = 0; // little-endian
+  memcpy(tags + 12,vendor,vl);
+  memset(tags + 12 + vl,0,4);
+  op = (ogg_packet){.packet = tags,.bytes = sizeof tags,.granulepos = 0,.packetno = sp->packetno++};
+  ogg_stream_packetin(&sp->os,&op);
+  ogg_pages(sp,true);
+  return true;
+}
+static void ogg_frame(struct session *sp,bool last){
+  uint8_t packet[1500];
+  int const n = opus_encode(sp->enc,sp->frame,TD_SAMPRATE / 50,packet,sizeof packet);
+  sp->frame_fill = 0;
+  if(n < 0)
+    return;
+  sp->granule += 48000 / 50;
+  ogg_packet op = {.packet = packet,.bytes = n,.e_o_s = last,.granulepos = sp->granule,.packetno = sp->packetno++};
+  ogg_stream_packetin(&sp->os,&op);
+  ogg_pages(sp,last);
+}
+static void ogg_end(struct session *sp){
+  // The last frame, padded with silence, ends the stream
+  while(sp->frame_fill < TD_SAMPRATE / 50)
+    sp->frame[sp->frame_fill++] = 0;
+  ogg_frame(sp,true);
+  opus_encoder_destroy(sp->enc);
+  sp->enc = NULL;
+  ogg_stream_clear(&sp->os);
+}
+
 static void wav_write(struct session *sp,float const *x,int n){
   for(int i = 0; i < n; i++){
     float v = x[i] * 32767;
     v = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
     int16_t const s = (int16_t)lrintf(v);
-    fwrite(&s,2,1,sp->wav);
+    if(Ogg){
+      sp->frame[sp->frame_fill++] = s;
+      if(sp->frame_fill == TD_SAMPRATE / 50)
+	ogg_frame(sp,false);
+    } else
+      fwrite(&s,2,1,sp->wav);
   }
   sp->wav_samples += n;
 }
@@ -214,7 +289,10 @@ static void wav_write(struct session *sp,float const *x,int n){
 static void finish_recording(struct session *sp){
   if(sp->wav == NULL)
     return;
-  wav_header(sp->wav,(uint32_t)sp->wav_samples);
+  if(Ogg)
+    ogg_end(sp);
+  else
+    wav_header(sp->wav,(uint32_t)sp->wav_samples);
   fclose(sp->wav);
   sp->wav = NULL;
   printf("%s  recorded %s (%.0f s)\n",sp->page_time,sp->wav_path,(double)sp->wav_samples / TD_SAMPRATE);
@@ -302,9 +380,9 @@ static void page(struct session *sp,struct td_event const *ev){
     int fd = -1;
     for(int k = 1; k < 100 && fd < 0; k++){
       if(k == 1)
-	snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s.wav",Pages_dir,stamp,safe,at_file);
+	snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s.%s",Pages_dir,stamp,safe,at_file,Ogg ? "ogg" : "wav");
       else
-	snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s-%d.wav",Pages_dir,stamp,safe,at_file,k);
+	snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s-%d.%s",Pages_dir,stamp,safe,at_file,k,Ogg ? "ogg" : "wav");
       fd = open(sp->wav_path,O_RDWR | O_CREAT | O_EXCL,0644);
       if(fd < 0 && errno != EEXIST)
 	break;
@@ -316,7 +394,15 @@ static void page(struct session *sp,struct td_event const *ev){
 	close(fd);
       return;
     }
-    wav_header(sp->wav,0);
+    if(Ogg){
+      if(!ogg_begin(sp)){
+	fprintf(stderr,"%s: can't start the Opus encoder\n",sp->wav_path);
+	fclose(sp->wav);
+	sp->wav = NULL;
+	return;
+      }
+    } else
+      wav_header(sp->wav,0);
     sp->wav_samples = 0;
     sp->rec_started = sp->last_audio = monotonic();
     sp->n_departments = 0;
@@ -664,6 +750,7 @@ static struct option const Options[] = {
   {"quiet",required_argument,NULL,'q'},
   {"max",required_argument,NULL,'m'},
   {"tolerance",required_argument,NULL,'T'},
+  {"format",required_argument,NULL,'F'},
   {"verbose",no_argument,NULL,'v'},
   {"version",no_argument,NULL,'V'},
   {NULL,0,NULL,0},
@@ -671,14 +758,14 @@ static struct option const Options[] = {
 
 static void usage(void){
   fprintf(stderr,"Usage: %s [-t departments.csv] [-d pages-dir] [-l log.csv] [-c command] [-n dept,dept|*]"
-	  " [-q quiet-s] [-m max-s] [-T tolerance] [-v] group ...\n",App_path);
+	  " [-q quiet-s] [-m max-s] [-T tolerance] [-F wav|ogg] [-v] group ...\n",App_path);
 }
 
 int main(int argc,char *argv[]){
   App_path = argv[0];
   setlocale(LC_ALL,"");
   int c;
-  while((c = getopt_long(argc,argv,"t:d:l:c:n:q:m:T:vV",Options,NULL)) != -1){
+  while((c = getopt_long(argc,argv,"t:d:l:c:n:q:m:T:F:vV",Options,NULL)) != -1){
     switch(c){
     case 't':
       if(read_departments(optarg) < 0)
@@ -691,6 +778,16 @@ int main(int argc,char *argv[]){
     case 'q': Quiet_seconds = strtod(optarg,NULL); break;
     case 'm': Max_seconds = strtod(optarg,NULL); break;
     case 'T': Tolerance = strtod(optarg,NULL); break;
+    case 'F':
+      if(strcasecmp(optarg,"ogg") == 0 || strcasecmp(optarg,"opus") == 0)
+	Ogg = true;
+      else if(strcasecmp(optarg,"wav") == 0)
+	Ogg = false;
+      else {
+	fprintf(stderr,"--format wav or ogg\n");
+	exit(EX_USAGE);
+      }
+      break;
     case 'v': Verbose++; break;
     case 'V': VERSION(); exit(EX_OK);
     default: usage(); exit(EX_USAGE);

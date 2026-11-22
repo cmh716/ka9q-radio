@@ -309,7 +309,7 @@ pcmrecord: pcmrecord.o attr.o talkgroup.o libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lopus -logg -lcsv $(LDLIBS)
 
 tones: tones.o tone-detect.o libstatus.a libradio.a
-	$(CC) $(LDFLAGS) -o $@ $^ -lopus -lsamplerate -lfftw3f $(LDLIBS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lopus -logg -lsamplerate -lfftw3f $(LDLIBS)
 
 pcmsend: pcmsend.o libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lportaudio $(LDLIBS)
