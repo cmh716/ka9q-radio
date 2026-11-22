@@ -26,6 +26,7 @@ on a per-channel basis by selecting output filter type BEAM and calling set_filt
 #include <fobos.h>
 #include <iniparser/iniparser.h>
 #include <pthread.h>
+#include <poll.h>
 #include <unistd.h>
 #include <string.h>
 #include <strings.h>
@@ -95,7 +96,8 @@ struct sdrstate {
 
   // A/D overload protection (fobos_agc)
   pthread_t agc_thread;
-  pthread_t watchdog_thread;   // only if stall_timeout
+  pthread_t watchdog_thread;
+  bool watchdog_running;       // it started
   pthread_mutex_t gain_lock;   // fobos_gain (a command) and the AGC both set the gain
   int agc_lna;                 // the LNA setting the AGC keeps
   int agc_vga_min,agc_vga_max; // the VGA steps it moves between
@@ -639,9 +641,18 @@ static void *fobos_watchdog(void *p){
       moved = now;
     } else if(atomic_load(&sdr->state) == RUNNING
 	      && now - moved > (samples != 0 ? sdr->stall_timeout : 3 * sdr->stall_timeout)){
-      fprintf(stderr,"fobos: no samples for %.0f s%s: the device has stalled. Exiting (EX_IOERR) to be reset and restarted\n",
-	      (double)(now - moved) / BILLION,samples != 0 ? "" : " since starting");
-      fflush(stderr);
+      // Said if it can be said at once: stderr may be a full pipe (through
+      // tee), or held by a thread blocked writing to it, and nothing may
+      // stop the exit. No stdio (its lock): one write(2), and only once
+      // poll says the pipe has room (PIPE_BUF), waiting a second at most
+      char msg[160];
+      int const n = snprintf(msg,sizeof msg,"fobos: no samples for %.0f s%s: the device has stalled. Exiting (EX_IOERR) to be reset and restarted\n",
+			     (double)(now - moved) / BILLION,samples != 0 ? "" : " since starting");
+      struct pollfd pfd = {.fd = STDERR_FILENO, .events = POLLOUT};
+      if(n > 0 && poll(&pfd,1,1000) == 1 && (pfd.revents & POLLOUT)){
+	ssize_t const w = write(STDERR_FILENO,msg,(size_t)min(n,(int)sizeof msg - 1));
+	(void)w;
+      }
       _exit(EX_IOERR);
     }
   }
@@ -1002,8 +1013,14 @@ int fobos_startup(struct frontend *const frontend) {
   sdr->scale = scale_AD(frontend);
   pthread_create(&sdr->monitor_thread, NULL, fobos_monitor, sdr);
   pthread_create(&sdr->agc_thread, NULL, fobos_agc, sdr);
-  if(sdr->stall_timeout != 0)
-    pthread_create(&sdr->watchdog_thread, NULL, fobos_watchdog, sdr);
+  sdr->watchdog_running = false;
+  if(sdr->stall_timeout != 0){
+    int const e = pthread_create(&sdr->watchdog_thread, NULL, fobos_watchdog, sdr);
+    if(e != 0)
+      fprintf(stderr,"fobos: can't start the stall watchdog: %s; running without it\n",strerror(e));
+    else
+      sdr->watchdog_running = true;
+  }
   atomic_store(&sdr->state,RUNNING);
   fprintf(stderr, "fobos read thread running\n");
   return 0;
@@ -1022,8 +1039,10 @@ int fobos_shutdown(struct frontend *const frontend) {
   fobos_rx_cancel_async(sdr->dev);
   pthread_join(sdr->monitor_thread,NULL);
   pthread_join(sdr->agc_thread,NULL);
-  if(sdr->stall_timeout != 0)
+  if(sdr->watchdog_running){
     pthread_join(sdr->watchdog_thread,NULL);
+    sdr->watchdog_running = false;
+  }
   atomic_store(&sdr->state,STOPPED);
   fprintf(stderr, "fobos read thread stopped\n");
   return 0;
