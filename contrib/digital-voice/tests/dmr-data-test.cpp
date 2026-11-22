@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <initializer_list>
 #include "dmr_data.h"
 
 using namespace dmr_data;
@@ -112,8 +113,8 @@ int main()
     c.header(hb);
     for (int k = 0; k < 3; k++) {
       uint8_t blk[18], bits[196], out[18];
-      blk[0] = static_cast<uint8_t>(k << 1); blk[1] = 0x5a; // serial, CRC-9 (not checked)
       std::memcpy(blk + 2, m2 + 16 * k, 16);
+      crc9_set(blk, 18, 34, k); // serial, CRC-9
       trellis34_encode(blk, bits);
       trellis34_decode(bits, out);
       c.block(34, out, 18);
@@ -187,9 +188,8 @@ int main()
     int const p2 = make_message(m2, ip, sizeof ip, sizeof m2);
     uint8_t blocks[3][18];
     for (int k = 0; k < 3; k++) {
-      blocks[k][0] = static_cast<uint8_t>(k << 1);
-      blocks[k][1] = 0;
       std::memcpy(blocks[k] + 2, m2 + 16 * k, 16);
+      crc9_set(blocks[k], 18, 34, k);
     }
     assembler b;
     make_header(hb, 3, 4, false, 1, 2, 3, p2);
@@ -205,6 +205,32 @@ int main()
     b.block(34, blocks[2], 18); // the second missed
     b.block(34, blocks[2], 18);
     check(b.messages() == 1 && b.broken() == 1, "confirmed: a block missed: broken, not a bad CRC");
+    // A serial damaged (its CRC-9 fails): not trusted, the block taken in turn
+    make_header(hb, 3, 4, false, 1, 2, 3, p2);
+    b.header(hb);
+    b.block(34, blocks[0], 18);
+    uint8_t hurt[18];
+    std::memcpy(hurt, blocks[1], 18);
+    hurt[0] ^= 0x04; // serial 1 reads as 3
+    b.block(34, hurt, 18);
+    b.block(34, blocks[2], 18);
+    check(b.messages() == 2 && b.crc_ok() == 2 && b.broken() == 1 && b.crc9_bad() == 1,
+          "confirmed: a damaged serial (CRC-9 fails) not taken for a gap; the packet still assembled");
+    // the CRC-9 itself: each rate's mask, one bit wrong anywhere fails it
+    bool crc9 = true;
+    for (int rate : {12, 34, 1}) {
+      int const n = rate == 12 ? 12 : rate == 34 ? 18 : 24;
+      uint8_t blk[24];
+      for (int i = 0; i < n; i++) blk[i] = rnd();
+      crc9_set(blk, n, rate, 5);
+      crc9 = crc9 && crc9_ok(blk, n, rate) && (blk[0] >> 1) == 5;
+      for (int bit = 0; bit < 8 * n; bit++) {
+        blk[bit / 8] ^= static_cast<uint8_t>(0x80 >> (bit % 8));
+        crc9 = crc9 && !crc9_ok(blk, n, rate);
+        blk[bit / 8] ^= static_cast<uint8_t>(0x80 >> (bit % 8));
+      }
+    }
+    check(crc9, "CRC-9: set for each rate, and any one bit wrong fails it");
   }
   // Blocks with no header before them: ignored
   {

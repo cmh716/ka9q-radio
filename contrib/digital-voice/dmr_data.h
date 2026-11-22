@@ -125,6 +125,40 @@ inline uint16_t crc_ccitt(uint8_t const *p, int n)
   }
   return static_cast<uint16_t>(~crc);
 }
+// A confirmed block's CRC-9 (B.3.10): x^9+x^6+x^4+x^3+1 over its data
+// octets then its 7-bit serial, inverted, masked by rate (1/2 0x0f0, 3/4
+// 0x1ff, 1 0x10f). The block's first two bytes are the serial and the CRC
+inline bool crc9_ok(uint8_t const *block, int n, int rate)
+{
+  uint16_t crc = 0;
+  auto bit = [&crc](int b) {
+    int const top = (crc >> 8) & 1;
+    crc = static_cast<uint16_t>((crc << 1) & 0x1ff);
+    if (top ^ b)
+      crc ^= 0x059;
+  };
+  for (int i = 2; i < n; i++)
+    for (int j = 7; j >= 0; j--)
+      bit((block[i] >> j) & 1);
+  for (int j = 7; j >= 1; j--) // the serial: the first byte's top 7 bits
+    bit((block[0] >> j) & 1);
+  uint16_t const mask = rate == 12 ? 0x0f0 : rate == 34 ? 0x1ff : 0x10f;
+  uint16_t const got = static_cast<uint16_t>((block[0] & 1) << 8 | block[1]);
+  return static_cast<uint16_t>(~crc & 0x1ff) == (got ^ mask);
+}
+// For tests: a confirmed block's serial and CRC-9 set
+inline void crc9_set(uint8_t *block, int n, int rate, int serial)
+{
+  block[0] = static_cast<uint8_t>(serial << 1);
+  block[1] = 0;
+  for (int c = 0; c < 512; c++) {
+    block[0] = static_cast<uint8_t>((block[0] & 0xfe) | (c >> 8));
+    block[1] = static_cast<uint8_t>(c);
+    if (crc9_ok(block, n, rate))
+      return;
+  }
+}
+
 // A data header: 12 bytes, its CRC masked
 inline bool header_ok(uint8_t const h[12])
 {
@@ -248,16 +282,21 @@ public:
     }
     // Confirmed data: each block begins with its serial number (7 bits) and
     // a CRC-9. The serials go 0, 1, 2...: a repeat is a block sent again
-    // (dropped), a jump one missed (the packet broken, not "bad"). The CRC-9
-    // isn't checked: the CRC-32 covers the contents
+    // (dropped), a jump one missed (the packet broken, not "bad"). Only a
+    // serial its CRC-9 vouches for is trusted so; a block failing it is
+    // taken in turn (counted: if they all fail, the CRC-9 is misread here)
     int const skip = dpf_ == 3 ? 2 : 0;
-    if (dpf_ == 3) {
+    if (dpf_ == 3 && !crc9_ok(bytes, n, rate)) {
+      crc9_bad_++;
+      serial_ = (serial_ + 1) & 0x7f;
+    } else if (dpf_ == 3) {
+      crc9_good_++;
       int const serial = bytes[0] >> 1;
       if (serial == serial_) {
         repeats_++;
         return;
       }
-      if (serial != serial_ + 1) {
+      if (serial != ((serial_ + 1) & 0x7f)) {
         want_ = 0;
         broken_++;
         return;
@@ -343,6 +382,8 @@ public:
   uint32_t broken() const { return broken_; }
   uint32_t repeats() const { return repeats_; }   // confirmed blocks sent again
   uint32_t stray() const { return stray_; }       // proprietary headers with no packet to go with
+  uint32_t crc9_good() const { return crc9_good_; }
+  uint32_t crc9_bad() const { return crc9_bad_; }
 
 private:
   uint8_t h_[12]{};
@@ -355,7 +396,7 @@ private:
   char report_[kMaxReport + 1] = "";
   char good_[kMaxReport + 1] = "";
   uint32_t headers_ = 0, headers_bad_ = 0, messages_ = 0, crc_ok_ = 0, broken_ = 0, too_long_ = 0;
-  uint32_t reports_ = 0, stray_ = 0, repeats_ = 0;
+  uint32_t reports_ = 0, stray_ = 0, repeats_ = 0, crc9_good_ = 0, crc9_bad_ = 0;
 };
 
 // Rate 1 data: 192 of the 196 bits (the 2 either side of the middle reserved)

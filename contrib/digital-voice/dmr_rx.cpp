@@ -132,7 +132,7 @@ public:
     // Packet data, for diagnosis: counts, and the last message (one whose
     // CRC-32 checked, if any has), on either slot
     {
-      uint32_t hdr = 0, hdr_bad = 0, msgs = 0, ok = 0, broken = 0, repeats = 0;
+      uint32_t hdr = 0, hdr_bad = 0, msgs = 0, ok = 0, broken = 0, repeats = 0, crc9 = 0, crc9_all = 0;
       char const *last = "";
       for (int s = 0; s < 2; s++) {
         dmr_data::assembler const& a = data_[s];
@@ -142,6 +142,8 @@ public:
         ok += a.crc_ok();
         broken += a.broken();
         repeats += a.repeats();
+        crc9 += a.crc9_good();
+        crc9_all += a.crc9_good() + a.crc9_bad();
       }
       // The latest message whose CRC-32 checked, on either slot; else the latest of any kind
       if (data_good_slot_ >= 0)
@@ -150,8 +152,9 @@ public:
         last = data_[data_any_slot_].last_report();
       if (hdr + hdr_bad != 0)
         std::snprintf(stats->dmr_pdu, sizeof stats->dmr_pdu,
-                      "hdr=%u/%u msgs=%u crc_ok=%u broken=%u repeats=%u r34_clean=%u/%u r34_swapped=%u last=%s", hdr,
-                      hdr + hdr_bad, msgs, ok, broken, repeats, r34_clean_, r34_, r34_swapped_, *last ? last : "-");
+                      "hdr=%u/%u msgs=%u crc_ok=%u broken=%u repeats=%u crc9=%u/%u r34_clean=%u/%u r34_swapped=%u last=%s",
+                      hdr, hdr + hdr_bad, msgs, ok, broken, repeats, crc9, crc9_all, r34_clean_, r34_, r34_swapped_,
+                      *last ? last : "-");
     }
     if (active_slot_ >= 0)
       stats->error_rate = slots_[active_slot_].error_rate();
@@ -239,6 +242,11 @@ private:
 
   void sync_reset()
   {
+    // Packet data in progress can't continue across lost sync (blocks may
+    // have gone by unseen, and a later packet's blocks fit a stale header);
+    // the counters and the reports made stay
+    for (int s = 0; s < 2; s++)
+      data_[s].abandon();
     symbol_count_ = 0;
     rx_count_ = 0;
     threshold_ = 0;
