@@ -21,7 +21,12 @@ static double const Min_power = 1e-7;      // mean square per sample: below it, 
 static double const Same = 0.015;          // looks this close are one tone
 static int const Max_missing = 2;          // looks a tone may fade for (100 ms)
 static double const Min_tone = 0.4;        // seconds, each tone of a page
-static double const Max_gap = 0.3;         // seconds between A's end and B's start
+static double const Max_gap = 0.3;         // seconds of silence between A's end and B's start
+// Tones are timed at their looks' midpoints, a hop apart: measured that
+// way, a silent gap is its true length and 0-100 ms (calibrated: a true
+// 300 ms measures at most 350, a true 450 at least 450). Pairing and expiry
+// both measure so, from the looks' midpoints
+static double const Gap_allowance = Max_gap + 2.0 * TD_HOP / TD_SAMPRATE;
 static double const Long_tone = 4.0;       // seconds, a long tone alone
 
 bool td_init(struct tone_detector *d){
@@ -30,10 +35,13 @@ bool td_init(struct tone_detector *d){
     d->window[i] = 0.5f - 0.5f * cosf(2 * (float)M_PI * i / TD_FFT);
   d->in = fftwf_alloc_real(TD_FFT);
   d->out = fftwf_alloc_complex(TD_FFT / 2 + 1);
-  if(d->in == NULL || d->out == NULL)
+  if(d->in != NULL && d->out != NULL)
+    d->plan = fftwf_plan_dft_r2c_1d(TD_FFT,d->in,d->out,FFTW_ESTIMATE);
+  if(d->plan == NULL){
+    td_free(d); // nothing left allocated on failure
     return false;
-  d->plan = fftwf_plan_dft_r2c_1d(TD_FFT,d->in,d->out,FFTW_ESTIMATE);
-  return d->plan != NULL;
+  }
+  return true;
 }
 
 void td_free(struct tone_detector *d){
@@ -106,7 +114,7 @@ static int close_segment(struct tone_detector *d,struct td_event *events,int max
     double const a_dur = seconds(d->last.end - d->last.start);
     double const gap = s.start > d->last.end ? seconds(s.start - d->last.end) : 0;
     double const a = mean_hz(&d->last), b = mean_hz(&s);
-    if(a_dur >= Min_tone && gap <= Max_gap && fabs(a - b) > Same * a){
+    if(a_dur >= Min_tone && gap <= Gap_allowance && fabs(a - b) > Same * a){
       if(n < max)
 	events[n++] = (struct td_event){.type = TD_TWO_TONE,.a_hz = a,.b_hz = b,.a_seconds = a_dur,
 					 .b_seconds = dur,.start = d->last.start,.end = s.end};
@@ -131,7 +139,9 @@ static int close_segment(struct tone_detector *d,struct td_event *events,int max
 static int expire_last(struct tone_detector *d,struct td_event *events,int max){
   if(!d->last_valid || d->last_used || d->cur.open)
     return 0;
-  if(seconds(d->samples - d->last.end) <= Max_gap)
+  // In the looks' time (their midpoints), as the gap is measured when pairing
+  uint64_t const now = d->samples - TD_FFT / 2;
+  if(now <= d->last.end || seconds(now - d->last.end) <= Gap_allowance)
     return 0;
   int n = 0;
   double const dur = seconds(d->last.end - d->last.start);

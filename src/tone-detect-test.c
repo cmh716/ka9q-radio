@@ -137,6 +137,31 @@ int main(void){
   n = run(ev,16);
   check(n == 1 && td_match(Departments,N_departments,&ev[0],0.015) == 0,"100 ms between A and B");
 
+  // True gaps up to 300 ms pair, wherever they fall in the 50 ms hop; 450 ms don't
+  int near = 1, far = 1;
+  for(int off = 0; off < 5; off++){
+    for(int g = 0; g < 2; g++){
+      double const gap = g == 0 ? 0.30 : 0.45;
+      reset();
+      add(0.5 + off * 0.01,0,0); add(1.0,2930,0.3); add(gap,0,0); add(3.0,799,0.3); add(1.0,0,0);
+      underneath(0.01,0,0);
+      n = run(ev,16);
+      bool const paired = n == 1 && ev[0].type == TD_TWO_TONE && td_match(Departments,N_departments,&ev[0],0.015) == 0;
+      if(g == 0 && !paired){ near = 0; printf("     300 ms gap, offset %d ms: %d events\n",off * 10,n); }
+      if(g == 1 && paired){ far = 0; printf("     450 ms gap, offset %d ms: paired\n",off * 10); }
+    }
+  }
+  check(near,"a 300 ms gap between A and B, at each offset in the hop: a page");
+  check(far,"a 450 ms gap: not a page");
+  reset();
+  for(double gap = 0.20; gap <= 0.301; gap += 0.01){
+    reset();
+    add(0.5,0,0); add(1.0,2930,0.3); add(gap,0,0); add(3.0,799,0.3); add(1.0,0,0);
+    n = run(ev,16);
+    if(!(n == 1 && ev[0].type == TD_TWO_TONE)){ near = 0; printf("     %.0f ms gap: %d events\n",gap * 1000,n); }
+  }
+  check(near,"gaps 200-300 ms, clean tones: each a page");
+
   reset();
   add(0.5,0,0); add(1.0,2930,0.3); add(3.0,799,0.3); add(0.5,0,0); add(1.0,2930,0.3); add(3.0,871,0.3); add(1.0,0,0);
   underneath(0.01,0,0);
