@@ -20,7 +20,9 @@ its time, department and frequency, eg 20261122T120314_Alden_453.500.wav. Furthe
 transmission go in the same recording. Once the recording is complete, the
 command is run if any of its pages is a department in the notify list, with
 the page in its environment: PAGE_DEPARTMENTS, PAGE_TONES, PAGE_TIME,
-PAGE_FREQ, PAGE_FILE.
+PAGE_FREQ, PAGE_FILE. If the recording couldn't be completed (a write or
+encoding failure), the command is still run, PAGE_FILE empty and PAGE_ERROR
+saying why.
 .P
 A tone is one steady peak with most of the audio's power between 270 and
 3400 Hz, above CTCSS and DCS; tones of at least 0.4 s, the second soon after

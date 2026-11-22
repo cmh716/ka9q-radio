@@ -93,6 +93,8 @@ struct session {
   int frame_fill;
   int64_t granule;                     // 48 kHz units
   int64_t packetno;
+  int preskip;                         // the encoder's lookahead, at 8 kHz
+  char const *failed;                  // why the recording is incomplete, if it is
   char wav_path[512];
   uint64_t wav_samples;
   double rec_started;                  // monotonic seconds
@@ -209,13 +211,25 @@ static void wav_header(FILE *fp,uint32_t samples){
   fseek(fp,0,SEEK_END);
 }
 
-// Ogg Opus: pages written as they fill (flush forces the last out)
+// Ogg Opus. Any failure is kept (the first), and the recording reported
+// incomplete when it ends
+static void record_failed(struct session *sp,char const *why){
+  if(sp->failed == NULL)
+    sp->failed = why;
+}
+// Pages written as they fill (flush forces the rest out)
 static void ogg_pages(struct session *sp,bool flush){
   ogg_page og;
   while(flush ? ogg_stream_flush(&sp->os,&og) : ogg_stream_pageout(&sp->os,&og)){
-    fwrite(og.header,1,og.header_len,sp->wav);
-    fwrite(og.body,1,og.body_len,sp->wav);
+    if(fwrite(og.header,1,og.header_len,sp->wav) != (size_t)og.header_len
+       || fwrite(og.body,1,og.body_len,sp->wav) != (size_t)og.body_len)
+      record_failed(sp,"write failed");
   }
+}
+static void ogg_packet_in(struct session *sp,uint8_t *data,long bytes,bool bos,bool eos,int64_t granule){
+  ogg_packet op = {.packet = data,.bytes = bytes,.b_o_s = bos,.e_o_s = eos,.granulepos = granule,.packetno = sp->packetno++};
+  if(ogg_stream_packetin(&sp->os,&op) != 0)
+    record_failed(sp,"Ogg packet failed");
 }
 static bool ogg_begin(struct session *sp){
   int error;
@@ -224,17 +238,22 @@ static bool ogg_begin(struct session *sp){
     return false;
   opus_encoder_ctl(sp->enc,OPUS_SET_BITRATE(16000)); // speech, and the tones clean
   opus_int32 lookahead = 0;
-  opus_encoder_ctl(sp->enc,OPUS_GET_LOOKAHEAD(&lookahead));
-  ogg_stream_init(&sp->os,(int)(random() & 0x7fffffff));
+  if(opus_encoder_ctl(sp->enc,OPUS_GET_LOOKAHEAD(&lookahead)) != OPUS_OK || lookahead < 0)
+    lookahead = 0;
+  if(ogg_stream_init(&sp->os,(int)(random() & 0x7fffffff)) != 0){
+    opus_encoder_destroy(sp->enc);
+    sp->enc = NULL;
+    return false;
+  }
   sp->frame_fill = 0;
   sp->packetno = 0;
-  uint16_t const preskip = (uint16_t)(lookahead * (48000 / TD_SAMPRATE));
+  sp->preskip = lookahead;
   sp->granule = 0; // the encoded audio, in 48 kHz units, pre-skip included (RFC 7845)
+  uint16_t const preskip = (uint16_t)(lookahead * (48000 / TD_SAMPRATE));
   // OpusHead (RFC 7845)
   uint8_t head[19] = {'O','p','u','s','H','e','a','d',1,1,(uint8_t)(preskip & 0xff),(uint8_t)(preskip >> 8),
 		      TD_SAMPRATE & 0xff,(TD_SAMPRATE >> 8) & 0xff,0,0,0,0,0};
-  ogg_packet op = {.packet = head,.bytes = sizeof head,.b_o_s = 1,.granulepos = 0,.packetno = sp->packetno++};
-  ogg_stream_packetin(&sp->os,&op);
+  ogg_packet_in(sp,head,sizeof head,true,false,0);
   ogg_pages(sp,true);
   // OpusTags: the vendor, no comments
   static char const vendor[] = "ka9q-radio tones";
@@ -244,27 +263,47 @@ static bool ogg_begin(struct session *sp){
   tags[8] = vl & 0xff; tags[9] = (vl >> 8) & 0xff; tags[10] = 0; tags[11] = 0; // little-endian
   memcpy(tags + 12,vendor,vl);
   memset(tags + 12 + vl,0,4);
-  op = (ogg_packet){.packet = tags,.bytes = sizeof tags,.granulepos = 0,.packetno = sp->packetno++};
-  ogg_stream_packetin(&sp->os,&op);
+  ogg_packet_in(sp,tags,sizeof tags,false,false,0);
   ogg_pages(sp,true);
+  if(sp->failed != NULL){
+    opus_encoder_destroy(sp->enc);
+    sp->enc = NULL;
+    ogg_stream_clear(&sp->os);
+    return false;
+  }
   return true;
 }
-static void ogg_frame(struct session *sp,bool last){
+// One 20 ms frame encoded; pages written unless held (the stream's end)
+static void ogg_frame(struct session *sp,bool eos,int64_t granule,bool hold){
   uint8_t packet[1500];
   int const n = opus_encode(sp->enc,sp->frame,TD_SAMPRATE / 50,packet,sizeof packet);
   sp->frame_fill = 0;
-  if(n < 0)
+  if(n < 0){
+    record_failed(sp,"Opus encoding failed");
     return;
+  }
   sp->granule += 48000 / 50;
-  ogg_packet op = {.packet = packet,.bytes = n,.e_o_s = last,.granulepos = sp->granule,.packetno = sp->packetno++};
-  ogg_stream_packetin(&sp->os,&op);
-  ogg_pages(sp,last);
+  ogg_packet_in(sp,packet,n,false,eos,granule >= 0 ? granule : sp->granule);
+  if(!hold)
+    ogg_pages(sp,false);
 }
+// The end: silence to flush the encoder's lookahead out, and the last
+// page's granule position the audio's true end (pre-skip plus every sample
+// recorded), so a player trims the padding (RFC 7845 4.4). What was
+// waiting goes out first, so the padding's packets share the last page
 static void ogg_end(struct session *sp){
-  // The last frame, padded with silence, ends the stream
-  while(sp->frame_fill < TD_SAMPRATE / 50)
-    sp->frame[sp->frame_fill++] = 0;
-  ogg_frame(sp,true);
+  int const frame = TD_SAMPRATE / 50, ratio = 48000 / TD_SAMPRATE;
+  int64_t const end = (int64_t)(sp->preskip + sp->wav_samples) * ratio;
+  ogg_pages(sp,true);
+  for(;;){
+    while(sp->frame_fill < frame)
+      sp->frame[sp->frame_fill++] = 0;
+    bool const last = sp->granule + frame * ratio >= end; // this frame reaches the end
+    ogg_frame(sp,last,last ? end : -1,true);
+    if(last || sp->failed != NULL)
+      break;
+  }
+  ogg_pages(sp,true);
   opus_encoder_destroy(sp->enc);
   sp->enc = NULL;
   ogg_stream_clear(&sp->os);
@@ -278,9 +317,9 @@ static void wav_write(struct session *sp,float const *x,int n){
     if(Ogg){
       sp->frame[sp->frame_fill++] = s;
       if(sp->frame_fill == TD_SAMPRATE / 50)
-	ogg_frame(sp,false);
-    } else
-      fwrite(&s,2,1,sp->wav);
+	ogg_frame(sp,false,-1,false);
+    } else if(fwrite(&s,2,1,sp->wav) != 1)
+      record_failed(sp,"write failed");
   }
   sp->wav_samples += n;
 }
@@ -293,9 +332,19 @@ static void finish_recording(struct session *sp){
     ogg_end(sp);
   else
     wav_header(sp->wav,(uint32_t)sp->wav_samples);
-  fclose(sp->wav);
+  if(fflush(sp->wav) != 0 || ferror(sp->wav))
+    record_failed(sp,"write failed");
+  if(fclose(sp->wav) != 0)
+    record_failed(sp,"close failed");
   sp->wav = NULL;
-  printf("%s  recorded %s (%.0f s)\n",sp->page_time,sp->wav_path,(double)sp->wav_samples / TD_SAMPRATE);
+  char const *failed = sp->failed;
+  sp->failed = NULL;
+  if(failed != NULL){
+    // An alert still goes, without the recording
+    fprintf(stderr,"%s  recording %s incomplete: %s\n",sp->page_time,sp->wav_path,failed);
+    printf("%s  recording %s incomplete: %s\n",sp->page_time,sp->wav_path,failed);
+  } else
+    printf("%s  recorded %s (%.0f s)\n",sp->page_time,sp->wav_path,(double)sp->wav_samples / TD_SAMPRATE);
   fflush(stdout);
   bool tell = false;
   char departments[512] = "";
@@ -315,7 +364,9 @@ static void finish_recording(struct session *sp){
     setenv("PAGE_TONES",sp->tones,1);
     setenv("PAGE_TIME",sp->page_time,1);
     setenv("PAGE_FREQ",freq,1);
-    setenv("PAGE_FILE",sp->wav_path,1);
+    setenv("PAGE_FILE",failed == NULL ? sp->wav_path : "",1);
+    if(failed != NULL)
+      setenv("PAGE_ERROR",failed,1);
     execl("/bin/sh","sh","-c",Command,(char *)NULL);
     _exit(127);
   }
@@ -394,6 +445,7 @@ static void page(struct session *sp,struct td_event const *ev){
 	close(fd);
       return;
     }
+    sp->failed = NULL;
     if(Ogg){
       if(!ogg_begin(sp)){
 	fprintf(stderr,"%s: can't start the Opus encoder\n",sp->wav_path);
