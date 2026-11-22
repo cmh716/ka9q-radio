@@ -51,6 +51,8 @@ if [ -f ../../../src/config_paths.h ]; then
   out/monitor-display-test
   cc $FLAGS -std=gnu11 -iquote $S $S/tone-detect-test.c $S/tone-detect.c -lfftw3f -lm -o out/tone-detect-test
   out/tone-detect-test
+  cc $FLAGS -std=gnu11 -iquote $S $S/dcs-test.c $S/dcs.c -lm -o out/dcs-test
+  out/dcs-test
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
     $(pkg-config --cflags libbsd-overlay) \
     -iquote ../../../src -iquote .. ../../../src/follow-test.c \

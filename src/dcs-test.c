@@ -46,6 +46,35 @@ static void check_stream(int code,bool inverted,int error_symbol){
   }
 }
 
+// A paging tone over the code, ten times its level, from 300 to 3000 Hz:
+// the code must hold through all of each. Two filter stages at 300 Hz lost
+// it for whole tones at some frequencies (a fire department's 800 Hz tone B
+// cut off by the squelch, 2026-11-22)
+static void check_tones(float rate){
+  uint32_t const word = dcs_codeword(243);
+  for(double hz = 300; hz <= 3000; hz += 100){
+    struct dcs_decoder decoder;
+    init_dcs_decoder(&decoder,rate);
+    double shaped = 0;
+    long held = 0, looked = 0;
+    for(long n = 0; n < (long)(3 * rate); n++){
+      double const t = n / rate;
+      int const bit = (word >> ((long)(t * DCS_BITRATE + 0.37) % 23)) & 1;
+      shaped += (1 - exp(-2 * M_PI * 300 / rate)) * ((bit ? 1 : -1) - shaped); // a transmitter's shaping
+      double const x = 0.05 * shaped + (t > 1.0 ? 0.5 * sin(2 * M_PI * hz * t) : 0);
+      process_dcs_sample(&decoder,(float)x);
+      if(t > 1.0){
+	looked++;
+	held += dcs_decoder_matches(&decoder,243,false);
+      }
+    }
+    if(held < looked * 0.99){
+      fprintf(stderr,"DCS 243 lost under a %.0f Hz tone at %.0f Hz sampling: held %.0f%%\n",hz,rate,100.0 * held / looked);
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
 int main(void){
   int code;
   bool inverted;
@@ -68,6 +97,8 @@ int main(void){
   check_stream(411,false,-1);
   check_stream(754,false,-1);
   check_stream(23,false,7);
+  check_tones(24000);
+  check_tones(12000);
   puts("DCS decoder tests passed");
   return 0;
 }

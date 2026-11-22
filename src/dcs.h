@@ -8,6 +8,7 @@
 #define DCS_BITRATE 134.4f
 #define DCS_WORD_MASK 0x7fffffu
 #define DCS_PHASES 23
+#define DCS_LOWPASS_STAGES 6
 
 struct dcs_candidate {
   int code;
@@ -19,8 +20,7 @@ struct dcs_candidate {
 struct dcs_decoder {
   float sample_rate;
   float filter_alpha;
-  float lowpass1;
-  float lowpass2;
+  float lowpass[DCS_LOWPASS_STAGES];
   float dc_alpha;
   float dc;
   float phase;

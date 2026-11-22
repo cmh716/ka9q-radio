@@ -81,8 +81,7 @@ bool parse_dcs_code(char const *text,int *code,bool *inverted){
 void reset_dcs_decoder(struct dcs_decoder *decoder){
   if(decoder == NULL)
     return;
-  decoder->lowpass1 = 0;
-  decoder->lowpass2 = 0;
+  memset(decoder->lowpass,0,sizeof decoder->lowpass);
   decoder->dc = 0;
   decoder->phase = 0;
   decoder->bit_integral = 0;
@@ -102,7 +101,16 @@ void init_dcs_decoder(struct dcs_decoder *decoder,float sample_rate){
   decoder->sample_rate = sample_rate;
   if(!isfinite(sample_rate) || sample_rate <= 0)
     return;
-  decoder->filter_alpha = -expm1f(-2.0f * 3.14159265358979323846f * 300.0f / sample_rate);
+  // Six one-pole stages at 200 Hz ahead of the bit decisions (two at
+  // 300 Hz before). A paging tone can be 50 times the code's power in the
+  // discriminator's output, which this sees before de-emphasis (PM
+  // pre-emphasis lifts the tone), and through two stages what was left of
+  // it beat with the bit clock: a fire department's tone B (800 Hz,
+  // Lancaster FD, 2026-11-22) lost DCS 243 for its whole length, and the
+  // squelch cut it off. Six at 200 Hz take 800 Hz down 72 dB (two at 300,
+  // 18), and tones down to about 300 Hz; the code (134.4 b/s) is decoded as
+  // before, better in noise
+  decoder->filter_alpha = -expm1f(-2.0f * 3.14159265358979323846f * 200.0f / sample_rate);
   decoder->dc_alpha = -expm1f(-1.0f / (0.5f * sample_rate));
   for(size_t i = 0; i < sizeof Standard_codes / sizeof Standard_codes[0]; i++){
     decoder->codes[i] = Standard_codes[i];
@@ -186,9 +194,11 @@ int process_dcs_sample(struct dcs_decoder *decoder,float sample){
   if(decoder == NULL || !isfinite(decoder->sample_rate) || decoder->sample_rate <= 0)
     return 0;
 
-  decoder->lowpass1 += decoder->filter_alpha * (sample - decoder->lowpass1);
-  decoder->lowpass2 += decoder->filter_alpha * (decoder->lowpass1 - decoder->lowpass2);
-  float x = decoder->lowpass2;
+  float x = sample;
+  for(int i = 0; i < DCS_LOWPASS_STAGES; i++){
+    decoder->lowpass[i] += decoder->filter_alpha * (x - decoder->lowpass[i]);
+    x = decoder->lowpass[i];
+  }
   decoder->dc += decoder->dc_alpha * (x - decoder->dc);
   x -= decoder->dc;
   decoder->phase += DCS_BITRATE / decoder->sample_rate;
