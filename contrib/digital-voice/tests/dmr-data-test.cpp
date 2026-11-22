@@ -204,7 +204,9 @@ int main()
     b.block(34, blocks[0], 18);
     b.block(34, blocks[2], 18); // the second missed
     b.block(34, blocks[2], 18);
-    check(b.messages() == 1 && b.broken() == 1, "confirmed: a block missed: broken, not a bad CRC");
+    check(b.messages() == 1 && b.repeats() == 2, "confirmed: a block missed: the packet waits, no bad CRC");
+    b.abandon();
+    check(b.broken() == 1, "and when it ends unfinished: broken");
     // A serial damaged (its CRC-9 fails): not trusted, the block taken in turn
     make_header(hb, 3, 4, false, 1, 2, 3, p2);
     b.header(hb);
@@ -231,6 +233,48 @@ int main()
       }
     }
     check(crc9, "CRC-9: set for each rate, and any one bit wrong fails it");
+    // A damaged repeat of block 0 held in block 1's place; the real block 1 replaces it
+    {
+      uint8_t dup[18];
+      std::memcpy(dup, blocks[0], 18);
+      dup[9] ^= 0x10; // its CRC-9 fails
+      assembler d;
+      make_header(hb, 3, 4, false, 1, 2, 3, p2);
+      d.header(hb);
+      d.block(34, blocks[0], 18);
+      d.block(34, dup, 18);
+      d.block(34, blocks[1], 18);
+      d.block(34, blocks[2], 18);
+      check(d.messages() == 1 && d.crc_ok() == 1, "a damaged repeat held provisionally: the real block replaces it");
+      // ... and when it filled the packet: it waits, the CRC-32 failing, for the real one
+      uint8_t m3[32];
+      int const p3 = make_message(m3, ip, 26, sizeof m3);
+      uint8_t two[2][18];
+      for (int k = 0; k < 2; k++) {
+        std::memcpy(two[k] + 2, m3 + 16 * k, 16);
+        crc9_set(two[k], 18, 34, k);
+      }
+      std::memcpy(dup, two[0], 18);
+      dup[9] ^= 0x10;
+      make_header(hb, 3, 4, false, 1, 2, 2, p3);
+      d.header(hb);
+      d.block(34, two[0], 18);
+      d.block(34, dup, 18);
+      check(d.messages() == 1, "full but its CRC-32 failing with a block held provisionally: not reported");
+      d.block(34, two[1], 18);
+      check(d.messages() == 2 && d.crc_ok() == 2, "the real block in: the packet good");
+      // every block vouched for and the CRC-32 failing: reported bad
+      uint8_t bad[18];
+      std::memcpy(bad, two[1], 18);
+      bad[17] ^= 1;
+      crc9_set(bad, 18, 34, 1);
+      make_header(hb, 3, 4, false, 1, 2, 2, p3);
+      d.header(hb);
+      d.block(34, two[0], 18);
+      d.block(34, bad, 18);
+      check(d.messages() == 3 && d.crc_ok() == 2 && std::strstr(d.last_report(), "crc=bad") != nullptr,
+            "all vouched for, the CRC-32 failing: reported bad");
+    }
   }
   // Blocks with no header before them: ignored
   {

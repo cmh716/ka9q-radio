@@ -224,15 +224,17 @@ public:
     if (dpf == 15) {
       // A proprietary header: the second of a packet's, counted in its
       // blocks to follow (ETSI TS 102 361-1 8.2.1). The first's fields stand
-      if (want_ > 0 && have_ == 0 && !proprietary_) {
+      if (want_ > 0 && !started_ && !proprietary_) {
         proprietary_ = true;
         mfid_ = h[1];
         if (++have_ >= want_)
-          finish();
+          finish(true);
       } else
         stray_++;
       return true;
     }
+    if (want_ > 0)
+      broken_++; // a packet in progress, never completed
     std::memcpy(h_, h, sizeof h_);
     dpf_ = dpf;
     sap_ = h[1] >> 4;
@@ -242,7 +244,6 @@ public:
     pad_ = 0;
     proprietary_ = false;
     mfid_ = 0;
-    serial_ = -1;
     switch (dpf_) {
     case 2: // unconfirmed
     case 3: // confirmed
@@ -262,6 +263,8 @@ public:
     have_ = 0;
     len_ = 0;
     rate_ = 0;
+    std::memset(placed_, 0, sizeof placed_);
+    started_ = false;
     if (want_ <= 0 || want_ > kMaxBlocks) {
       if (want_ > kMaxBlocks)
         too_long_++;
@@ -280,46 +283,84 @@ public:
       broken_++;
       return;
     }
-    // Confirmed data: each block begins with its serial number (7 bits) and
-    // a CRC-9. The serials go 0, 1, 2...: a repeat is a block sent again
-    // (dropped), a jump one missed (the packet broken, not "bad"). Only a
-    // serial its CRC-9 vouches for is trusted so; a block failing it is
-    // taken in turn (counted: if they all fail, the CRC-9 is misread here)
-    int const skip = dpf_ == 3 ? 2 : 0;
-    if (dpf_ == 3 && !crc9_ok(bytes, n, rate)) {
-      crc9_bad_++;
-      serial_ = (serial_ + 1) & 0x7f;
-    } else if (dpf_ == 3) {
+    rate_ = rate;
+    started_ = true;
+    if (dpf_ == 3) {
+      confirmed(bytes, n);
+      return;
+    }
+    if (len_ + n > static_cast<int>(sizeof data_)) {
+      want_ = 0;
+      return;
+    }
+    std::memcpy(data_ + len_, bytes, n);
+    len_ += n;
+    if (++have_ >= want_)
+      finish(true);
+  }
+
+private:
+  // Confirmed data: each block begins with its serial number (7 bits) and a
+  // CRC-9, after which its data. Blocks are kept in their places by serial:
+  // one its CRC-9 vouches for goes where its serial says (a repeat of one
+  // there already dropped), replacing one held there provisionally; one
+  // failing it is held provisionally in the first empty place. Full, the
+  // packet is reported if its CRC-32 checks, or if every block was vouched
+  // for (then bad); else it waits for vouched blocks to replace the others.
+  // Serials run from 0: one beyond the packet's blocks breaks it
+  void confirmed(uint8_t const *bytes, int n)
+  {
+    int const blocks = want_ - (proprietary_ ? 1 : 0); // the data blocks
+    int const size = n - 2;
+    if (blocks <= 0 || blocks * size > static_cast<int>(sizeof data_)) {
+      want_ = 0;
+      return;
+    }
+    int at = -1;
+    bool const vouched = crc9_ok(bytes, n, rate_);
+    if (vouched) {
       crc9_good_++;
-      int const serial = bytes[0] >> 1;
-      if (serial == serial_) {
-        repeats_++;
-        return;
-      }
-      if (serial != ((serial_ + 1) & 0x7f)) {
+      at = bytes[0] >> 1;
+      if (at >= blocks) {
         want_ = 0;
         broken_++;
         return;
       }
-      serial_ = serial;
+      if (placed_[at] == 2) {
+        repeats_++;
+        return;
+      }
+    } else {
+      crc9_bad_++;
+      for (int i = 0; i < blocks && at < 0; i++)
+        if (placed_[i] == 0)
+          at = i;
+      if (at < 0)
+        return; // nowhere to hold it: every place taken
     }
-    rate_ = rate;
-    if (len_ + n - skip > static_cast<int>(sizeof data_)) {
-      want_ = 0;
-      return;
-    }
-    std::memcpy(data_ + len_, bytes + skip, n - skip);
-    len_ += n - skip;
-    if (++have_ < want_)
-      return;
-    finish();
+    std::memcpy(data_ + at * size, bytes + 2, size);
+    placed_[at] = vouched ? 2 : 1;
+    for (int i = 0; i < blocks; i++)
+      if (placed_[i] == 0)
+        return;
+    len_ = blocks * size;
+    have_ = want_; // every block in (the proprietary header too, if any)
+    bool all_vouched = true;
+    for (int i = 0; i < blocks; i++)
+      all_vouched = all_vouched && placed_[i] == 2;
+    finish(all_vouched);
   }
-  // All its blocks in: the message, its CRC-32 checked
-  void finish()
+
+public:
+  // All its blocks in: the message, its CRC-32 checked. Not final (blocks
+  // held provisionally): reported only if the CRC-32 checks
+  void finish(bool final_ = true)
   {
+    char const *crc = crc32_check(data_, len_);
+    if (!crc && !final_)
+      return; // wait for blocks vouched for
     want_ = 0;
     messages_++;
-    char const *crc = crc32_check(data_, len_);
     if (crc)
       crc_ok_++;
     // The message itself: without its pad octets and the CRC-32
@@ -387,8 +428,10 @@ public:
 
 private:
   uint8_t h_[12]{};
-  int dpf_ = 0, sap_ = 0, want_ = 0, have_ = 0, len_ = 0, rate_ = 0, pad_ = 0, serial_ = -1;
+  int dpf_ = 0, sap_ = 0, want_ = 0, have_ = 0, len_ = 0, rate_ = 0, pad_ = 0;
+  uint8_t placed_[kMaxBlocks]{}; // confirmed blocks: 0 empty, 1 held provisionally, 2 vouched for
   bool proprietary_ = false;
+  bool started_ = false; // a block of the packet has come
   int mfid_ = 0;
   bool group_ = false;
   uint32_t dst_ = 0, src_ = 0;
