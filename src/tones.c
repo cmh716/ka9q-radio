@@ -75,6 +75,9 @@ struct session {
   uint64_t written;                    // samples into the ring in all
   uint64_t zeros;                      // silence fed only to the detector, at quiet (see quiet())
   double last_packet;                  // monotonic seconds, the last audio packet
+  bool rtp_init;                       // the next fields hold the last packet's
+  uint16_t next_seq;
+  uint32_t next_ts;
   bool quiet;                          // the detector has been fed the end of the transmission
   // a page being recorded
   FILE *wav;
@@ -88,6 +91,23 @@ struct session {
   char page_time[32];
 };
 static struct session Sessions[MAX_SESSIONS];
+
+// What status says of each stream: its frequency, and what its payload
+// type carries. Kept apart from the sessions (and their detectors), which
+// only audio makes, so that streams that only advertise can't crowd out
+// ones that are heard
+#define MAX_INFO 512
+struct stream_info {
+  bool inuse;
+  struct sockaddr_storage sender;
+  uint32_t ssrc;
+  double freq;
+  int pt;
+  enum encoding encoding;
+  int samprate,channels;
+  double seen;                         // monotonic seconds
+};
+static struct stream_info Info[MAX_INFO];
 static void where(struct session const *sp,char *out,size_t size,bool file);
 
 static double monotonic(void){
@@ -353,6 +373,7 @@ static void quiet(struct session *sp){
       page(sp,&ev[i]);
   }
   sp->zeros = zeros + (uint64_t)looks * TD_HOP;
+  sp->rtp_init = false; // the next transmission's numbering is its own
 }
 
 // A session's resources, given back
@@ -366,8 +387,12 @@ static void end_session(struct session *sp){
   memset(sp,0,sizeof *sp);
 }
 
-static double const Idle_seconds = 60;
-static double const Quiet_gap = 0.3;   // no packets so long: the transmission has ended // a session unheard so long may be reclaimed
+static double const Idle_seconds = 60;  // a session unheard so long may be reclaimed
+// A transmission's end: in the stream (RTP), a jump of more than Rtp_gap;
+// failing that, no packets at all for Quiet_gap (a delivery hiccup is
+// shorter, so contiguous audio isn't split)
+static double const Rtp_gap = 0.3;
+static double const Quiet_gap = 1.0;
 
 static struct session *session(struct sockaddr_storage const *sender,uint32_t ssrc,bool create){
   struct session *free_one = NULL;
@@ -414,28 +439,63 @@ static struct session *session(struct sockaddr_storage const *sender,uint32_t ss
 }
 
 // Status: a stream's frequency, and what its payload type carries
+static struct stream_info *info(struct sockaddr_storage const *sender,uint32_t ssrc,bool create){
+  struct stream_info *oldest = NULL;
+  for(int i = 0; i < MAX_INFO; i++){
+    struct stream_info *ip = &Info[i];
+    if(ip->inuse && ip->ssrc == ssrc && address_match(&ip->sender,sender))
+      return ip;
+    if(oldest == NULL || !ip->inuse || (oldest->inuse && ip->seen < oldest->seen))
+      oldest = ip;
+  }
+  if(!create)
+    return NULL;
+  memset(oldest,0,sizeof *oldest); // the longest unheard gives way
+  oldest->inuse = true;
+  oldest->sender = *sender;
+  oldest->ssrc = ssrc;
+  oldest->pt = -1;
+  return oldest;
+}
+
+// Status: a stream's frequency, and what its payload type carries
 static void status(uint8_t const *buffer,int length,struct sockaddr_storage const *sender){
   if(length < 2 || buffer[0] != STATUS)
     return;
   uint32_t const ssrc = get_ssrc(buffer + 1,length - 1);
-  struct session *sp = session(sender,ssrc,true);
-  if(sp == NULL)
-    return;
+  struct stream_info *ip = info(sender,ssrc,true);
   static chan_t chan;
   static struct frontend frontend;
   memset(&chan,0,sizeof chan);
   decode_radio_status(&frontend,&chan,buffer + 1,length - 1);
-  if(chan.tune.freq > 0 && sp->freq == 0 && Verbose)
+  if(chan.tune.freq > 0 && ip->freq == 0 && Verbose)
     fprintf(stderr,"stream %u: %.4f MHz, %s %d Hz\n",ssrc,chan.tune.freq * 1e-6,
 	    encoding_string(chan.output.encoding),chan.output.samprate);
+  ip->seen = monotonic();
   if(chan.tune.freq > 0)
-    sp->freq = chan.tune.freq;
+    ip->freq = chan.tune.freq;
   if(chan.output.encoding != NO_ENCODING && chan.output.samprate > 0){
-    sp->pt = chan.output.rtp.type & 0x7f;
-    sp->encoding = chan.output.encoding;
-    sp->samprate = chan.output.samprate;
-    sp->channels = chan.output.channels > 0 ? chan.output.channels : 1;
+    ip->pt = chan.output.rtp.type & 0x7f;
+    ip->encoding = chan.output.encoding;
+    ip->samprate = chan.output.samprate;
+    ip->channels = chan.output.channels > 0 ? chan.output.channels : 1;
   }
+  // A session already hearing it takes it at once
+  struct session *sp = session(sender,ssrc,false);
+  if(sp != NULL){
+    sp->freq = ip->freq;
+    sp->pt = ip->pt;
+    sp->encoding = ip->encoding;
+    sp->samprate = ip->samprate;
+    sp->channels = ip->channels;
+  }
+}
+
+// What the next packet's sequence number and timestamp should be
+static void expect(struct session *sp,struct rtp_header const *rtp,uint32_t ts_units){
+  sp->next_seq = (uint16_t)(rtp->seq + 1);
+  sp->next_ts = rtp->timestamp + ts_units;
+  sp->rtp_init = true;
 }
 
 static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sender){
@@ -466,9 +526,19 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   struct session *sp = session(sender,rtp.ssrc,true);
   if(sp == NULL)
     return;
+  if(sp->pt < 0){ // new: what status has said of it
+    struct stream_info const *ip = info(sender,rtp.ssrc,false);
+    if(ip != NULL){
+      sp->freq = ip->freq;
+      sp->pt = ip->pt;
+      sp->encoding = ip->encoding;
+      sp->samprate = ip->samprate;
+      sp->channels = ip->channels;
+    }
+  }
   double const now = monotonic();
   if(now - sp->last_packet > Quiet_gap)
-    quiet(sp); // a new transmission: the last one's tones end before it
+    quiet(sp); // packets stopped a while: the last transmission's tones end before this
   sp->last_packet = now;
   // What it is: from status if it came, else the payload type's usual meaning
   enum encoding encoding = sp->pt == rtp.type ? sp->encoding : encoding_from_pt(rtp.type);
@@ -479,8 +549,29 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     samprate = 48000;
     channels = 1;
   }
+  bool const opus = encoding == OPUS || encoding == OPUS_VOIP;
+  int const clock = opus ? 48000 : samprate; // RTP timestamp units a second
+  // RTP continuity: late or repeated packets dropped; a short loss filled
+  // with as much silence (a lost packet mid-tone mustn't split it); a jump
+  // of more than Rtp_gap a new transmission
+  if(sp->rtp_init && clock > 0){
+    int16_t const seq_step = (int16_t)(rtp.seq - sp->next_seq);
+    int32_t const ts_step = (int32_t)(rtp.timestamp - sp->next_ts);
+    if(seq_step < 0 || ts_step < 0)
+      return; // late, or a duplicate
+    double const missing = (double)ts_step / clock;
+    if(missing > Rtp_gap)
+      quiet(sp);
+    else if(ts_step > 0){
+      static float const silence[TD_HOP] = {0};
+      for(long left = lrint(missing * TD_SAMPRATE); left > 0; left -= TD_HOP)
+	audio(sp,silence,left < TD_HOP ? (int)left : TD_HOP);
+      if(sp->opus != NULL)
+	opus_decoder_ctl(sp->opus,OPUS_RESET_STATE); // what came before the loss isn't to be continued
+    }
+  }
   float out[2880 * 2];
-  if(encoding == OPUS || encoding == OPUS_VOIP){
+  if(opus){
     if(sp->opus == NULL){
       int error;
       sp->opus = opus_decoder_create(TD_SAMPRATE,1,&error); // straight to 8 kHz mono
@@ -488,8 +579,10 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
 	return;
     }
     int const n = opus_decode_float(sp->opus,dp,(opus_int32)size,out,2880,0);
-    if(n > 0)
+    if(n > 0){
       audio(sp,out,n);
+      expect(sp,&rtp,(uint32_t)n * (48000 / TD_SAMPRATE));
+    }
     return;
   }
   if(samprate <= 0 || channels <= 0)
@@ -516,6 +609,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
       in[i] = f;
     }
   }
+  expect(sp,&rtp,(uint32_t)frames);
   if(samprate == TD_SAMPRATE){
     audio(sp,in,nin);
     return;
@@ -660,8 +754,11 @@ int main(int argc,char *argv[]){
 	finish_recording(sp);
     }
   }
-  for(int k = 0; k < MAX_SESSIONS; k++)
-    if(Sessions[k].inuse)
+  for(int k = 0; k < MAX_SESSIONS; k++){
+    if(Sessions[k].inuse){
+      quiet(&Sessions[k]); // a page whose last tone hasn't ended yet is still found
       finish_recording(&Sessions[k]);
+    }
+  }
   return 0;
 }
