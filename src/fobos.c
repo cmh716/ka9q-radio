@@ -95,6 +95,7 @@ struct sdrstate {
 
   // A/D overload protection (fobos_agc)
   pthread_t agc_thread;
+  pthread_t watchdog_thread;   // only if stall_timeout
   pthread_mutex_t gain_lock;   // fobos_gain (a command) and the AGC both set the gain
   int agc_lna;                 // the LNA setting the AGC keeps
   int agc_vga_min,agc_vga_max; // the VGA steps it moves between
@@ -130,10 +131,11 @@ static int const FOBOS_BUFFER_LENGTH = 65536;
 #ifdef RAW
 static void fobos_raw_callback(const uint16_t * restrict samples, uint32_t complex_count, void *ctx);
 #else
-static void rx_callback(float * restrict buf, unsigned buf_length, void * restrict ctx);
+static void rx_callback(float * restrict buf, uint32_t buf_length, void *ctx);
 #endif
 static void *fobos_monitor(void *p);
 static void *fobos_agc(void *p);
+static void *fobos_watchdog(void *p);
 static bool set_stages(struct sdrstate *sdr,int lna,int vga);
 static int lna_dB(int lna);
 
@@ -523,8 +525,6 @@ static void *fobos_agc(void *p){
   uint64_t report_clips = 0;
   int64_t now = gps_time_ns();
   int64_t report_time = now, last_change = now - AGC_SETTLE, quiet_since = now;
-  uint64_t last_samples = 0;
-  int64_t samples_moved = now; // when the sample count last advanced
   int failures = 0;      // gain changes the device refused in a row
   int64_t last_failure = 0;
   enum state s;
@@ -532,19 +532,6 @@ static void *fobos_agc(void *p){
     struct timespec const tick = {.tv_sec = 0, .tv_nsec = AGC_TICK};
     nanosleep(&tick,NULL);
     now = gps_time_ns();
-    // Watchdog: samples have come, and stopped (a clean shutdown ends this loop first)
-    uint64_t const samples = atomic_load(&sdr->samples_in);
-    if(samples != last_samples){
-      last_samples = samples;
-      samples_moved = now;
-    } else if(sdr->stall_timeout != 0 && atomic_load(&sdr->state) == RUNNING
-	      && now - samples_moved > (samples != 0 ? sdr->stall_timeout : 3 * sdr->stall_timeout)){
-      // Stopped, or (given longer to start) never began
-      fprintf(stderr,"fobos: no samples for %.0f s%s: the device has stalled. Exiting (EX_IOERR) to be reset and restarted\n",
-	      (double)(now - samples_moved) / BILLION,samples != 0 ? "" : " since starting");
-      fflush(stderr);
-      _exit(EX_IOERR);
-    }
     uint64_t const all = atomic_load(&sdr->clips_all);
     report_clips += all - last_all;
     last_all = all;
@@ -626,6 +613,41 @@ static void *fobos_agc(void *p){
   }
   return NULL;
 }
+// Watchdog: samples have come and stopped, or (given longer) never began.
+// A thread of its own that only reads the sample count: the AGC thread may
+// block on the very device that has stalled (a gain write, gain_lock). Its
+// own clock is monotonic, so that a step of the wall clock can't make or
+// put off a reset
+static int64_t monotonic_ns(void){
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC,&ts);
+  return (int64_t)ts.tv_sec * BILLION + ts.tv_nsec;
+}
+static void *fobos_watchdog(void *p){
+  struct sdrstate * const sdr = (struct sdrstate *)p;
+  pthread_setname("fobos-watch");
+  uint64_t last = atomic_load(&sdr->samples_in);
+  int64_t moved = monotonic_ns(); // when the sample count last advanced
+  enum state s;
+  while((s = atomic_load(&sdr->state)) == RUNNING || s == STARTING){
+    struct timespec const tick = {.tv_sec = 0, .tv_nsec = 250 * 1000 * 1000};
+    nanosleep(&tick,NULL);
+    int64_t const now = monotonic_ns();
+    uint64_t const samples = atomic_load(&sdr->samples_in);
+    if(samples != last){
+      last = samples;
+      moved = now;
+    } else if(atomic_load(&sdr->state) == RUNNING
+	      && now - moved > (samples != 0 ? sdr->stall_timeout : 3 * sdr->stall_timeout)){
+      fprintf(stderr,"fobos: no samples for %.0f s%s: the device has stalled. Exiting (EX_IOERR) to be reset and restarted\n",
+	      (double)(now - moved) / BILLION,samples != 0 ? "" : " since starting");
+      fflush(stderr);
+      _exit(EX_IOERR);
+    }
+  }
+  return NULL;
+}
+
 static void *fobos_monitor(void *p) {
   struct sdrstate *const sdr = (struct sdrstate *)p;
   assert(sdr != NULL);
@@ -931,7 +953,7 @@ static void fobos_raw_callback(uint16_t const * restrict samples, uint32_t sampc
 #else // not RAW
 // Callback for original Fobos floating point mode
 // Library does int16->float conversion, DC removal, gain balancing but not phase balancing
-static void rx_callback(float const * restrict buf, unsigned sampcount, void *ctx) {
+static void rx_callback(float * restrict buf, uint32_t sampcount, void *ctx) { // libfobos's fobos_rx_cb_t
   struct sdrstate * const sdr = (struct sdrstate *)ctx;
   assert(sdr != NULL);
   struct frontend * restrict frontend = sdr->frontend;
@@ -961,6 +983,7 @@ static void rx_callback(float const * restrict buf, unsigned sampcount, void *ct
   // The library's float samples are already scaled: samples at full scale
   // aren't counted here (only in the raw callback, which RAW selects)
   frontend->samp_since_over += sampcount;
+  atomic_fetch_add_explicit(&sdr->samples_in, sampcount, memory_order_relaxed); // the watchdog's progress
 
   if (isfinite(in_energy))
     frontend->if_power += Power_alpha * (in_energy / sampcount - frontend->if_power);
@@ -979,6 +1002,8 @@ int fobos_startup(struct frontend *const frontend) {
   sdr->scale = scale_AD(frontend);
   pthread_create(&sdr->monitor_thread, NULL, fobos_monitor, sdr);
   pthread_create(&sdr->agc_thread, NULL, fobos_agc, sdr);
+  if(sdr->stall_timeout != 0)
+    pthread_create(&sdr->watchdog_thread, NULL, fobos_watchdog, sdr);
   atomic_store(&sdr->state,RUNNING);
   fprintf(stderr, "fobos read thread running\n");
   return 0;
@@ -997,6 +1022,8 @@ int fobos_shutdown(struct frontend *const frontend) {
   fobos_rx_cancel_async(sdr->dev);
   pthread_join(sdr->monitor_thread,NULL);
   pthread_join(sdr->agc_thread,NULL);
+  if(sdr->stall_timeout != 0)
+    pthread_join(sdr->watchdog_thread,NULL);
   atomic_store(&sdr->state,STOPPED);
   fprintf(stderr, "fobos read thread stopped\n");
   return 0;
