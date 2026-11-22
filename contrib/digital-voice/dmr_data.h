@@ -186,13 +186,29 @@ public:
       return false;
     }
     headers_++;
+    int const dpf = h[0] & 0x0f;
+    if (dpf == 15) {
+      // A proprietary header: the second of a packet's, counted in its
+      // blocks to follow (ETSI TS 102 361-1 8.2.1). The first's fields stand
+      if (want_ > 0 && have_ == 0 && !proprietary_) {
+        proprietary_ = true;
+        mfid_ = h[1];
+        if (++have_ >= want_)
+          finish();
+      } else
+        stray_++;
+      return true;
+    }
     std::memcpy(h_, h, sizeof h_);
-    dpf_ = h[0] & 0x0f;
+    dpf_ = dpf;
     sap_ = h[1] >> 4;
     group_ = (h[0] & 0x80) != 0;
     dst_ = static_cast<uint32_t>(h[2] << 16 | h[3] << 8 | h[4]);
     src_ = static_cast<uint32_t>(h[5] << 16 | h[6] << 8 | h[7]);
     pad_ = 0;
+    proprietary_ = false;
+    mfid_ = 0;
+    serial_ = -1;
     switch (dpf_) {
     case 2: // unconfirmed
     case 3: // confirmed
@@ -202,15 +218,10 @@ public:
     case 13: // short data, defined
     case 14: // short data, raw or status/precoded
       want_ = (h[0] & 0x30) | (h[1] & 0x0f);
-      pad_ = 0;
       break;
-    case 0: // unified data transport
-      want_ = (h[8] & 0x03) + 1;
-      break;
-    case 1: // response
-      want_ = h[8] & 0x7f;
-      break;
-    default: // 15: a proprietary header, which goes with the header before it
+    default:
+      // Unified data transport (0: a 2-octet CRC and a pad nibble count,
+      // not followed here), responses (1) and the rest: the header alone
       want_ = 0;
       break;
     }
@@ -235,9 +246,25 @@ public:
       broken_++;
       return;
     }
-    rate_ = rate;
-    // Confirmed data: each block begins with its serial number and a CRC-9
+    // Confirmed data: each block begins with its serial number (7 bits) and
+    // a CRC-9. The serials go 0, 1, 2...: a repeat is a block sent again
+    // (dropped), a jump one missed (the packet broken, not "bad"). The CRC-9
+    // isn't checked: the CRC-32 covers the contents
     int const skip = dpf_ == 3 ? 2 : 0;
+    if (dpf_ == 3) {
+      int const serial = bytes[0] >> 1;
+      if (serial == serial_) {
+        repeats_++;
+        return;
+      }
+      if (serial != serial_ + 1) {
+        want_ = 0;
+        broken_++;
+        return;
+      }
+      serial_ = serial;
+    }
+    rate_ = rate;
     if (len_ + n - skip > static_cast<int>(sizeof data_)) {
       want_ = 0;
       return;
@@ -246,6 +273,11 @@ public:
     len_ += n - skip;
     if (++have_ < want_)
       return;
+    finish();
+  }
+  // All its blocks in: the message, its CRC-32 checked
+  void finish()
+  {
     want_ = 0;
     messages_++;
     char const *crc = crc32_check(data_, len_);
@@ -270,6 +302,7 @@ public:
   uint32_t headers_bad() const { return headers_bad_; }
   uint32_t messages() const { return messages_; }
   uint32_t crc_ok() const { return crc_ok_; }
+  uint32_t reports() const { return reports_; } // reports made: one more each time last_report() changes
 
 private:
   // "dpf=2 sap=4 G dst=91 src=3169098 blocks=3/r12 pad=6 crc=swap/0 ipv4 udp 4001>4001 45 00 ..."
@@ -283,6 +316,8 @@ private:
     else
       k += std::snprintf(line + k, sizeof line - k, " hdr=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x", h_[0], h_[1],
                          h_[2], h_[3], h_[4], h_[5], h_[6], h_[7], h_[8], h_[9]);
+    if (proprietary_)
+      k += std::snprintf(line + k, sizeof line - k, " mfid=%02x", mfid_); // the proprietary header's maker
     if (body && n >= 28 && (body[0] >> 4) == 4 && body[9] == 17) { // IPv4, UDP
       int const ihl = (body[0] & 0x0f) * 4;
       if (ihl >= 20 && n >= ihl + 8)
@@ -295,6 +330,7 @@ private:
       for (int i = 0; i < n && k + 3 < static_cast<int>(sizeof line); i++)
         k += std::snprintf(line + k, sizeof line - k, "%02x", body[i]);
     }
+    reports_++;
     std::snprintf(report_, sizeof report_, "%s", line);
     // The last with a good CRC is kept apart, so a later bad one doesn't hide it
     if (*crc && std::strcmp(crc, "bad") != 0)
@@ -305,16 +341,21 @@ public:
   // The last message whose CRC-32 checked, else the last of any kind
   char const *best_report() const { return good_[0] ? good_ : report_; }
   uint32_t broken() const { return broken_; }
+  uint32_t repeats() const { return repeats_; }   // confirmed blocks sent again
+  uint32_t stray() const { return stray_; }       // proprietary headers with no packet to go with
 
 private:
   uint8_t h_[12]{};
-  int dpf_ = 0, sap_ = 0, want_ = 0, have_ = 0, len_ = 0, rate_ = 0, pad_ = 0;
+  int dpf_ = 0, sap_ = 0, want_ = 0, have_ = 0, len_ = 0, rate_ = 0, pad_ = 0, serial_ = -1;
+  bool proprietary_ = false;
+  int mfid_ = 0;
   bool group_ = false;
   uint32_t dst_ = 0, src_ = 0;
   uint8_t data_[kMaxBlocks * 24]{};
   char report_[kMaxReport + 1] = "";
   char good_[kMaxReport + 1] = "";
   uint32_t headers_ = 0, headers_bad_ = 0, messages_ = 0, crc_ok_ = 0, broken_ = 0, too_long_ = 0;
+  uint32_t reports_ = 0, stray_ = 0, repeats_ = 0;
 };
 
 // Rate 1 data: 192 of the 196 bits (the 2 either side of the middle reserved)

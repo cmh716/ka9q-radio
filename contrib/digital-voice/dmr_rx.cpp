@@ -132,7 +132,7 @@ public:
     // Packet data, for diagnosis: counts, and the last message (one whose
     // CRC-32 checked, if any has), on either slot
     {
-      uint32_t hdr = 0, hdr_bad = 0, msgs = 0, ok = 0, broken = 0;
+      uint32_t hdr = 0, hdr_bad = 0, msgs = 0, ok = 0, broken = 0, repeats = 0;
       char const *last = "";
       for (int s = 0; s < 2; s++) {
         dmr_data::assembler const& a = data_[s];
@@ -141,14 +141,17 @@ public:
         msgs += a.messages();
         ok += a.crc_ok();
         broken += a.broken();
+        repeats += a.repeats();
       }
-      // The slot with the latest message whose CRC checked, else any
-      int const pick = data_last_slot_ >= 0 ? data_last_slot_ : 0;
-      last = data_[pick].best_report();
+      // The latest message whose CRC-32 checked, on either slot; else the latest of any kind
+      if (data_good_slot_ >= 0)
+        last = data_[data_good_slot_].best_report();
+      else if (data_any_slot_ >= 0)
+        last = data_[data_any_slot_].last_report();
       if (hdr + hdr_bad != 0)
         std::snprintf(stats->dmr_pdu, sizeof stats->dmr_pdu,
-                      "hdr=%u/%u msgs=%u crc_ok=%u broken=%u r34_clean=%u/%u r34_swapped=%u last=%s", hdr,
-                      hdr + hdr_bad, msgs, ok, broken, r34_clean_, r34_, r34_swapped_, *last ? last : "-");
+                      "hdr=%u/%u msgs=%u crc_ok=%u broken=%u repeats=%u r34_clean=%u/%u r34_swapped=%u last=%s", hdr,
+                      hdr + hdr_bad, msgs, ok, broken, repeats, r34_clean_, r34_, r34_swapped_, *last ? last : "-");
     }
     if (active_slot_ >= 0)
       stats->error_rate = slots_[active_slot_].error_rate();
@@ -378,8 +381,11 @@ private:
       break;
     }
     case kDataTypeDataHeader:
-      if (bptc_.decode(slot, info) && data_[chan].header(info))
-        data_last_slot_ = chan;
+      if (bptc_.decode(slot, info)) {
+        data_before(chan);
+        data_[chan].header(info);
+        data_after(chan);
+      }
       break;
     case kDataTypeRate12: {
       if (!bptc_.decode(slot, info))
@@ -387,7 +393,9 @@ private:
       uint8_t bytes[12] = {};
       for (int i = 0; i < 96; i++)
         bytes[i / 8] = static_cast<uint8_t>(bytes[i / 8] << 1 | info[i]);
+      data_before(chan);
       data_[chan].block(12, bytes, 12);
+      data_after(chan);
       break;
     }
     case kDataTypeRate34:
@@ -402,11 +410,15 @@ private:
         r34_++;
         r34_clean_ += metric <= 16; // a few symbols off at most
         r34_swapped_ += swapped;
+        data_before(chan);
         data_[chan].block(34, bytes, 18);
+        data_after(chan);
       } else {
         uint8_t bytes[24];
         dmr_data::rate1_bytes(coded, bytes);
+        data_before(chan);
         data_[chan].block(1, bytes, 24);
+        data_after(chan);
       }
       break;
     }
@@ -421,6 +433,22 @@ private:
     default:
       break;
     }
+  }
+
+  // Which slot's packet data report is latest: by what completed (a report
+  // made, and whether its CRC-32 checked), not by which slot last had a header
+  uint32_t data_reports_ = 0, data_ok_ = 0;
+  void data_before(int chan)
+  {
+    data_reports_ = data_[chan].reports();
+    data_ok_ = data_[chan].crc_ok();
+  }
+  void data_after(int chan)
+  {
+    if (data_[chan].reports() != data_reports_)
+      data_any_slot_ = chan;
+    if (data_[chan].crc_ok() != data_ok_)
+      data_good_slot_ = chan;
   }
 
   // dmr_slot::decode_emb() and decode_embedded_lc(): the EMB's PI bit marks
@@ -605,7 +633,7 @@ private:
   uint64_t lc_bad_ = 0;     // embedded LCs that failed their checks
   uint32_t burst_types_[16]{}; // data and control bursts by slot type data type (Golay checked)
   dmr_data::assembler data_[2]; // packet data, per slot, for diagnosis
-  int data_last_slot_ = -1;
+  int data_good_slot_ = -1, data_any_slot_ = -1;
   uint32_t r34_ = 0, r34_clean_ = 0, r34_swapped_ = 0; // rate 3/4 blocks: how well the trellis fit
 };
 

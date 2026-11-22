@@ -151,6 +151,61 @@ int main()
     b.block(12, msg + 24, 12);
     check(b.messages() == 0 && b.broken() == 2, "cut short twice: two broken, no message");
   }
+  // A proprietary second header (DPF 15): counted in blocks to follow, the first header's fields kept
+  {
+    assembler b;
+    make_header(hb, 2, 4, true, 91, 3169098, 4, pad); // the proprietary header and three blocks
+    b.header(hb);
+    uint8_t ph[12] = {0x4f, 0x10, 1, 2, 3, 4, 5, 6, 7, 8}; // SAP 4, DPF 15; MFID 0x10
+    uint16_t const crc = crc_ccitt(ph, 10) ^ 0xcccc;
+    ph[10] = crc >> 8; ph[11] = crc & 0xff;
+    uint8_t pb[96];
+    to_bits(ph, 12, pb);
+    b.header(pb);
+    for (int k = 0; k < 3; k++)
+      b.block(12, msg + 12 * k, 12);
+    std::printf("     %s\n", b.last_report());
+    check(b.messages() == 1 && b.crc_ok() == 1 && std::strstr(b.last_report(), "dpf=2 sap=4 G dst=91 src=3169098") != nullptr
+          && std::strstr(b.last_report(), "mfid=10") != nullptr,
+          "a proprietary second header: the packet still assembled, the first header's fields, its MFID shown");
+    b.header(pb);
+    check(b.stray() == 1 && b.messages() == 1, "a proprietary header with no packet: counted stray");
+  }
+  // Unified data transport: its header alone reported, its blocks not taken as a message
+  {
+    assembler b;
+    make_header(hb, 0, 0, false, 5, 6, 2, 0);
+    b.header(hb);
+    b.block(12, msg, 12);
+    b.block(12, msg + 12, 12);
+    check(b.messages() == 0 && std::strstr(b.last_report(), "dpf=0") != nullptr && std::strstr(b.last_report(), "hdr=") != nullptr,
+          "UDT: the header reported alone, its blocks not taken for a message");
+  }
+  // Confirmed blocks: a repeated serial dropped, a missed one breaks the packet
+  {
+    uint8_t m2[48];
+    int const p2 = make_message(m2, ip, sizeof ip, sizeof m2);
+    uint8_t blocks[3][18];
+    for (int k = 0; k < 3; k++) {
+      blocks[k][0] = static_cast<uint8_t>(k << 1);
+      blocks[k][1] = 0;
+      std::memcpy(blocks[k] + 2, m2 + 16 * k, 16);
+    }
+    assembler b;
+    make_header(hb, 3, 4, false, 1, 2, 3, p2);
+    b.header(hb);
+    b.block(34, blocks[0], 18);
+    b.block(34, blocks[1], 18);
+    b.block(34, blocks[1], 18); // sent again
+    b.block(34, blocks[2], 18);
+    check(b.messages() == 1 && b.crc_ok() == 1 && b.repeats() == 1, "confirmed: a block sent twice taken once");
+    make_header(hb, 3, 4, false, 1, 2, 3, p2);
+    b.header(hb);
+    b.block(34, blocks[0], 18);
+    b.block(34, blocks[2], 18); // the second missed
+    b.block(34, blocks[2], 18);
+    check(b.messages() == 1 && b.broken() == 1, "confirmed: a block missed: broken, not a bad CRC");
+  }
   // Blocks with no header before them: ignored
   {
     assembler b;
