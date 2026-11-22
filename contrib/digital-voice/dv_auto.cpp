@@ -190,6 +190,7 @@ public:
       stats->dmr_lc_flcos = st.dmr_lc_flcos;
       stats->dmr_lc_bad = st.dmr_lc_bad;
       std::memcpy(stats->dmr_burst_types, st.dmr_burst_types, sizeof st.dmr_burst_types);
+      std::memcpy(stats->dmr_pdu, st.dmr_pdu, sizeof st.dmr_pdu);
     }
   }
 

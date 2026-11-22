@@ -19,6 +19,7 @@
 #include "dv_ambe.h"
 #include "dmr_idle.h"
 #include "dmr_alias.h"
+#include "dmr_data.h"
 #include "upstream/bptc19696.h"
 #include "upstream/ezpwd/rs"
 #include "upstream/golay2087.h"
@@ -44,6 +45,7 @@ constexpr unsigned slot_ids[] = {0, 1, 0, 0, 1, 1, 0, 1}; // dmr_cai.h
 constexpr int kSlotTypeL = 98, kSlotTypeR = 156, kSyncEmb = 108;
 constexpr uint8_t kVoiceLcHeaderMask[24] = {1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0}; // 0x969696
 constexpr uint8_t kDataTypePiHeader = 0, kDataTypeVoiceLc = 1, kDataTypeTerminator = 2;
+constexpr uint8_t kDataTypeDataHeader = 6, kDataTypeRate12 = 7, kDataTypeRate34 = 8, kDataTypeRate1 = 10;
 
 bool is_voice_sync(uint64_t sync)
 {
@@ -127,6 +129,27 @@ public:
     stats->dmr_lc_flcos = lc_flcos_;
     stats->dmr_lc_bad = lc_bad_;
     std::memcpy(stats->dmr_burst_types, burst_types_, sizeof burst_types_);
+    // Packet data, for diagnosis: counts, and the last message (one whose
+    // CRC-32 checked, if any has), on either slot
+    {
+      uint32_t hdr = 0, hdr_bad = 0, msgs = 0, ok = 0, broken = 0;
+      char const *last = "";
+      for (int s = 0; s < 2; s++) {
+        dmr_data::assembler const& a = data_[s];
+        hdr += a.headers();
+        hdr_bad += a.headers_bad();
+        msgs += a.messages();
+        ok += a.crc_ok();
+        broken += a.broken();
+      }
+      // The slot with the latest message whose CRC checked, else any
+      int const pick = data_last_slot_ >= 0 ? data_last_slot_ : 0;
+      last = data_[pick].best_report();
+      if (hdr + hdr_bad != 0)
+        std::snprintf(stats->dmr_pdu, sizeof stats->dmr_pdu,
+                      "hdr=%u/%u msgs=%u crc_ok=%u broken=%u r34_clean=%u/%u r34_swapped=%u last=%s", hdr,
+                      hdr + hdr_bad, msgs, ok, broken, r34_clean_, r34_, r34_swapped_, *last ? last : "-");
+    }
     if (active_slot_ >= 0)
       stats->error_rate = slots_[active_slot_].error_rate();
     // The call last played, until it ends (terminator, or sync lost): not
@@ -354,7 +377,41 @@ private:
       c.have_ids = true;
       break;
     }
+    case kDataTypeDataHeader:
+      if (bptc_.decode(slot, info) && data_[chan].header(info))
+        data_last_slot_ = chan;
+      break;
+    case kDataTypeRate12: {
+      if (!bptc_.decode(slot, info))
+        break;
+      uint8_t bytes[12] = {};
+      for (int i = 0; i < 96; i++)
+        bytes[i / 8] = static_cast<uint8_t>(bytes[i / 8] << 1 | info[i]);
+      data_[chan].block(12, bytes, 12);
+      break;
+    }
+    case kDataTypeRate34:
+    case kDataTypeRate1: {
+      uint8_t coded[196]; // the two halves, either side of slot type and sync
+      std::memcpy(coded, slot, 98);
+      std::memcpy(coded + 98, slot + 166, 98);
+      if (type == kDataTypeRate34) {
+        uint8_t bytes[18];
+        bool swapped = false;
+        int const metric = dmr_data::trellis34_decode(coded, bytes, &swapped);
+        r34_++;
+        r34_clean_ += metric <= 16; // a few symbols off at most
+        r34_swapped_ += swapped;
+        data_[chan].block(34, bytes, 18);
+      } else {
+        uint8_t bytes[24];
+        dmr_data::rate1_bytes(coded, bytes);
+        data_[chan].block(1, bytes, 24);
+      }
+      break;
+    }
     case kDataTypeTerminator:
+      data_[chan].abandon();
       c = call{};
       if (call_slot_ == chan) {
         call_slot_ = -1;
@@ -547,6 +604,9 @@ private:
   uint64_t lc_flcos_ = 0;   // FLCOs of the embedded LCs seen (bit n: FLCO n)
   uint64_t lc_bad_ = 0;     // embedded LCs that failed their checks
   uint32_t burst_types_[16]{}; // data and control bursts by slot type data type (Golay checked)
+  dmr_data::assembler data_[2]; // packet data, per slot, for diagnosis
+  int data_last_slot_ = -1;
+  uint32_t r34_ = 0, r34_clean_ = 0, r34_swapped_ = 0; // rate 3/4 blocks: how well the trellis fit
 };
 
 } // namespace

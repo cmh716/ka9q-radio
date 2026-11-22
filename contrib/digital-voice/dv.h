@@ -109,6 +109,10 @@ typedef struct {
   bool has_position;
   double latitude, longitude; // degrees north, east
   char gps_line[257];
+  // DMR, for diagnosis: packet data (positions may travel so): counts, and
+  // the last message whose CRC-32 checked, else the last (its header's
+  // fields, IP/UDP if it is, its bytes in hex), "" until a data header
+  char dmr_pdu[384];
 } dv_stats;
 
 // P25 control channel events

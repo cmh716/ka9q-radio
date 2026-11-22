@@ -770,14 +770,15 @@ int demod_dv(void *arg){
 	  for(int t = 0; t < 16; t++)
 	    dmr_seen = dmr_seen || stats.dmr_burst_types[t] != 0;
 	  fprintf(stderr,"%s DIGITAL samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
-		  " voice=%" PRIu64 " muted=%" PRIu64 " framed=%s sync=%s active=%s offset=%+.1f Hz%s%s%s%s%s%s%s%s\n",
+		  " voice=%" PRIu64 " muted=%" PRIu64 " framed=%s sync=%s active=%s offset=%+.1f Hz%s%s%s%s%s%s%s%s%s%s%s\n",
 		  chan->name,stats.samples,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,framed,sync,
 		  chan->dv.source[0] ? chan->dv.source : "-",stats.freq_offset,
 		  position_text(&stats), // D-STAR's, while it is the mode playing
 		  stats.gps_line[0] ? " gps_line=\"" : "",stats.gps_line,stats.gps_line[0] ? "\"" : "",
 		  dmr_seen ? " lc=" : "",dmr_seen ? flco_list(stats.dmr_lc_flcos) : "",
-		  dmr_seen ? " data=" : "",dmr_seen ? dmr_data_text(&stats) : ""); // the DMR receiver's, once it has seen anything
+		  dmr_seen ? " data=" : "",dmr_seen ? dmr_data_text(&stats) : "", // the DMR receiver's, once it has seen anything
+		  stats.dmr_pdu[0] ? " pdu=\"" : "",stats.dmr_pdu,stats.dmr_pdu[0] ? "\"" : "");
         } else if(is_nxdn && stats.tsbks + stats.tsbk_errors != 0)
 	  fprintf(stderr,"%s %s samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " control=%" PRIu64 "/%" PRIu64 " RAN=%u offset=%+.1f Hz\n",
@@ -820,14 +821,15 @@ int demod_dv(void *arg){
 	  fprintf(stderr,"%s DMR samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " bursts=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64
-		  " slot=%d cc=%d src=%s dst=%s%s%s%s%s errors=%.1f%% offset=%+.1f Hz lc=%s lc_bad=%" PRIu64 " data=%s\n",
+		  " slot=%d cc=%d src=%s dst=%s%s%s%s%s errors=%.1f%% offset=%+.1f Hz lc=%s lc_bad=%" PRIu64 " data=%s%s%s%s\n",
 		  chan->name,stats.samples,stats.symbols,stats.syncs,stats.frames,
 		  stats.voice_decoded,stats.voice_muted,
 		  stats.active_slot,stats.dmr_cc,
 		  stats.src_call[0] ? stats.src_call : "-",stats.dst_call[0] ? stats.dst_call : "-",
 		  stats.m17_encrypted ? " encrypted" : "",
 		  stats.talker_alias[0] ? " alias=\"" : "",stats.talker_alias,stats.talker_alias[0] ? "\"" : "",
-		  100.0f * stats.error_rate,stats.freq_offset,flco_list(stats.dmr_lc_flcos),stats.dmr_lc_bad,dmr_data_text(&stats));
+		  100.0f * stats.error_rate,stats.freq_offset,flco_list(stats.dmr_lc_flcos),stats.dmr_lc_bad,dmr_data_text(&stats),
+		  stats.dmr_pdu[0] ? " pdu=\"" : "",stats.dmr_pdu,stats.dmr_pdu[0] ? "\"" : "");
 	else
 	  fprintf(stderr,"%s P25 samples=%" PRIu64 " symbols=%" PRIu64
 		  " syncs=%" PRIu64 " frames=%" PRIu64

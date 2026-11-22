@@ -93,6 +93,8 @@ out/dmr-polarity-test
 out/dmr-idle-test
 c++ $FLAGS -std=c++17 -I$TOP dmr-alias-test.cpp -o out/dmr-alias-test
 out/dmr-alias-test
+c++ $FLAGS -std=c++17 -I$TOP dmr-data-test.cpp -o out/dmr-data-test
+out/dmr-data-test
 cc $FLAGS -I$TOP -o out/dvtest dvtest.c $LIB -lcodec2 -lstdc++ -lm
 [ -d data ] || { echo "no recordings: run ./fetch.sh first"; exit 1; }
 cc $FLAGS -I$TOP call-serial-test.c $LIB -lcodec2 -lstdc++ -lm -o out/call-serial-test
