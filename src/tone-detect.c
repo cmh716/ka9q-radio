@@ -5,9 +5,12 @@
 // one peak most of the power (a pure tone; speech never is)? Its frequency
 // comes from parabolic interpolation of the log magnitudes, to about 1 Hz.
 // Looks at one frequency (within 1.5%) make a segment, a fade of up to
-// 100 ms bridged. A segment of 0.4 s or more followed within 0.3 s by
-// another at a different frequency is a two-tone page (A, B); a segment of
-// 4 s or more paired with nothing is a long tone.
+// 100 ms bridged. A segment of 0.4 s or more followed by another at a
+// different frequency, soon after, is a two-tone page (A, B); a segment of
+// 4 s or more paired with nothing is a long tone. "Soon": a silent gap of up
+// to 300 ms always pairs, of 450 ms or more never; between, it depends on
+// where the gap falls among the 50 ms looks (measured from look to look, a
+// gap is its true length and 0-100 ms). Real pages' gaps are far shorter.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <complex.h>
 #include <fftw3.h>
