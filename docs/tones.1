@@ -22,9 +22,13 @@ the page in its environment: PAGE_DEPARTMENTS, PAGE_TONES, PAGE_TIME,
 PAGE_FREQ, PAGE_FILE.
 .P
 A tone is one steady peak with most of the audio's power between 270 and
-3400 Hz, above CTCSS and DCS; tones of at least 0.4 s, the second starting
-within 0.3 s of the first's end, make a page; a tone of 4 s or more alone is
-a long tone. Tones match a department within 1.5%.
+3400 Hz, above CTCSS and DCS; tones of at least 0.4 s, the second soon after
+the first, make a page: a silence between them of up to 300 ms always, of
+450 ms or more never (between, it depends on where it falls among the
+detector's 50 ms looks). A tone of 4 s or more alone is a long tone. Tones
+match a department within 1.5%. When a stream goes quiet (squelch), the
+tones heard end there: a page cut off at the end of its tone B is still
+found, and the next transmission's tones aren't joined to it.
 .SH OPTIONS
 .TP
 .B "\-t file, \-\-departments file"

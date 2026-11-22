@@ -15,6 +15,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <locale.h>
 #include <math.h>
@@ -71,7 +72,10 @@ struct session {
   SRC_STATE *src;                      // PCM to 8 kHz
   struct tone_detector det;
   float ring[PREROLL_SECONDS * TD_SAMPRATE];
-  uint64_t written;                    // samples into the ring (and the detector) in all
+  uint64_t written;                    // samples into the ring in all
+  uint64_t zeros;                      // silence fed only to the detector, at quiet (see quiet())
+  double last_packet;                  // monotonic seconds, the last audio packet
+  bool quiet;                          // the detector has been fed the end of the transmission
   // a page being recorded
   FILE *wav;
   char wav_path[512];
@@ -232,8 +236,11 @@ static void page(struct session *sp,struct td_event const *ev){
   int const m = td_match(Departments,N_departments,ev,Tolerance);
   char const *name = m >= 0 ? Departments[m].name : "unknown";
   // When it began: its first tone, so long ago in the stream
+  // The detector's samples are the ring's and the silence fed it at quiets,
+  // all before this page's start (the silence of a quiet comes after its tones)
+  uint64_t const start = ev->start > sp->zeros ? ev->start - sp->zeros : 0;
   time_t const now = time(NULL);
-  time_t const began = now - (time_t)((sp->written - ev->start) / TD_SAMPRATE);
+  time_t const began = now - (time_t)((sp->written > start ? sp->written - start : 0) / TD_SAMPRATE);
   struct tm tm;
   localtime_r(&began,&tm);
   char when[32],stamp[32];
@@ -268,10 +275,22 @@ static void page(struct session *sp,struct td_event const *ev){
     safe_name(safe,sizeof safe,name);
     char at_file[32];
     where(sp,at_file,sizeof at_file,true);
-    snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s.wav",Pages_dir,stamp,safe,at_file);
-    sp->wav = fopen(sp->wav_path,"w+");
+    // Made exclusively: another stream's page in the same second, same name, mustn't overwrite it
+    int fd = -1;
+    for(int k = 1; k < 100 && fd < 0; k++){
+      if(k == 1)
+	snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s.wav",Pages_dir,stamp,safe,at_file);
+      else
+	snprintf(sp->wav_path,sizeof sp->wav_path,"%s/%s_%s_%s-%d.wav",Pages_dir,stamp,safe,at_file,k);
+      fd = open(sp->wav_path,O_RDWR | O_CREAT | O_EXCL,0644);
+      if(fd < 0 && errno != EEXIST)
+	break;
+    }
+    sp->wav = fd >= 0 ? fdopen(fd,"w+") : NULL;
     if(sp->wav == NULL){
       fprintf(stderr,"%s: %s\n",sp->wav_path,strerror(errno));
+      if(fd >= 0)
+	close(fd);
       return;
     }
     wav_header(sp->wav,0);
@@ -282,7 +301,7 @@ static void page(struct session *sp,struct td_event const *ev){
     snprintf(sp->page_time,sizeof sp->page_time,"%s",when);
     // From half a second before its first tone, as far as the ring reaches
     uint64_t const ring = sizeof sp->ring / sizeof sp->ring[0];
-    uint64_t from = ev->start > TD_SAMPRATE / 2 ? ev->start - TD_SAMPRATE / 2 : 0;
+    uint64_t from = start > TD_SAMPRATE / 2 ? start - TD_SAMPRATE / 2 : 0;
     if(sp->written - from > ring)
       from = sp->written - ring;
     for(uint64_t i = from; i < sp->written; i++)
@@ -298,6 +317,7 @@ static void page(struct session *sp,struct td_event const *ev){
 // 8 kHz audio of a session: to the ring, the detector and any recording
 static void audio(struct session *sp,float const *x,int n){
   uint64_t const ring = sizeof sp->ring / sizeof sp->ring[0];
+  sp->quiet = false;
   double energy = 0;
   for(int i = 0; i < n; i++){
     sp->ring[(sp->written + i) % ring] = x[i];
@@ -315,6 +335,40 @@ static void audio(struct session *sp,float const *x,int n){
     page(sp,&ev[i]);
 }
 
+// The stream has gone quiet (radiod sends nothing while squelched): the
+// tones heard so far end here. Silence fed to the detector alone, not the
+// ring or a recording, ends any tone being heard and lets a page or long
+// tone out; the next transmission starts afresh, not joined to this one
+static void quiet(struct session *sp){
+  if(sp->quiet)
+    return;
+  sp->quiet = true;
+  static float const silence[TD_HOP] = {0};
+  uint64_t const zeros = sp->zeros; // pages found now began before this silence
+  int const looks = (int)((TD_FFT + 2.0 * TD_SAMPRATE) / TD_HOP); // past the window, the gap allowance and the fade
+  struct td_event ev[4];
+  for(int k = 0; k < looks; k++){
+    int const pages = td_process(&sp->det,silence,TD_HOP,ev,4);
+    for(int i = 0; i < pages; i++)
+      page(sp,&ev[i]);
+  }
+  sp->zeros = zeros + (uint64_t)looks * TD_HOP;
+}
+
+// A session's resources, given back
+static void end_session(struct session *sp){
+  finish_recording(sp);
+  if(sp->opus != NULL)
+    opus_decoder_destroy(sp->opus);
+  if(sp->src != NULL)
+    src_delete(sp->src);
+  td_free(&sp->det);
+  memset(sp,0,sizeof *sp);
+}
+
+static double const Idle_seconds = 60;
+static double const Quiet_gap = 0.3;   // no packets so long: the transmission has ended // a session unheard so long may be reclaimed
+
 static struct session *session(struct sockaddr_storage const *sender,uint32_t ssrc,bool create){
   struct session *free_one = NULL;
   for(int i = 0; i < MAX_SESSIONS; i++){
@@ -324,13 +378,34 @@ static struct session *session(struct sockaddr_storage const *sender,uint32_t ss
     if(!sp->inuse && free_one == NULL)
       free_one = sp;
   }
-  if(!create || free_one == NULL)
+  if(!create)
     return NULL;
+  if(free_one == NULL){
+    // Reclaim the longest unheard, if it has been idle a while
+    double const now = monotonic();
+    struct session *oldest = NULL;
+    for(int i = 0; i < MAX_SESSIONS; i++)
+      if(Sessions[i].wav == NULL && (oldest == NULL || Sessions[i].last_packet < oldest->last_packet))
+	oldest = &Sessions[i];
+    if(oldest != NULL && now - oldest->last_packet > Idle_seconds){
+      end_session(oldest);
+      free_one = oldest;
+    } else {
+      static double warned;
+      if(now - warned > 60){
+	fprintf(stderr,"tones: %d streams already, none idle: stream %u ignored\n",MAX_SESSIONS,ssrc);
+	warned = now;
+      }
+      return NULL;
+    }
+  }
   memset(free_one,0,sizeof *free_one);
   free_one->inuse = true;
   free_one->sender = *sender;
   free_one->ssrc = ssrc;
   free_one->pt = -1;
+  free_one->last_packet = monotonic();
+  free_one->quiet = true; // nothing to end yet
   if(!td_init(&free_one->det)){
     free_one->inuse = false;
     return NULL;
@@ -364,18 +439,37 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
 }
 
 static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sender){
-  if(size <= RTP_MIN_SIZE)
+  // The whole header (CSRCs, extension) and the padding checked against the
+  // datagram before ntoh_rtp() walks them
+  if(size <= RTP_MIN_SIZE || (buffer[0] >> 6) != 2)
+    return;
+  ssize_t header = RTP_MIN_SIZE + 4 * (buffer[0] & 0x0f);
+  if(buffer[0] & 0x10){ // extension: 4 bytes, then its length in words
+    if(header + 4 > size)
+      return;
+    header += 4 + 4 * (ssize_t)(buffer[header + 2] << 8 | buffer[header + 3]);
+  }
+  if(header >= size)
+    return;
+  ssize_t payload = size - header;
+  if(buffer[0] & 0x20){ // padding: its count in the last byte
+    int const pad = buffer[size - 1];
+    if(pad == 0 || pad > payload)
+      return;
+    payload -= pad;
+  }
+  if(payload <= 0)
     return;
   struct rtp_header rtp;
   uint8_t const *dp = ntoh_rtp(&rtp,buffer);
-  size -= dp - buffer;
-  if(rtp.pad)
-    size -= dp[size - 1];
-  if(size <= 0)
-    return;
+  size = payload;
   struct session *sp = session(sender,rtp.ssrc,true);
   if(sp == NULL)
     return;
+  double const now = monotonic();
+  if(now - sp->last_packet > Quiet_gap)
+    quiet(sp); // a new transmission: the last one's tones end before it
+  sp->last_packet = now;
   // What it is: from status if it came, else the payload type's usual meaning
   enum encoding encoding = sp->pt == rtp.type ? sp->encoding : encoding_from_pt(rtp.type);
   int samprate = sp->pt == rtp.type ? sp->samprate : samprate_from_pt(rtp.type);
@@ -386,7 +480,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     channels = 1;
   }
   float out[2880 * 2];
-  if(encoding == OPUS){
+  if(encoding == OPUS || encoding == OPUS_VOIP){
     if(sp->opus == NULL){
       int error;
       sp->opus = opus_decoder_create(TD_SAMPRATE,1,&error); // straight to 8 kHz mono
@@ -558,7 +652,11 @@ int main(int argc,char *argv[]){
     double const now = monotonic();
     for(int k = 0; k < MAX_SESSIONS; k++){
       struct session *sp = &Sessions[k];
-      if(sp->inuse && sp->wav != NULL && (now - sp->last_audio > Quiet_seconds || now - sp->rec_started > Max_seconds))
+      if(!sp->inuse)
+	continue;
+      if(now - sp->last_packet > Quiet_gap)
+	quiet(sp); // its tones end: a page squelched off at its end is found
+      if(sp->wav != NULL && (now - sp->last_audio > Quiet_seconds || now - sp->rec_started > Max_seconds))
 	finish_recording(sp);
     }
   }
