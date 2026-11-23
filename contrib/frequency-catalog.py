@@ -433,23 +433,34 @@ def export(args):
     # listings without losing their separate records in the master.
     combined = {}
     destinations = {}
+    notch_conflicts = set()
     for row in rows:
         rx, mode, tone, group = (row[f] for f in ('Frequency Output', 'Mode', 'PL Output Tone', 'Tag'))
-        if rx in destinations and destinations[rx] != group:
-            raise ValueError(f'{rx} MHz is assigned to different Groups; choose one receiver Group for overlapping listings')
-        destinations[rx] = group
         key = (rx, 'FM' if mode in ('FM', 'FMN') else mode, tone)
+        destinations.setdefault(key, {}).setdefault(group, set()).add(row['Alpha Tag'])
         if key not in combined:
             combined[key] = row
             continue
         previous = combined[key]
         if previous['CTCSS Notch Hz'] != row['CTCSS Notch Hz']:
-            raise ValueError(f'{rx} MHz has conflicting CTCSS Notch Hz settings; choose one before exporting')
+            notch_conflicts.add(key)
         if mode == 'FM':
             previous['Mode'] = 'FM'  # receive the widest listed analog signal
         for field in ('Alpha Tag', 'Description', 'Agency/Category'):
             if row[field] and row[field] != previous[field]:
                 previous[field] += ' / ' + row[field]
+    conflicts = []
+    for key, groups in sorted(destinations.items()):
+        rx, mode, tone = key
+        channel = f'{rx} MHz {mode} ({tone or "no receive tone"})'
+        if len(groups) > 1:
+            details = '; '.join(f'{group} ({", ".join(sorted(names))})'
+                                for group, names in sorted(groups.items()))
+            conflicts.append(f'{channel} is assigned to different Groups: {details}')
+        if key in notch_conflicts:
+            conflicts.append(f'{channel} has conflicting CTCSS Notch Hz settings')
+    if conflicts:
+        raise ValueError('\n'.join(conflicts))
     rows = list(combined.values())
     write_csv(args.output, RR_FIELDS, rows)
     print(f'Exported {len(rows)} selected entries for {args.profile} to {args.output}')

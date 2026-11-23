@@ -135,6 +135,9 @@ that would reintroduce unwanted channels. Move personal corrections from the old
 `freq-overrides.csv` into Master as you select entries; the starter does not apply
 that old file automatically. The initial setup does not replace any receiver files.
 
+Use the [on-air channel audit](channel-audit.md) to collect evidence for
+candidate FM channels before adding them to a normal listening profile.
+
 ## Current limits
 
 This is a starter, not a complete universal radio database. Stable IDs include
