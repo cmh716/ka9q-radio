@@ -285,7 +285,15 @@ static char const *dmr_data_text(dv_stats const *st){
     snprintf(item,sizeof item,"%s%s=%u",buf[0] ? "," : "",kinds[i].name,(unsigned)n);
     strlcat(buf,item,sizeof buf);
   }
-  return buf[0] ? buf : "-";
+  if(buf[0] == '\0')
+    strlcat(buf,"-",sizeof buf);
+  // Refused, not counted: noise, mostly
+  if(st->dmr_cc_other != 0){
+    char item[64];
+    snprintf(item,sizeof item," refused=%u",(unsigned)st->dmr_cc_other);
+    strlcat(buf,item,sizeof buf);
+  }
+  return buf;
 }
 
 // DMR embedded LC FLCOs seen, for the -v log: "0,4,5" ("-" if none).
@@ -769,6 +777,7 @@ int demod_dv(void *arg){
 	  bool dmr_seen = stats.dmr_lc_flcos != 0;
 	  for(int t = 0; t < 16; t++)
 	    dmr_seen = dmr_seen || stats.dmr_burst_types[t] != 0;
+	  dmr_seen = dmr_seen || stats.dmr_cc_other != 0;
 	  fprintf(stderr,"%s DIGITAL samples=%" PRIu64 " syncs=%" PRIu64 " frames=%" PRIu64
 		  " voice=%" PRIu64 " muted=%" PRIu64 " framed=%s sync=%s active=%s offset=%+.1f Hz%s%s%s%s%s%s%s%s%s%s%s\n",
 		  chan->name,stats.samples,stats.syncs,stats.frames,

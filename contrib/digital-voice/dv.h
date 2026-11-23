@@ -103,6 +103,9 @@ typedef struct {
   // header, 5 MBC continuation, 6 data header, 7 rate 1/2 data, 8 rate 3/4
   // data, 9 idle, 10 rate 1 data)
   uint32_t dmr_burst_types[16];
+  // DMR: data and control bursts refused (not counted above, not acted
+  // on): another color code than the one established (noise, mostly)
+  uint32_t dmr_cc_other;
   // D-STAR: the sender's position (D-PRS or NMEA in the slow data), and for
   // diagnosis the exact report that last passed its checksum, or the last
   // line if none in it did (a longest report, 256 characters, and its end)

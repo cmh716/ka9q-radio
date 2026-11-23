@@ -191,6 +191,7 @@ public:
       stats->dmr_lc_bad = st.dmr_lc_bad;
       std::memcpy(stats->dmr_burst_types, st.dmr_burst_types, sizeof st.dmr_burst_types);
       std::memcpy(stats->dmr_pdu, st.dmr_pdu, sizeof st.dmr_pdu);
+      stats->dmr_cc_other = st.dmr_cc_other;
     }
   }
 

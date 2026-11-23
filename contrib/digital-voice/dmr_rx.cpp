@@ -104,12 +104,15 @@ public:
       rx_dibit(dibit);
     bool const idle = inverted_ ? inverted_idle : normal_idle;
     int const color = inverted_ ? inverted_color : normal_color;
+    // Two Golay-protected idle slot types agreeing, on the burst grid: a
+    // color code noise can't fake, so it may set it, locked or not
+    if(idle)
+      cc_ = color;
     if(idle && !locked_ && symbols_ - last_sync_ > kExpiration) {
       // Protected idle activity can supplement the ordinary framer when its
       // decision-directed timing cannot acquire a repeating idle pattern.
       syncs_++;
       bursts_++;
-      cc_ = color;
     }
   }
 
@@ -129,6 +132,7 @@ public:
     stats->dmr_lc_flcos = lc_flcos_;
     stats->dmr_lc_bad = lc_bad_;
     std::memcpy(stats->dmr_burst_types, burst_types_, sizeof burst_types_);
+    stats->dmr_cc_other = cc_mismatch_;
     // Packet data, for diagnosis: counts, and the last message (one whose
     // CRC-32 checked, if any has), on either slot
     {
@@ -361,8 +365,20 @@ private:
       return; // golay(20,8) reliably corrects at most 2 bit errors
     int const cc = (st[0] << 3) | (st[1] << 2) | (st[2] << 1) | st[3];
     int const type = (st[4] << 3) | (st[5] << 2) | (st[6] << 1) | st[7];
-    burst_types_[type]++; // for diagnosis: which kinds of data come at all
-    cc_ = cc;
+    // Noise passes Golay(20,8) about 1 time in 20 while the framer's lock
+    // lingers after a transmission: such a burst has a random color code
+    // and type. Only a burst whose contents check (a voice LC header's
+    // Reed-Solomon, a data header's CRC) may set the color code; any other
+    // must match it, or is ignored (a noise terminator mustn't end a call)
+    bool const self_checked = type == kDataTypeVoiceLc || type == kDataTypeDataHeader;
+    if (!self_checked && cc != cc_) {
+      cc_mismatch_++;
+      return;
+    }
+    // (Not BPTC as well: on a weak signal real terminators and idle bursts
+    // fail its strict check, where the slot type and color code pass)
+    if (!self_checked)
+      burst_types_[type]++; // for diagnosis: which kinds of data come at all
     call& c = calls_[chan];
     uint8_t info[96];
     switch (type) {
@@ -380,6 +396,8 @@ private:
         lc[i / 8] = static_cast<uint8_t>((lc[i / 8] << 1) | info[i]);
       if (rs12_.decode(lc) < 0)
         break;
+      cc_ = cc;
+      burst_types_[type]++;
       int const flco = lc[0] & 0x3f;
       c.group = flco == 0;                  // group voice call (3 = unit to unit)
       c.encrypted = (lc[2] & 0x40) != 0;    // service options: privacy
@@ -388,13 +406,19 @@ private:
       c.have_ids = true;
       break;
     }
-    case kDataTypeDataHeader:
-      if (bptc_.decode(slot, info)) {
-        data_before(chan);
-        data_[chan].header(info);
-        data_after(chan);
+    case kDataTypeDataHeader: {
+      if (!bptc_.decode(slot, info))
+        break;
+      data_before(chan);
+      uint32_t const bad = data_[chan].headers_bad();
+      data_[chan].header(info);
+      data_after(chan);
+      if (data_[chan].headers_bad() == bad) { // its CRC checked
+        cc_ = cc;
+        burst_types_[type]++;
       }
       break;
+    }
     case kDataTypeRate12: {
       if (!bptc_.decode(slot, info))
         break;
@@ -639,7 +663,8 @@ private:
   uint64_t voice_muted_ = 0;
   uint64_t lc_flcos_ = 0;   // FLCOs of the embedded LCs seen (bit n: FLCO n)
   uint64_t lc_bad_ = 0;     // embedded LCs that failed their checks
-  uint32_t burst_types_[16]{}; // data and control bursts by slot type data type (Golay checked)
+  uint32_t burst_types_[16]{}; // data and control bursts by slot type data type (color code, BPTC checked)
+  uint32_t cc_mismatch_ = 0; // bursts refused: another color code than the one established (noise, mostly)
   dmr_data::assembler data_[2]; // packet data, per slot, for diagnosis
   int data_good_slot_ = -1, data_any_slot_ = -1;
   uint32_t r34_ = 0, r34_clean_ = 0, r34_swapped_ = 0; // rate 3/4 blocks: how well the trellis fit
