@@ -257,6 +257,7 @@ struct dv_audio_queue {
   dv_decoder const *decoder;
   dv_mode mode;
   struct dv_follow const *follow;
+  int lane;   // which of the follower's lanes plays into it
   int absent; // samples without IDs, independent of the number of PCM frames
 };
 
@@ -326,13 +327,13 @@ static void log_event(void *user_data,dv_event const *event){
 }
 
 // The current call's destination, source and mode, as recorders want them
-static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *follow,chan_t const *chan,struct dv_call *call){
+static void call_ids(dv_stats const *st,dv_mode mode,struct dv_follow const *follow,int lane,chan_t const *chan,struct dv_call *call){
   memset(call,0,sizeof *call);
   call->freq = chan->tune.freq;
   call->slot = -1;
   call->serial = st->call_serial;
   if(follow != NULL){
-    if(dv_follow_call(follow,call->dest,sizeof call->dest,call->src,sizeof call->src,
+    if(dv_follow_call(follow,lane,call->dest,sizeof call->dest,call->src,sizeof call->src,
 		      &call->freq,&call->slot,&call->generation,&call->serial))
       strlcpy(call->mode,mode == DV_NXDN48 || mode == DV_NXDN96 ? "NXDN" : mode == DV_LTR ? "LTR" : "P25",sizeof call->mode);
     return;
@@ -509,7 +510,7 @@ static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   dv_stats st;
   dv_get_stats(queue->decoder,&st);
   struct dv_call seen;
-  call_ids(&st,queue->mode,queue->follow,queue->chan,&seen);
+  call_ids(&st,queue->mode,queue->follow,queue->lane,queue->chan,&seen);
   track_call(queue->chan,queue->current,&seen,queue,0);
   if(queue->count == DV_AUDIO_QUEUE_DEPTH){
     queue->dropped++;
@@ -522,6 +523,76 @@ static void queue_pcm(void *user_data, int16_t const pcm[DV_PCM_SAMPLES]){
   else
     memset(&queue->call[tail],0,sizeof queue->call[tail]);
   queue->count++;
+}
+
+// A further lane of a follower (voice-channels): its own output channel,
+// which has no thread of its own: this one sends its audio and status, and
+// answers its polls
+struct dv_lane_out {
+  chan_t *chan;
+  struct dv_audio_queue queue;
+  struct dv_call decoding;
+  int idle_frames;
+  struct dv_agc agc;
+  uint64_t reported_drops;
+};
+
+static void lane_start(struct dv_lane_out *o,chan_t const *control){
+  chan_t * const chan = o->chan;
+  chan->output.samprate = DV_AUDIO_SAMPRATE;
+  chan->output.channels = 1;
+  int const pt = pt_from_info(chan->output.samprate,chan->output.channels,chan->output.encoding);
+  if(pt >= 0)
+    chan->output.rtp.type = (uint8_t)pt;
+  chan->output.rtp.timestamp = control->output.rtp.timestamp; // in step with the control channel's
+  chan->dv.source[0] = '\0';
+  chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = chan->dv.call_alias[0] = chan->dv.call_message[0] = '\0';
+  chan->dv.call_has_position = false;
+  chan->dv.call_id = 0;
+  chan->dv.call_freq = control->tune.freq;
+  chan->dv.call_slot = -1;
+  o->decoding = (struct dv_call){0};
+  o->queue.current = &o->decoding;
+  o->queue.chan = chan;
+  o->idle_frames = 0;
+  o->agc = (struct dv_agc){ .level_db = DV_AGC_TARGET_DB, .gain = 1.0f };
+}
+
+// One 20 ms output frame of a further lane: its next queued speech, or silence
+static void lane_frame(struct dv_lane_out *o){
+  chan_t * const chan = o->chan;
+  struct dv_audio_queue * const q = &o->queue;
+  if(q->dropped != o->reported_drops){
+    fprintf(stderr,"%s: audio queue overflowed; dropped %" PRIu64 " frames\n",chan->name,q->dropped - o->reported_drops);
+    o->reported_drops = q->dropped;
+  }
+  if(q->count == 0){
+    if(++o->idle_frames >= 5 && chan->dv.call_id != 0
+       && (o->decoding.id == 0 || o->decoding.id != chan->dv.call_id)){
+      struct dv_call const none = { .freq = chan->dv.call_freq, .slot = -1 };
+      publish_call(chan,&none);
+    }
+    chan->output.power = 0;
+    send_output(chan,NULL,DV_PCM_SAMPLES,true); // keep RTP timestamps moving
+    return;
+  }
+  o->idle_frames = 0;
+  publish_call(chan,&q->call[q->head]);
+  float audio[DV_PCM_SAMPLES];
+  int16_t const * const pcm = q->samples[q->head];
+  for(int i = 0; i < DV_PCM_SAMPLES; i++)
+    audio[i] = pcm[i] / 32768.0f;
+  q->head = (q->head + 1) % DV_AUDIO_QUEUE_DEPTH;
+  q->count--;
+  if(chan->linear.agc)
+    dv_agc_frame(&o->agc,audio,DV_PCM_SAMPLES);
+  float power = 0;
+  for(int i = 0; i < DV_PCM_SAMPLES; i++){
+    audio[i] *= chan->output.gain;
+    power += audio[i] * audio[i];
+  }
+  chan->output.power = power / DV_PCM_SAMPLES;
+  send_output(chan,audio,DV_PCM_SAMPLES,false);
 }
 
 int demod_dv(void *arg){
@@ -595,10 +666,27 @@ int demod_dv(void *arg){
   // A P25 Phase 1 or NXDN Type-C control channel can follow its voice grants,
   // an LTR home repeater the calls of the groups homed on it
   struct dv_events events = { .chan = chan, .system = is_nxdn ? "NXDN" : is_ltr ? "LTR" : "P25" };
+  // voice-channels: lanes beyond the first play on channels of their own
+  int const nextra = following ? chan->p25.nlanes : 0;
+  struct dv_lane_out *extra = nextra > 0 ? calloc((size_t)nextra,sizeof *extra) : NULL;
+  int const nlanes = 1 + (extra != NULL ? nextra : 0);
   if(following){
-    events.follow = dv_follow_create(chan,queue_pcm,&audio_queue);
+    chan_t *lane_chans[DV_FOLLOW_LANES] = {0};
+    void *users[DV_FOLLOW_LANES] = { &audio_queue };
+    for(int i = 0; i < nlanes - 1; i++){
+      extra[i].chan = chan->p25.lanes[i];
+      lane_start(&extra[i],chan);
+      extra[i].queue.decoder = decoder;
+      extra[i].queue.mode = mode;
+      extra[i].queue.lane = i + 1;
+      lane_chans[i] = extra[i].chan;
+      users[i + 1] = &extra[i].queue;
+    }
+    events.follow = dv_follow_create(chan,nlanes,lane_chans,queue_pcm,users);
     if(events.follow == NULL)
       fprintf(stderr,"%s: couldn't create the voice channel follower\n",chan->name);
+    for(int i = 0; i < nlanes - 1; i++)
+      extra[i].queue.follow = events.follow;
   }
   dv_set_event_callback(decoder,log_event,&events);
   audio_queue.follow = events.follow;
@@ -698,8 +786,15 @@ int demod_dv(void *arg){
       }
       // Labels for what the decoders produce next; published as it plays
       struct dv_call seen;
-      call_ids(&st,mode,events.follow,chan,&seen);
+      call_ids(&st,mode,events.follow,0,chan,&seen);
       track_call(chan,&decoding,&seen,&audio_queue,count);
+      for(int i = 0; i < nlanes - 1; i++){
+	call_ids(&st,mode,events.follow,i + 1,extra[i].chan,&seen);
+	track_call(extra[i].chan,&extra[i].decoding,&seen,&extra[i].queue,count);
+	// Its polls and commands (no thread of its own to answer them); a
+	// command to restart it can't: it is this channel's lane
+	(void)handle_commands(extra[i].chan);
+      }
     }
     if(analog){
       dv_fm_block(fm,chan,chan->baseband,count);
@@ -749,8 +844,11 @@ int demod_dv(void *arg){
 		   stats.src_call[0] ? " " : "",stats.src_call);
       }
       if(events.follow != NULL){
-	if(!dv_follow_source(events.follow,chan->dv.source,sizeof chan->dv.source))
+	if(!dv_follow_source(events.follow,0,chan->dv.source,sizeof chan->dv.source))
 	  chan->dv.source[0] = '\0';
+	for(int i = 0; i < nlanes - 1; i++)
+	  if(!dv_follow_source(events.follow,i + 1,extra[i].chan->dv.source,sizeof extra[i].chan->dv.source))
+	    extra[i].chan->dv.source[0] = '\0';
       } else if(mode == DV_P25_C4FM || mode == DV_P25_CQPSK || mode == DV_LTR){
 	// Conventional P25: the call's talkgroup and talker, from the link control.
 	// An LTR repeater: the talkgroup of the call on it
@@ -861,6 +959,8 @@ int demod_dv(void *arg){
     output_clock += (uint64_t)count * DV_AUDIO_SAMPRATE;
     while(output_clock >= audio_frame_clock){
       output_clock -= audio_frame_clock;
+      for(int i = 0; i < nlanes - 1; i++)
+	lane_frame(&extra[i]);
       float audio[DV_PCM_SAMPLES];
       if(analog){
 	// FM's delay line advances in step with the output clock
@@ -925,6 +1025,11 @@ int demod_dv(void *arg){
     free(fm);
   dv_destroy(decoder);
   dv_follow_destroy(events.follow);
+  for(int i = 0; i < nlanes - 1; i++){
+    struct dv_call const none = { .freq = extra[i].chan->dv.call_freq, .slot = -1 };
+    publish_call(extra[i].chan,&none); // its call is over
+  }
+  free(extra);
   if(gate != &gate_zero)
     free(gate);
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;

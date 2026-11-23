@@ -183,6 +183,9 @@ struct channel {
     uint16_t sysid;
     int slot;                     // Phase 2: TDMA slot, 0 or 1
     bool follow;                  // control channel: play the calls it grants
+    int voice_channels;           // voice-channels: follow this many calls at once (1-8)
+    int nlanes;                   // the channels the calls after the first play on: voice_channels - 1
+    struct channel *lanes[7];     // (made with the control channel; they have no threads of their own)
     int ntalkgroups;              // follow only these, in priority order (0: all)
     uint32_t talkgroups[32];
     int ncontrol;                 // p25-control-channels: where else to look for the control channel

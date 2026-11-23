@@ -649,6 +649,7 @@ static int setup_hardware(char const *sname){
 }
 
 // called by loadconfig() to process one receiver section of a config file
+static int follow_lanes(chan_t *chan,chan_t const *template);
 static void *process_section(void *arg){
   char const *sname = (char *)arg;
   if(sname == NULL)
@@ -866,6 +867,7 @@ static void *process_section(void *arg){
     pthread_mutex_lock(&Channel_list_mutex);
     chan->state = CHANNEL_RUNNING;
     pthread_mutex_unlock(&Channel_list_mutex);
+    section_chans += follow_lanes(chan,&chan_template); // before its thread looks for them
     start_demod(chan);
     Total_channels++;
     section_chans++;
@@ -892,6 +894,51 @@ static void *process_section(void *arg){
   fprintf(stderr,"[%s] %d channel%s started\n",sname,section_chans,section_chans != 1 ? "s" : "");
   return NULL;
 }
+// voice-channels: a following control channel (P25, NXDN) that plays more
+// than one call at once gets a channel for each call after the first, its
+// name with -2, -3... added, its SSRC the next free after its own. They have
+// no threads: the control channel's sends their audio and status and
+// answers their polls. Returns how many were made
+static int follow_lanes(chan_t *chan,chan_t const *template){
+  chan->p25.nlanes = 0;
+  if(!chan->p25.follow || chan->p25.voice_channels < 2
+     || (chan->demod_type != P25_DEMOD && chan->demod_type != NXDN_DEMOD))
+    return 0;
+  int const want = chan->p25.voice_channels - 1;
+  uint32_t ssrc = chan->output.rtp.ssrc + 1;
+  for(int k = 0; k < want && k < (int)(sizeof chan->p25.lanes / sizeof chan->p25.lanes[0]); k++){
+    chan_t *lane = NULL;
+    for(int tries = 0; tries < 100; tries++,ssrc++){
+      lane = lookup_or_create_chan(ssrc,template); // locks it
+      if(lane == NULL)
+	break;
+      if(lane->state == CHANNEL_STARTING)
+	break; // a new one
+      pthread_mutex_unlock(&lane->status.lock);
+      lane = NULL;
+    }
+    if(lane == NULL){
+      fprintf(stderr,"%s: no channel for voice lane %d\n",chan->name,k + 2);
+      break;
+    }
+    ssrc++;
+    lane->p25.follow = false;
+    lane->p25.voice_channels = 1;
+    lane->p25.nlanes = 0;
+    lane->tune.freq = chan->tune.freq; // (where its calls are is in its status as the call's)
+    snprintf(lane->name,sizeof lane->name,"%.90s-%d",chan->name,k + 2);
+    pthread_mutex_unlock(&lane->status.lock);
+    pthread_mutex_lock(&Channel_list_mutex);
+    lane->state = CHANNEL_RUNNING;
+    pthread_mutex_unlock(&Channel_list_mutex);
+    chan->p25.lanes[chan->p25.nlanes++] = lane;
+    Total_channels++;
+    if(Verbose)
+      fprintf(stderr,"%s: voice lane %d on ssrc %u\n",chan->name,k + 2,lane->output.rtp.ssrc);
+  }
+  return chan->p25.nlanes;
+}
+
 // Atomically find chan by ssrc, or create and initialize if it doesn't already exist
 // ! LOCKS the channel status !
 chan_t *lookup_or_create_chan(uint32_t const ssrc,chan_t const * const template){

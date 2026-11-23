@@ -402,28 +402,41 @@ talkgroup download in /var/lib/ka9q-radio/talkgroups.d/schools/:
 To test without a receiver, the **iq_file** front end plays a recorded IQ file
 (complex 32-bit float) into radiod in real time; see the top of src/iq_file.c.
 
-A following channel plays one call at a time. To hear simultaneous calls,
-define several following channels on the same control channel, each with
-its own output stream and its own talkgroups; radiod gives them distinct
-SSRCs. Keep their talkgroup lists disjoint, or they will all follow the
-same call. Each decodes the control channel itself, which costs about as
-much as any other P25 channel. For example:
+### voice-channels = 1
 
-    [Fire]
+A following channel (P25, or NXDN Type-C) plays one call at a time.
+**voice-channels = N** (1 to 8) follows up to N calls at once from the one
+control channel decode: radiod makes N-1 more channels beside it, named as
+the control channel's with **-2**, **-3**... added (in the -v log), their
+SSRCs the next free after its own, all on its output stream. Each plays one
+call, with its own downconverter and voice decoder, and has its own status,
+so monitor shows each call and pcmrecord's **--by-talkgroup** records each
+to its own file. They run on the control channel's thread, which answers
+their polls; they have no threads of their own.
+
+A new call goes to a free channel. No two follow the same talkgroup: a
+talkgroup's next transmission on another voice channel (the reply) goes to
+the channel already following it. With every channel busy, a call earlier
+in **p25-talkgroups** than one being played takes the channel of the one
+latest in the list; without a talkgroup list, calls wait for a channel to
+come free, first come first served. The two TDMA slots of a Phase 2 voice
+channel are calls of their own. With voice-channels = 1 (the default) the
+channel behaves as described above. For example, three calls at a time,
+fire first:
+
+    [Trunked]
     mode = p25
     p25-demod = cqpsk
     p25-follow = yes
-    p25-talkgroups = "10003"
+    voice-channels = 3
+    p25-talkgroups = "10003 10157 10158"
     freq = "851m4625"
-    data = trunk-fire.local
+    data = trunk.local
 
-    [Police]
-    mode = p25
-    p25-demod = cqpsk
-    p25-follow = yes
-    p25-talkgroups = "10157 10158"
-    freq = "851m4625"
-    data = trunk-police.local
+Separate following channels on the same control channel, each with its own
+talkgroups and output stream, also work (radiod gives them distinct SSRCs),
+but each decodes the control channel itself, and their talkgroup lists must
+not overlap, or they all follow the same call.
 
 ### follow, talkgroups, control-channels (NXDN trunking)
 

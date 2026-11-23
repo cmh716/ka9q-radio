@@ -17,9 +17,10 @@ char const *dv_mode_name(int mode){
   return mode == DV_DMR ? "DMR" : "P25";
 }
 
-bool dv_follow_call(struct dv_follow const *f,char *dest,size_t dlen,char *src,size_t slen,
+bool dv_follow_call(struct dv_follow const *f,int lane,char *dest,size_t dlen,char *src,size_t slen,
                     double *freq,int *slot,uint64_t *generation,uint64_t *serial){
   (void)f;
+  (void)lane;
   snprintf(dest,dlen,"%s",Frame_stats.dst_call);
   snprintf(src,slen,"%s",Frame_stats.src_call);
   *freq = 852000000;
@@ -105,15 +106,15 @@ int main(void){
   struct dv_call c;
   dv_stats st = {0};
   strcpy(st.dst_call,"TG 2000");
-  call_ids(&st,DV_DMR,NULL,&chan,&c);
+  call_ids(&st,DV_DMR,NULL,0,&chan,&c);
   check(strcmp(c.dest,"2000") == 0,"DMR group call filed by talkgroup");
   strcpy(st.dst_call,"2000");
-  call_ids(&st,DV_DMR,NULL,&chan,&c);
+  call_ids(&st,DV_DMR,NULL,0,&chan,&c);
   check(strcmp(c.dest,"U2000") == 0,"DMR private call not filed as a talkgroup");
-  call_ids(&st,DV_NXDN48,NULL,&chan,&c);
+  call_ids(&st,DV_NXDN48,NULL,0,&chan,&c);
   check(strcmp(c.dest,"U2000") == 0,"NXDN unit call not filed as a talkgroup");
   strcpy(st.dst_call,"N0CALL");
-  call_ids(&st,DV_DMR,NULL,&chan,&c);
+  call_ids(&st,DV_DMR,NULL,0,&chan,&c);
   check(strcmp(c.dest,"N0CALL") == 0,"a callsign destination unchanged");
 
   // A decoder's position (D-STAR GPS) goes with the call
@@ -123,10 +124,10 @@ int main(void){
   st.has_position = true;
   st.latitude = 42.8353;
   st.longitude = -78.6075;
-  call_ids(&st,DV_DSTAR,NULL,&chan,&c);
+  call_ids(&st,DV_DSTAR,NULL,0,&chan,&c);
   check(c.has_position && c.lat == 42.8353 && c.lon == -78.6075,"a position goes with the call");
   st.has_position = false;
-  call_ids(&st,DV_DSTAR,NULL,&chan,&c);
+  call_ids(&st,DV_DSTAR,NULL,0,&chan,&c);
   check(!c.has_position,"and none when the decoder has none");
 
   puts("Call queue tests passed");

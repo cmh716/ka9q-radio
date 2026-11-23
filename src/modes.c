@@ -168,6 +168,7 @@ char const *Channel_keys[] = {
   "p25-talkgroups",
   "p25-control-channels",
   "follow",
+  "voice-channels",
   "system",
   "talkgroups",
   "control-channels",
@@ -317,6 +318,12 @@ int loadpreset(chan_t *chan,dictionary const *table,char const *sname){
     // Trunking: the same settings under names that aren't P25's, for NXDN
     chan->p25.follow = config_getboolean(table,sname,"p25-follow",chan->p25.follow);
     chan->p25.follow = config_getboolean(table,sname,"follow",chan->p25.follow);
+    {
+      int const n = config_getint(table,sname,"voice-channels",chan->p25.voice_channels > 0 ? chan->p25.voice_channels : 1);
+      if(n < 1 || n > 8)
+	fprintf(stderr,"%s: voice-channels %d: 1 to 8\n",sname,n);
+      chan->p25.voice_channels = n < 1 ? 1 : n > 8 ? 8 : n;
+    }
     cp = config_getstring(table,sname,"p25-talkgroups",NULL);
     if(cp == NULL)
       cp = config_getstring(table,sname,"talkgroups",NULL);

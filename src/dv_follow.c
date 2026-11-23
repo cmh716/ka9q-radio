@@ -1,7 +1,11 @@
-// Trunking (P25, NXDN Type-C): a control channel's grants steer a second
-// downconverter and voice decoder (P25 Phase 1 FDMA or Phase 2 TDMA, or
-// NXDN) on the same channel thread, so one radiod channel plays whichever
-// permitted call is up
+// Trunking (P25, NXDN Type-C): a control channel's grants steer further
+// downconverters and voice decoders (P25 Phase 1 FDMA or Phase 2 TDMA, or
+// NXDN) on the same channel thread. Each is a lane: one call at a time, on
+// a radiod channel of its own (the first lane on the control channel's).
+// With voice-channels = 1 (the default) one radiod channel plays whichever
+// permitted call is up; with more, that many calls at once: a new call goes
+// to a free lane, and with every lane busy a higher priority call takes the
+// lane of the lowest priority one. No two lanes follow the same talkgroup
 // Copyright 2026 ka9q-radio contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE 1
@@ -48,14 +52,13 @@ struct follow_grant {
   uint32_t left_transmission;
 };
 
-struct dv_follow {
-  chan_t *chan;
+// A voice lane: its own downconverter and decoder, one call at a time
+struct follow_lane {
+  chan_t *chan;              // where it plays (lane 0: the control channel)
   dv_pcm_callback pcm;
   void *pcm_user;
-  struct follow_grant grants[FOLLOW_GRANTS];
-  uint64_t now;              // samples processed
 
-  // Second downconverter, always run so it stays in step with the main one
+  // Its downconverter, always run so it stays in step with the main one
   struct filter_out out;
   bool have_out;
   int bin_shift;
@@ -71,8 +74,16 @@ struct dv_follow {
   bool lingering;            // stayed past an end to see whether that grant brings voice
   uint64_t voice_serial;     // the voice decoder's call_serial when we joined
   uint32_t last_group;       // talkgroup of the call last followed: the conversation
-  bool tdma_ready;           // the control channel has named the network (WACN): Phase 2 can be followed
   uint64_t calls;            // calls followed
+};
+
+struct dv_follow {
+  chan_t *chan;              // the control channel
+  struct follow_grant grants[FOLLOW_GRANTS];
+  uint64_t now;              // samples processed
+  struct follow_lane lanes[DV_FOLLOW_LANES];
+  int nlanes;
+  bool tdma_ready;           // the control channel has named the network (WACN): Phase 2 can be followed
   uint64_t cc_good;          // control messages decoded (CRC good), as last counted
   uint64_t cc_seen;          // when that count last rose
   bool cc_ever;              // it has risen at all
@@ -148,46 +159,67 @@ static int priority(struct dv_follow const *f, struct follow_grant const *g){
   return -1;
 }
 
-struct dv_follow *dv_follow_create(chan_t *chan, dv_pcm_callback pcm, void *pcm_user){
-  struct dv_follow *f = calloc(1,sizeof *f);
-  if(f == NULL)
-    return NULL;
-  f->chan = chan;
-  f->pcm = pcm;
-  f->pcm_user = pcm_user;
-  f->bin_shift = -1000000; // force the phase bookkeeping on the first block
+// Each lane's downconverter: the control channel's response
+static bool lane_tuner(struct dv_follow *f, struct follow_lane *l){
+  chan_t const *chan = f->chan;
+  l->bin_shift = -1000000; // force the phase bookkeeping on the first block
   int const blocksize = (int)lrint(DV_IQ_SAMPRATE_RADIOD * Blocktime);
-  if(create_filter_output(&f->out,&chan->frontend->in,blocksize,COMPLEX) != 0){
-    free(f);
-    return NULL;
-  }
-  f->have_out = true;
-  for(int i = 0; i < chan->p25.ncontrol; i++)
-    add_control(f,(uint64_t)llrint(chan->p25.control[i]));
-  // Same response as the control channel's
+  if(create_filter_output(&l->out,&chan->frontend->in,blocksize,COMPLEX) != 0)
+    return false;
+  l->have_out = true;
   int const samprate = DV_IQ_SAMPRATE_RADIOD;
   float const nyquist = samprate / 2.0f;
   float const lower = max(chan->filter.min_IF, -nyquist);
   float const upper = min(chan->filter.max_IF, nyquist);
-  set_filter(&f->out,lower/samprate,upper/samprate,chan->filter.kaiser_beta);
+  set_filter(&l->out,lower/samprate,upper/samprate,chan->filter.kaiser_beta);
+  return true;
+}
+
+struct dv_follow *dv_follow_create(chan_t *chan, int nlanes, chan_t *const *lane_chans,
+				   dv_pcm_callback pcm, void *const *pcm_users){
+  struct dv_follow *f = calloc(1,sizeof *f);
+  if(f == NULL)
+    return NULL;
+  f->chan = chan;
+  if(nlanes < 1)
+    nlanes = 1;
+  if(nlanes > DV_FOLLOW_LANES)
+    nlanes = DV_FOLLOW_LANES;
+  for(int i = 0; i < nlanes; i++){
+    struct follow_lane * const l = &f->lanes[i];
+    l->chan = i == 0 ? chan : lane_chans[i - 1];
+    l->pcm = pcm;
+    l->pcm_user = pcm_users != NULL ? pcm_users[i] : NULL;
+    if(l->chan == NULL || !lane_tuner(f,l)){
+      dv_follow_destroy(f);
+      return NULL;
+    }
+    f->nlanes++;
+  }
+  for(int i = 0; i < chan->p25.ncontrol; i++)
+    add_control(f,(uint64_t)llrint(chan->p25.control[i]));
   return f;
 }
 
-static void release(struct dv_follow *f, char const *why){
-  if(f->voice == NULL)
+int dv_follow_lanes(struct dv_follow const *f){
+  return f != NULL ? f->nlanes : 0;
+}
+
+static void release(struct dv_follow *f, struct follow_lane *l, char const *why){
+  if(l->voice == NULL)
     return;
   if(Verbose > 0){
-    char const *name = f->chan->name;
-    uint32_t const group = f->cur.group;
-    double const mhz = f->cur.freq * 1e-6;
+    char const *name = l->chan->name;
+    uint32_t const group = l->cur.group;
+    double const mhz = l->cur.freq * 1e-6;
     dv_stats st;
-    dv_get_stats(f->voice,&st);
+    dv_get_stats(l->voice,&st);
     fprintf(stderr,"%s %s leaving TG %" PRIu32 " on %.4f MHz (%s; %" PRIu64 " voice frames, %" PRIu64 " muted)\n",
 	    name,system_name(f->chan),group,mhz,why,st.voice_decoded,st.voice_muted);
   }
-  dv_destroy(f->voice);
-  f->voice = NULL;
-  f->last_group = f->cur.group;
+  dv_destroy(l->voice);
+  l->voice = NULL;
+  l->last_group = l->cur.group;
   if(strcmp(why,"preempted") != 0){ // a preempted call may be rejoined later
     // Marked on the channel's own entry, so each transmission left stays
     // left (a conversation leaves several within the time grants stay fresh)
@@ -195,22 +227,22 @@ static void release(struct dv_follow *f, char const *why){
     int oldest = 0;
     for(int i = 0; i < FOLLOW_GRANTS && g == NULL; i++){
       struct follow_grant * const o = &f->grants[i];
-      if(o->valid && o->freq == f->cur.freq && o->slot == f->cur.slot)
+      if(o->valid && o->freq == l->cur.freq && o->slot == l->cur.slot)
 	g = o;
       else if(!o->valid || (f->grants[oldest].valid && o->seen < f->grants[oldest].seen))
 	oldest = i;
     }
     if(g == NULL){
       g = &f->grants[oldest];
-      *g = f->cur;
+      *g = l->cur;
     }
-    if(g->group == f->cur.group){
+    if(g->group == l->cur.group){
       g->left = true;
-      g->left_source = f->cur.source;
+      g->left_source = l->cur.source;
       // A grant of this channel still unplaced when we leave for another
       // reason (the reply elsewhere, a preemption) re-announced this
       // transmission as far as we can know: don't let its updates call us back
-      g->left_transmission = f->pending > f->cur.transmission ? f->pending : f->cur.transmission;
+      g->left_transmission = l->pending > l->cur.transmission ? l->pending : l->cur.transmission;
     }
   }
 }
@@ -218,9 +250,12 @@ static void release(struct dv_follow *f, char const *why){
 void dv_follow_destroy(struct dv_follow *f){
   if(f == NULL)
     return;
-  release(f,"stopped");
-  if(f->have_out)
-    delete_filter_output(&f->out);
+  for(int i = 0; i < DV_FOLLOW_LANES; i++){
+    struct follow_lane * const l = &f->lanes[i];
+    release(f,l,"stopped");
+    if(l->have_out)
+      delete_filter_output(&l->out);
+  }
   free(f);
 }
 
@@ -295,32 +330,48 @@ void dv_follow_event(struct dv_follow *f, dv_event const *event){
     }
   }
   f->grants[slot >= 0 ? slot : oldest] = g;
-  // The call we follow: still live, and perhaps a new talker (the voice
+  // A call we follow: still live, and perhaps a new talker (the voice
   // channel's own source ID takes precedence when it has one)
-  if(f->voice != NULL && g.freq == f->cur.freq && g.slot == f->cur.slot && g.group == f->cur.group){
-    f->cur.seen = f->now;
+  for(int i = 0; i < f->nlanes; i++){
+    struct follow_lane * const l = &f->lanes[i];
+    if(l->voice == NULL || g.freq != l->cur.freq || g.slot != l->cur.slot || g.group != l->cur.group)
+      continue;
+    l->cur.seen = f->now;
     if(g.source != 0)
-      f->cur.source = g.source;
+      l->cur.source = g.source;
     // A later explicit grant of our own channel is either this transmission
     // re-announced, or the next one (a quick re-key on the same channel).
     // Nothing tells which until this transmission ends; then the channel
     // does (see the end of transmission in dv_follow_block)
-    if(g.transmission > f->cur.transmission && g.transmission > f->pending){
-      f->pending = g.transmission;
-      f->pending_at = f->now;
+    if(g.transmission > l->cur.transmission && g.transmission > l->pending){
+      l->pending = g.transmission;
+      l->pending_at = f->now;
     }
   }
 }
 
-// The best live grant, or NULL
-static struct follow_grant const *best_grant(struct dv_follow const *f){
+// Another lane is on this call, or on its talkgroup (a conversation is one
+// lane's: its replies come to it)
+static bool taken(struct dv_follow const *f, struct follow_lane const *l, struct follow_grant const *g){
+  for(int i = 0; i < f->nlanes; i++){
+    struct follow_lane const * const o = &f->lanes[i];
+    if(o == l || o->voice == NULL)
+      continue;
+    if((o->cur.freq == g->freq && o->cur.slot == g->slot) || (o->cur.group == g->group && o->cur.unit == g->unit))
+      return true;
+  }
+  return false;
+}
+
+// The best live grant for lane l (none another lane has), or NULL
+static struct follow_grant const *best_grant(struct dv_follow const *f, struct follow_lane const *l){
   struct follow_grant const *best = NULL;
   int best_pri = 0;
   for(int i = 0; i < FOLLOW_GRANTS; i++){
     struct follow_grant const *g = &f->grants[i];
     if(!g->valid || f->now - g->seen > FOLLOW_FRESH)
       continue;
-    if(g->left)
+    if(g->left || taken(f,l,g))
       continue;
     if(g->slot >= 0 && !f->tdma_ready)
       continue; // can't descramble it yet: don't let it stand in the way of other calls
@@ -328,7 +379,7 @@ static struct follow_grant const *best_grant(struct dv_follow const *f){
     if(p < 0)
       continue;
     // Equal priority: stay with the conversation, then the newest
-    bool const conv = g->group == f->last_group, best_conv = best != NULL && best->group == f->last_group;
+    bool const conv = g->group == l->last_group, best_conv = best != NULL && best->group == l->last_group;
     if(best == NULL || p < best_pri || (p == best_pri && (conv != best_conv ? conv : g->seen > best->seen))){
       best = g;
       best_pri = p;
@@ -340,18 +391,18 @@ static struct follow_grant const *best_grant(struct dv_follow const *f){
 // A later transmission of the talkgroup we follow, on another channel (the
 // reply, under transmission trunking): the newest, or NULL. Ordered by the
 // control channel's grant numbers where both have one, else by grant time
-static struct follow_grant const *newer_transmission(struct dv_follow const *f){
+static struct follow_grant const *newer_transmission(struct dv_follow const *f, struct follow_lane const *l){
   struct follow_grant const *newest = NULL;
   for(int i = 0; i < FOLLOW_GRANTS; i++){
     struct follow_grant const *g = &f->grants[i];
-    if(!g->valid || f->now - g->seen > FOLLOW_FRESH || g->group != f->cur.group || g->unit != f->cur.unit)
+    if(!g->valid || f->now - g->seen > FOLLOW_FRESH || g->group != l->cur.group || g->unit != l->cur.unit)
       continue;
-    if(g->freq == f->cur.freq && g->slot == f->cur.slot)
+    if(g->freq == l->cur.freq && g->slot == l->cur.slot)
       continue;
-    bool const newer = (g->transmission != 0 && f->cur.transmission != 0)
-      ? g->transmission > f->cur.transmission
-      : g->transmission != 0 ? g->granted >= f->started  // an explicit grant from our join on
-      : g->granted > f->started;
+    bool const newer = (g->transmission != 0 && l->cur.transmission != 0)
+      ? g->transmission > l->cur.transmission
+      : g->transmission != 0 ? g->granted >= l->started  // an explicit grant from our join on
+      : g->granted > l->started;
     if(!newer)
       continue;
     if(newest == NULL || g->transmission > newest->transmission || g->granted > newest->granted)
@@ -360,7 +411,7 @@ static struct follow_grant const *newer_transmission(struct dv_follow const *f){
   return newest;
 }
 
-static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats const *cc){
+static void join(struct dv_follow *f, struct follow_lane *l, struct follow_grant const *g, dv_stats const *cc){
   chan_t const *chan = f->chan;
   dv_config config = {
     .p25_nac = cc->last_nac,
@@ -383,31 +434,31 @@ static void join(struct dv_follow *f, struct follow_grant const *g, dv_stats con
     mode = DV_P25P2;
   } else
     mode = chan->p25.modulation == P25_CQPSK ? DV_P25_CQPSK : DV_P25_C4FM;
-  f->voice = dv_create(mode,&config,f->pcm,f->pcm_user);
-  if(f->voice == NULL)
+  l->voice = dv_create(mode,&config,l->pcm,l->pcm_user);
+  if(l->voice == NULL)
     return;
-  f->cur = *g;
-  f->pending = 0;
-  f->lingering = false;
+  l->cur = *g;
+  l->pending = 0;
+  l->lingering = false;
   {
     dv_stats st;
-    dv_get_stats(f->voice,&st);
-    f->voice_serial = st.call_serial;
+    dv_get_stats(l->voice,&st);
+    l->voice_serial = st.call_serial;
   }
-  f->started = f->last_voice = f->now;
-  f->last_count = 0;
-  f->calls++;
+  l->started = l->last_voice = f->now;
+  l->last_count = 0;
+  l->calls++;
   if(Verbose > 0){
     char where[24] = "";
     if(g->slot >= 0)
       snprintf(where,sizeof where," slot %d",g->slot);
-    fprintf(stderr,"%s %s following %s %" PRIu32 " on %.4f MHz%s\n",chan->name,system_name(chan),
+    fprintf(stderr,"%s %s following %s %" PRIu32 " on %.4f MHz%s\n",l->chan->name,system_name(chan),
 	    g->unit ? "unit" : "TG",g->group,g->freq * 1e-6,where);
   }
 }
 
-// The second downconverter: downconvert()'s tuning, without sweeping or filter2
-static float complex const *tune_block(struct dv_follow *f, double freq, int *count){
+// A lane's downconverter: downconvert()'s tuning, without sweeping or filter2
+static float complex const *tune_block(struct follow_lane *f, double freq, int *count){
   pthread_mutex_lock(&Frontend.status_mutex);
   double const offset = freq - Frontend.frequency;
   int shift = 0;
@@ -441,6 +492,8 @@ static float complex const *tune_block(struct dv_follow *f, double freq, int *co
   return output;
 }
 
+static void lane_block(struct dv_follow *f, struct follow_lane *l, dv_stats const *cc);
+
 void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
   f->now += (uint64_t)count;
   f->tdma_ready = cc->wacn != 0;
@@ -457,76 +510,108 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
   } else if(f->searching ? f->now - f->tried_at > FOLLOW_CC_DWELL
 	    : f->now - (f->cc_seen > f->tried_at ? f->cc_seen : f->tried_at) > FOLLOW_CC_SEARCH)
     try_next_control(f);
-  double const freq = f->voice != NULL ? (double)f->cur.freq : f->chan->tune.freq;
-  int n = 0;
-  float complex const *iq = tune_block(f,freq,&n);
-
-  if(f->voice != NULL){
-    if(iq != NULL)
-      dv_process(f->voice,(float const *)iq,(size_t)n);
-    dv_stats st;
-    dv_get_stats(f->voice,&st);
-    uint64_t const heard = st.voice_decoded + st.voice_muted;
-    if(heard != f->last_count){
-      f->last_count = heard;
-      f->last_voice = f->now;
-      f->lingering = false;
-    }
-    struct follow_grant const *b = best_grant(f);
-    struct follow_grant const *r = NULL;
-    if(st.m17_encrypted)
-      release(f,"encrypted"); // (Phase 1 waits for a clear ALGID before it plays anything)
-    else if(st.call_serial != f->voice_serial){
-      if(f->pending != 0){
-	// Our channel was granted again during this transmission and the
-	// voice didn't settle whether that was this transmission re-announced
-	// or the next one. The channel will say: stay up to FOLLOW_LINGER.
-	// Voice now is the next transmission (a new call: the decoder's call
-	// serial has moved on); silence means it was a re-announcement, and
-	// we leave with its number so its updates can't bring us back.
-	// A re-key whose voice starts later than that is missed: the price of
-	// not having a signal that tells the two apart
-	f->cur.transmission = f->pending;
-	f->pending = 0;
-	f->voice_serial = st.call_serial;
-	f->started = f->last_voice = f->now;
-	f->lingering = true;
-      } else
-	release(f,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
-    }
-    else if(f->lingering && f->last_voice == f->started && f->now - f->started > FOLLOW_LINGER)
-      release(f,"transmission ended");
-    else if((r = newer_transmission(f)) != NULL
-	    && !(b != NULL && priority(f,b) < priority(f,r) && b->group != f->cur.group)){
-      // Transmission trunking: the reply has its own channel. Go straight
-      // to it (unless a higher priority call is waiting, which the
-      // preemption below then takes)
-      struct follow_grant const reply = *r;
-      release(f,"next transmission");
-      join(f,&reply,cc);
-    }
-    else if(f->last_voice == f->started && f->now - f->started > FOLLOW_LISTEN)
-      release(f,"no voice");
-    else if(f->last_voice != f->started && f->now - f->last_voice > FOLLOW_HANG)
-      release(f,"call ended");
-    else if(b != NULL && priority(f,b) < priority(f,&f->cur)
-	    && !(b->freq == f->cur.freq && b->slot == f->cur.slot))
-      release(f,"preempted");
-  }
-  if(f->voice == NULL){
-    struct follow_grant const *g = best_grant(f);
+  for(int i = 0; i < f->nlanes; i++)
+    lane_block(f,&f->lanes[i],cc);
+  // Free lanes take the best calls no lane has, in turn
+  for(int i = 0; i < f->nlanes; i++){
+    struct follow_lane * const l = &f->lanes[i];
+    if(l->voice != NULL)
+      continue;
+    struct follow_grant const *g = best_grant(f,l);
     if(g != NULL)
-      join(f,g,cc);
+      join(f,l,g,cc);
+  }
+  // Every lane busy: a better call takes the lane of the worst (lowest
+  // priority; of equals, the last of them). With one lane, the old rule:
+  // a better call preempts the one followed
+  struct follow_lane *worst = NULL;
+  int worst_pri = -1;
+  for(int i = 0; i < f->nlanes; i++){
+    struct follow_lane * const l = &f->lanes[i];
+    if(l->voice == NULL)
+      return; // a lane is free: nothing waiting it could take
+    int const p = priority(f,&l->cur);
+    if(p >= worst_pri){
+      worst_pri = p;
+      worst = l;
+    }
+  }
+  if(worst == NULL)
+    return;
+  struct follow_grant const *b = best_grant(f,worst);
+  if(b != NULL && priority(f,b) < worst_pri && !(b->freq == worst->cur.freq && b->slot == worst->cur.slot)){
+    struct follow_grant const better = *b;
+    release(f,worst,"preempted");
+    join(f,worst,&better,cc);
   }
 }
 
-bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
-  if(f == NULL)
+// A lane's block: its voice decoded, and whether its call goes on
+static void lane_block(struct dv_follow *f, struct follow_lane *l, dv_stats const *cc){
+  double const freq = l->voice != NULL ? (double)l->cur.freq : f->chan->tune.freq;
+  int n = 0;
+  float complex const *iq = tune_block(l,freq,&n);
+  if(l->voice == NULL)
+    return;
+  if(iq != NULL)
+    dv_process(l->voice,(float const *)iq,(size_t)n);
+  dv_stats st;
+  dv_get_stats(l->voice,&st);
+  uint64_t const heard = st.voice_decoded + st.voice_muted;
+  if(heard != l->last_count){
+    l->last_count = heard;
+    l->last_voice = f->now;
+    l->lingering = false;
+  }
+  struct follow_grant const *b = best_grant(f,l);
+  struct follow_grant const *r = NULL;
+  if(st.m17_encrypted)
+    release(f,l,"encrypted"); // (Phase 1 waits for a clear ALGID before it plays anything)
+  else if(st.call_serial != l->voice_serial){
+    if(l->pending != 0){
+      // Our channel was granted again during this transmission and the
+      // voice didn't settle whether that was this transmission re-announced
+      // or the next one. The channel will say: stay up to FOLLOW_LINGER.
+      // Voice now is the next transmission (a new call: the decoder's call
+      // serial has moved on); silence means it was a re-announcement, and
+      // we leave with its number so its updates can't bring us back.
+      // A re-key whose voice starts later than that is missed: the price of
+      // not having a signal that tells the two apart
+      l->cur.transmission = l->pending;
+      l->pending = 0;
+      l->voice_serial = st.call_serial;
+      l->started = l->last_voice = f->now;
+      l->lingering = true;
+    } else
+      release(f,l,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
+  }
+  else if(l->lingering && l->last_voice == l->started && f->now - l->started > FOLLOW_LINGER)
+    release(f,l,"transmission ended");
+  else if((r = newer_transmission(f,l)) != NULL
+	  && !(b != NULL && priority(f,b) < priority(f,r) && b->group != l->cur.group)){
+    // Transmission trunking: the reply has its own channel. Go straight
+    // to it (unless a higher priority call is waiting, which the
+    // preemption then takes)
+    struct follow_grant const reply = *r;
+    release(f,l,"next transmission");
+    join(f,l,&reply,cc);
+  }
+  else if(l->last_voice == l->started && f->now - l->started > FOLLOW_LISTEN)
+    release(f,l,"no voice");
+  else if(l->last_voice != l->started && f->now - l->last_voice > FOLLOW_HANG)
+    release(f,l,"call ended");
+}
+
+bool dv_follow_source(struct dv_follow const *f, int lane, char *buf, size_t len){
+  if(f == NULL || lane < 0 || lane >= f->nlanes)
     return false;
+  struct follow_lane const * const l = &f->lanes[lane];
   // Talkgroup and voice channel: the talker is in the recordings and the -v log.
-  // Between calls, whether the control channel is being received
-  if(f->voice != NULL)
-    snprintf(buf,len,"TG%" PRIu32 " %.4f",f->cur.group,f->cur.freq * 1e-6);
+  // Between calls, whether the control channel is being received (lane 0)
+  if(l->voice != NULL)
+    snprintf(buf,len,"TG%" PRIu32 " %.4f",l->cur.group,l->cur.freq * 1e-6);
+  else if(lane != 0)
+    return false;
   else if(is_ltr(f->chan) && f->cc_ever)
     snprintf(buf,len,"LTR R%u",f->cc_nac); // an idle repeater says so only every ten seconds
   else if(f->cc_ever && f->now - f->cc_seen <= FOLLOW_CC_LOST)
@@ -539,33 +624,41 @@ bool dv_follow_source(struct dv_follow const *f, char *buf, size_t len){
 }
 
 void dv_follow_print(struct dv_follow const *f){
-  if(f == NULL || f->voice == NULL)
+  if(f == NULL)
     return;
-  dv_stats st;
-  dv_get_stats(f->voice,&st);
-  fprintf(stderr,"%s %s voice %.4f MHz TG %" PRIu32 " src %s syncs=%" PRIu64 " frames=%" PRIu64
-	  " voice=%" PRIu64 " muted=%" PRIu64 "%s errors=%.1f%% offset=%+.1f Hz\n",
-	  f->chan->name,system_name(f->chan),f->cur.freq * 1e-6,f->cur.group,st.src_call[0] ? st.src_call : "-",
-	  st.syncs,st.frames,st.voice_decoded,st.voice_muted,st.m17_encrypted ? " encrypted" : "",
-	  100.0f * st.error_rate,st.freq_offset);
+  for(int i = 0; i < f->nlanes; i++){
+    struct follow_lane const * const l = &f->lanes[i];
+    if(l->voice == NULL)
+      continue;
+    dv_stats st;
+    dv_get_stats(l->voice,&st);
+    fprintf(stderr,"%s %s voice %.4f MHz TG %" PRIu32 " src %s syncs=%" PRIu64 " frames=%" PRIu64
+	    " voice=%" PRIu64 " muted=%" PRIu64 "%s errors=%.1f%% offset=%+.1f Hz\n",
+	    l->chan->name,system_name(f->chan),l->cur.freq * 1e-6,l->cur.group,st.src_call[0] ? st.src_call : "-",
+	    st.syncs,st.frames,st.voice_decoded,st.voice_muted,st.m17_encrypted ? " encrypted" : "",
+	    100.0f * st.error_rate,st.freq_offset);
+  }
 }
 
-bool dv_follow_call(struct dv_follow const *f, char *dest, size_t dlen, char *src, size_t slen,
+bool dv_follow_call(struct dv_follow const *f, int lane, char *dest, size_t dlen, char *src, size_t slen,
 		    double *freq, int *slot, uint64_t *generation, uint64_t *serial){
-  if(f == NULL || f->voice == NULL)
+  if(f == NULL || lane < 0 || lane >= f->nlanes)
     return false;
-  *freq = (double)f->cur.freq;
-  *slot = f->cur.slot;
+  struct follow_lane const * const l = &f->lanes[lane];
+  if(l->voice == NULL)
+    return false;
+  *freq = (double)l->cur.freq;
+  *slot = l->cur.slot;
   dv_stats st;
-  dv_get_stats(f->voice,&st);
-  *generation = f->calls;
+  dv_get_stats(l->voice,&st);
+  *generation = l->calls;
   *serial = st.call_serial;
   // A unit-to-unit call as "U" and the radio, as dv.c files private calls
-  snprintf(dest,dlen,"%s%" PRIu32,f->cur.unit ? "U" : "",f->cur.group);
+  snprintf(dest,dlen,"%s%" PRIu32,l->cur.unit ? "U" : "",l->cur.group);
   if(st.src_call[0] != '\0')
     strlcpy(src,st.src_call,slen);
-  else if(f->cur.source != 0)
-    snprintf(src,slen,"%" PRIu32,f->cur.source);
+  else if(l->cur.source != 0)
+    snprintf(src,slen,"%" PRIu32,l->cur.source);
   else
     src[0] = '\0';
   return true;
