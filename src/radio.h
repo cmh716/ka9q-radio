@@ -187,6 +187,7 @@ struct channel {
     int nlanes;                   // the channels the calls after the first play on: voice_channels - 1
     struct channel *lanes[7];     // (open while its demodulator runs; they have no threads of their own)
     struct channel *lane_template; // the section's settings, to make them from
+    bool lane_new;                // a lane just made: its RTP clock not yet set
     int ntalkgroups;              // follow only these, in priority order (0: all)
     uint32_t talkgroups[32];
     int ncontrol;                 // p25-control-channels: where else to look for the control channel

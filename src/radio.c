@@ -926,17 +926,22 @@ static void keep_lane_template(chan_t *chan,chan_t const *template){
 // them when it ends and won't follow with lanes again (close_follow_lanes).
 // Returns how many there are
 int open_follow_lanes(chan_t *chan){
-  // A restart as the same follower keeps its lanes, and their SSRCs: closed
-  // and opened again, a poll could take one in between
-  if(chan->p25.nlanes > 0 && chan->p25.nlanes == chan->p25.voice_channels - 1)
-    return chan->p25.nlanes;
-  close_follow_lanes(chan);
   chan_t const * const template = chan->p25.lane_template;
-  if(template == NULL || chan->p25.voice_channels < 2)
-    return 0;
-  int const want = chan->p25.voice_channels - 1;
-  uint32_t ssrc = chan->output.rtp.ssrc + 1;
-  for(int k = 0; k < want && k < (int)(sizeof chan->p25.lanes / sizeof chan->p25.lanes[0]); k++){
+  int want = chan->p25.voice_channels - 1;
+  int const most = (int)(sizeof chan->p25.lanes / sizeof chan->p25.lanes[0]);
+  if(template == NULL || want < 0)
+    want = 0;
+  if(want > most)
+    want = most;
+  if(chan->p25.nlanes > want){
+    close_follow_lanes(chan); // (can't happen: voice-channels is fixed by the config)
+  }
+  // Those it has stay, SSRCs and all (a restart as the same follower: closed
+  // and opened again, a poll could take one in between); only missing ones
+  // are made, after the last
+  uint32_t ssrc = chan->p25.nlanes > 0 ? chan->p25.lanes[chan->p25.nlanes - 1]->output.rtp.ssrc + 1 : chan->output.rtp.ssrc + 1;
+  while(chan->p25.nlanes < want){
+    int const k = chan->p25.nlanes;
     chan_t *lane = NULL;
     for(int tries = 0; tries < 100; tries++,ssrc++){
       lane = lookup_or_create_chan(ssrc,template); // locks it
@@ -958,8 +963,9 @@ int open_follow_lanes(chan_t *chan){
     lane->p25.voice_channels = 1;
     lane->p25.nlanes = 0;
     lane->p25.lane_template = NULL;
+    lane->p25.lane_new = true; // its RTP clock is set from its control channel's
     lane->tune.freq = chan->tune.freq; // (where its calls are is in its status as the call's)
-    snprintf(lane->name,sizeof lane->name,"%.90s-%d",chan->name,k + 2);
+    snprintf(lane->name,sizeof lane->name,"%.80s-%d",chan->name,k + 2);
     pthread_mutex_unlock(&lane->status.lock);
     pthread_mutex_lock(&Channel_list_mutex);
     lane->state = CHANNEL_RUNNING;

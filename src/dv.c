@@ -544,7 +544,12 @@ static void lane_start(struct dv_lane_out *o,chan_t const *control){
   int const pt = pt_from_info(chan->output.samprate,chan->output.channels,chan->output.encoding);
   if(pt >= 0)
     chan->output.rtp.type = (uint8_t)pt;
-  chan->output.rtp.timestamp = control->output.rtp.timestamp; // in step with the control channel's
+  // Its RTP clock: a new lane's from the control channel's; a lane kept
+  // through a restart keeps its own (its sequence numbers go on), only ever
+  // moved forward to the control channel's, never back
+  if(chan->p25.lane_new || (int32_t)(control->output.rtp.timestamp - chan->output.rtp.timestamp) > 0)
+    chan->output.rtp.timestamp = control->output.rtp.timestamp;
+  chan->p25.lane_new = false;
   chan->dv.source[0] = '\0';
   chan->dv.call_dest[0] = chan->dv.call_src[0] = chan->dv.call_mode[0] = chan->dv.call_alias[0] = chan->dv.call_message[0] = '\0';
   chan->dv.call_has_position = false;
