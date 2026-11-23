@@ -471,7 +471,67 @@ int main(void){
   check(lane_tg(1) == 302 && lane_tg(0) == 301,"a call preempted is followed again when a lane frees");
   dv_follow_destroy(F);
 
+  // Codex: a reply mustn't take a channel and slot another lane is still on
+  Chan.p25.ntalkgroups = 0;
+  F = dv_follow_create(&Chan,2,lanes,NULL,NULL);
+  grant(DV_EVENT_GRANT,851287500,501,5001,1);
+  run(1,false);
+  grant(DV_EVENT_GRANT,851912500,502,5002,2);
+  run(1,false);
+  run(10,true);
+  {
+    int const a = lane_of(501), b = lane_of(502);
+    grant(DV_EVENT_GRANT,851912500,501,5003,3); // 501's reply, on the bearer 502's lane is on
+    run(1,true);
+    check(a >= 0 && b >= 0 && F->lanes[a].cur.freq == 851287500 && F->lanes[b].cur.freq == 851912500 && lane_of(502) == b,
+	  "a reply on a bearer another lane is on: not taken while that lane is there");
+  }
+  dv_follow_destroy(F);
+
+  // Codex: a better call waiting doesn't hold up a reply when a free lane can take it
+  Chan.p25.ntalkgroups = 3;
+  Chan.p25.talkgroups[0] = 601;
+  Chan.p25.talkgroups[1] = 602;
+  Chan.p25.talkgroups[2] = 603;
+  F = dv_follow_create(&Chan,2,lanes,NULL,NULL);
+  grant(DV_EVENT_GRANT,851287500,602,6002,1);
+  run(1,false);
+  run(10,true);
+  {
+    int const a = lane_of(602);
+    grant(DV_EVENT_GRANT,851912500,602,6003,2); // 602's reply
+    grant(DV_EVENT_GRANT,852362500,601,6001,3); // a better call
+    run(1,true);
+    check(a >= 0 && lane_of(602) == a && F->lanes[a].cur.freq == 851912500 && lane_of(601) >= 0,
+	  "a reply and a better call in one block: the reply followed, the free lane takes the better call");
+  }
+  dv_follow_destroy(F);
+
+  // Codex: one lane, a re-grant pending at the end of the transmission: it
+  // lingers, and isn't preempted in that block (as before lanes)
+  Chan.p25.talkgroups[0] = 300;
+  Chan.p25.talkgroups[1] = 303;
+  Chan.p25.ntalkgroups = 2;
+  F = dv_follow_create(&Chan,1,NULL,NULL,NULL);
+  grant(DV_EVENT_GRANT,851287500,303,3003,1);
+  run(1,false);
+  run(10,true);
+  grant(DV_EVENT_UPDATE,851287500,303,3003,2); // its bearer granted again: pending
+  run(2,true);
+  grant(DV_EVENT_GRANT,851912500,300,3000,3);  // a better call, as the transmission ends
+  Voice_stats.call_serial++;
+  run(1,false);
+  check(lane_tg(0) == 303 && F->lanes[0].lingering,"one lane: the end with a re-grant pending lingers, not preempted in that block");
+  run(1,false);
+  check(lane_tg(0) == 300,"and the better call takes it in the next");
+  dv_follow_destroy(F);
+
   // One lane, the list: the old rule, a better call preempts
+  Chan.p25.ntalkgroups = 4;
+  Chan.p25.talkgroups[0] = 300;
+  Chan.p25.talkgroups[1] = 301;
+  Chan.p25.talkgroups[2] = 302;
+  Chan.p25.talkgroups[3] = 303;
   F = dv_follow_create(&Chan,1,NULL,NULL,NULL);
   grant(DV_EVENT_GRANT,851287500,303,3003,1);
   run(1,false);

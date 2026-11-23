@@ -75,6 +75,7 @@ struct follow_lane {
   uint64_t voice_serial;     // the voice decoder's call_serial when we joined
   uint32_t last_group;       // talkgroup of the call last followed: the conversation
   uint64_t calls;            // calls followed
+  bool settled;              // this block it lingered or moved to a reply: not preempted in it
 };
 
 struct dv_follow {
@@ -399,6 +400,8 @@ static struct follow_grant const *newer_transmission(struct dv_follow const *f, 
       continue;
     if(g->freq == l->cur.freq && g->slot == l->cur.slot)
       continue;
+    if(taken(f,l,g))
+      continue; // another lane is still on that channel and slot: later
     bool const newer = (g->transmission != 0 && l->cur.transmission != 0)
       ? g->transmission > l->cur.transmission
       : g->transmission != 0 ? g->granted >= l->started  // an explicit grant from our join on
@@ -530,6 +533,8 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     struct follow_lane * const l = &f->lanes[i];
     if(l->voice == NULL)
       return; // a lane is free: nothing waiting it could take
+    if(l->settled)
+      continue; // (as one lane always did: no preemption in the block it lingered or moved)
     int const p = priority(f,&l->cur);
     if(p >= worst_pri){
       worst_pri = p;
@@ -565,6 +570,12 @@ static void lane_block(struct dv_follow *f, struct follow_lane *l, dv_stats cons
   }
   struct follow_grant const *b = best_grant(f,l);
   struct follow_grant const *r = NULL;
+  // A better call waiting holds up the reply (below) only if it would need
+  // this lane: with another lane free, that takes it
+  bool lane_free = false;
+  for(int i = 0; i < f->nlanes; i++)
+    lane_free = lane_free || (&f->lanes[i] != l && f->lanes[i].voice == NULL);
+  l->settled = false;
   if(st.m17_encrypted)
     release(f,l,"encrypted"); // (Phase 1 waits for a clear ALGID before it plays anything)
   else if(st.call_serial != l->voice_serial){
@@ -582,19 +593,21 @@ static void lane_block(struct dv_follow *f, struct follow_lane *l, dv_stats cons
       l->voice_serial = st.call_serial;
       l->started = l->last_voice = f->now;
       l->lingering = true;
+      l->settled = true;
     } else
       release(f,l,"transmission ended"); // MAC_END_PTT, TDU: don't wait out the hang time
   }
   else if(l->lingering && l->last_voice == l->started && f->now - l->started > FOLLOW_LINGER)
     release(f,l,"transmission ended");
   else if((r = newer_transmission(f,l)) != NULL
-	  && !(b != NULL && priority(f,b) < priority(f,r) && b->group != l->cur.group)){
+	  && !(!lane_free && b != NULL && priority(f,b) < priority(f,r) && b->group != l->cur.group)){
     // Transmission trunking: the reply has its own channel. Go straight
     // to it (unless a higher priority call is waiting, which the
     // preemption then takes)
     struct follow_grant const reply = *r;
     release(f,l,"next transmission");
     join(f,l,&reply,cc);
+    l->settled = true;
   }
   else if(l->last_voice == l->started && f->now - l->started > FOLLOW_LISTEN)
     release(f,l,"no voice");

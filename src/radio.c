@@ -1633,6 +1633,40 @@ bool handle_commands(chan_t *chan){
   pthread_mutex_unlock(&chan->status.lock);
   return restart_needed;
 }
+// A follower's voice lane (voice-channels): its polls are answered, but no
+// command is carried out (it isn't a channel of its own: its control
+// channel sets it up, and runs it). A command is answered with its status,
+// unchanged. Called on the control channel's thread
+void handle_lane_polls(chan_t *chan){
+  response(chan);
+  pthread_mutex_lock(&chan->status.lock);
+  for(int i=0;i < CQLEN; i++){
+    if(chan->commands[i].buffer == NULL)
+      continue;
+    if(!chan->response_needed){
+      if(is_poll(chan->commands[i].buffer, chan->commands[i].length))
+	decode_radio_commands(chan, chan->commands[i].buffer, chan->commands[i].length); // the tag, echoed
+      chan->response_needed = true;
+    }
+    FREE(chan->commands[i].buffer);
+    chan->commands[i].length = 0;
+  }
+  pthread_mutex_unlock(&chan->status.lock);
+}
+
+// The control channel no longer follows with lanes (it terminates, or a
+// command changed its mode): its lane channels go
+void close_follow_lanes(chan_t *chan){
+  for(int i = 0; i < chan->p25.nlanes; i++){
+    if(Verbose)
+      fprintf(stderr,"%s: closing voice lane %s\n",chan->name,chan->p25.lanes[i]->name);
+    close_chan(chan->p25.lanes[i]);
+    chan->p25.lanes[i] = NULL;
+    Total_channels--;
+  }
+  chan->p25.nlanes = 0;
+}
+
 // Round up to a power of two; leave existing powers unchanged.
 // Return 0 for input 0 or overflow.
 static uint32_t round2(uint32_t v){

@@ -791,9 +791,9 @@ int demod_dv(void *arg){
       for(int i = 0; i < nlanes - 1; i++){
 	call_ids(&st,mode,events.follow,i + 1,extra[i].chan,&seen);
 	track_call(extra[i].chan,&extra[i].decoding,&seen,&extra[i].queue,count);
-	// Its polls and commands (no thread of its own to answer them); a
-	// command to restart it can't: it is this channel's lane
-	(void)handle_commands(extra[i].chan);
+	// Its polls (no thread of its own to answer them); commands to it
+	// aren't carried out: its settings are this channel's
+	handle_lane_polls(extra[i].chan);
       }
     }
     if(analog){
@@ -1030,6 +1030,12 @@ int demod_dv(void *arg){
     publish_call(extra[i].chan,&none); // its call is over
   }
   free(extra);
+  // Coming back as a follower with lanes (a restart in the same mode): they
+  // stay. Otherwise they go: nothing would answer for them
+  bool const again = chan->demod_type != INVALID_DEMOD && chan->p25.follow && chan->p25.voice_channels > 1
+    && (chan->demod_type == NXDN_DEMOD || (chan->demod_type == P25_DEMOD && chan->p25.modulation != P25_PHASE2));
+  if(!again && chan->p25.nlanes > 0)
+    close_follow_lanes(chan);
   if(gate != &gate_zero)
     free(gate);
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;

@@ -458,6 +458,8 @@ int send_radio_status(struct sockaddr const *,struct frontend const *, chan_t *)
 int reset_radio_status(chan_t *chan);
 bool decode_radio_commands(chan_t *chan,uint8_t const *buffer,int length);
 bool is_poll(uint8_t const * const buffer,int const length);
+void handle_lane_polls(chan_t *chan);
+void close_follow_lanes(chan_t *chan);
 bool handle_commands(chan_t *chan);
 int decode_radio_status(struct frontend *frontend,chan_t *channel,uint8_t const *buffer,int length);
 int flush_output(chan_t *chan,bool marker,bool complete);
