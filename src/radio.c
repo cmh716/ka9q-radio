@@ -857,9 +857,15 @@ static void *process_section(void *arg){
       } else if(chan->state == CHANNEL_STARTING)
 	break; // Got one
       pthread_mutex_unlock(&chan->status.lock); // Already exists, let it go and try another
+      chan = NULL;
+    }
+    if(chan == NULL){
+      // Every SSRC tried is another channel's (or being made): this
+      // frequency gets none
+      fprintf(stderr,"[%s] no free SSRC from %u for %'.3lf Hz\n",sname,ssrc - max_collisions,freq_table[i].f);
+      continue;
     }
     // Set channel-specific fields
-    assert(chan != NULL);
     snprintf(chan->name, sizeof chan->name, "%s %u", demod_name_from_type(chan->demod_type), chan->output.rtp.ssrc);
     chan->fm.tone_freq = freq_table[i].tone;
     chan->fm.dcs_code = freq_table[i].dcs_code;
@@ -914,11 +920,17 @@ static void keep_lane_template(chan_t *chan,chan_t const *template){
 }
 
 // The demodulator starting: its lane channels, named as it is with -2, -3...
-// added, their SSRCs the next free after its own. They have no threads: its
+// added, their SSRCs the next free after its own (or those it had: a
+// restart as the same follower keeps them). They have no threads: its
 // thread sends their audio and status and answers their polls, and closes
-// them when it ends (close_follow_lanes). Returns how many were made
+// them when it ends and won't follow with lanes again (close_follow_lanes).
+// Returns how many there are
 int open_follow_lanes(chan_t *chan){
-  close_follow_lanes(chan); // (none should be open)
+  // A restart as the same follower keeps its lanes, and their SSRCs: closed
+  // and opened again, a poll could take one in between
+  if(chan->p25.nlanes > 0 && chan->p25.nlanes == chan->p25.voice_channels - 1)
+    return chan->p25.nlanes;
+  close_follow_lanes(chan);
   chan_t const * const template = chan->p25.lane_template;
   if(template == NULL || chan->p25.voice_channels < 2)
     return 0;
