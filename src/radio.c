@@ -849,6 +849,8 @@ static void *process_section(void *arg){
     int const max_collisions = 100;
     for(int i=0; i < max_collisions; i++,ssrc++){
       chan = lookup_or_create_chan(ssrc,&chan_template); // this locks the entry if successful
+      if(chan == NULL && errno == EBUSY)
+	continue; // being made by another thread: the next
       if(chan == NULL){
 	fprintf(stderr,"Out of channels! Can't create ssrc %u\n",ssrc);
 	goto giveup;
@@ -926,6 +928,8 @@ int open_follow_lanes(chan_t *chan){
     chan_t *lane = NULL;
     for(int tries = 0; tries < 100; tries++,ssrc++){
       lane = lookup_or_create_chan(ssrc,template); // locks it
+      if(lane == NULL && errno == EBUSY)
+	continue; // being made by another thread: the next
       if(lane == NULL)
 	break;
       if(lane->state == CHANNEL_STARTING)
@@ -958,8 +962,10 @@ int open_follow_lanes(chan_t *chan){
 // Atomically find chan by ssrc, or create and initialize if it doesn't already exist
 // ! LOCKS the channel status !
 chan_t *lookup_or_create_chan(uint32_t const ssrc,chan_t const * const template){
-  if(ssrc == 0xffffffffu)
+  if(ssrc == 0xffffffffu){
+    errno = EINVAL;
     return NULL; // reserved
+  }
 
   pthread_mutex_lock(&Channel_list_mutex); // protect state
   int first_unused = -1;
@@ -976,11 +982,19 @@ chan_t *lookup_or_create_chan(uint32_t const ssrc,chan_t const * const template)
       pthread_mutex_unlock(&Channel_list_mutex);
       return chan; // Return locked existing channel
     }
+    if(chan->output.rtp.ssrc == ssrc){
+      // Being made (or closed) by another thread, which holds its lock and
+      // will want this list's: not to be waited for here, nor made twice
+      pthread_mutex_unlock(&Channel_list_mutex);
+      errno = EBUSY;
+      return NULL;
+    }
   }
   // Not found
   if(first_unused == -1){
     // table full!
     pthread_mutex_unlock(&Channel_list_mutex);
+    errno = ENOSPC;
     return NULL;
   }
   // Use first unused entry
@@ -1164,6 +1178,7 @@ static int close_chan(chan_t * const chan){
     chan->commands[i].length = 0;
   }
   FREE(chan->spectrum.bin_data);
+  FREE(chan->p25.lane_template); // (lanes' own is NULL)
   delete_filter_output(&chan->filter.out);
   if(chan->opus.encoder != NULL){
     opus_encoder_destroy(chan->opus.encoder);

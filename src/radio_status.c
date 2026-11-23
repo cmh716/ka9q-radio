@@ -68,6 +68,8 @@ void *radio_status(void *arg){
       {
 	// find or create specific chan instance
 	chan_t * const chan = lookup_or_create_chan(ssrc,&Template);
+	if(chan == NULL && errno == EBUSY)
+	  break; // being made or closed this instant: the command is dropped (a poll is repeated)
 	if(chan == NULL){
 	  // Only happens when we can't create
 	  fprintf(stderr,"Dynamic create of ssrc %'u failed; is 'data =' set in [global]?\n",ssrc);
