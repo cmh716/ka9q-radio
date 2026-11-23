@@ -35,8 +35,12 @@ for DMR, D-STAR and YSF.
    departments (contrib/page-alert-ntfy.sh: ntfy with the recording).
    Working live (Lancaster FD: Alden and Bowmansville pages found and
    recorded, WAV or Ogg Opus with -F ogg).
-4. [ ] **P25 multi-call following** (`p25-voice-channels = N`): one
-   control-channel decode, N tuners, one output stream each.
+4. [ ] **P25 multi-call following**: `voice-channels = N` (1-8) on a
+   following P25 or NXDN channel: one control channel decode, N lanes
+   (each its own downconverter, voice decoder and radiod channel, "-2",
+   "-3"...; no two on one talkgroup; preemption by p25-talkgroups order).
+   Unit-tested, and run on the control-p25 recording (three lanes took
+   three calls, both slots of a Phase 2 channel). Live test waiting.
 5. [ ] **monitor: receiver summary**: the front end's level, A/D overloads,
    gain and the busiest channels, with recent peaks and counter deltas held
    for a while, so a brief event stays visible after it passes.
