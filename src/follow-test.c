@@ -526,6 +526,32 @@ int main(void){
   check(lane_tg(0) == 300,"and the better call takes it in the next");
   dv_follow_destroy(F);
 
+  // Codex: two lanes, A > B > C. The worst lane (C) lingers at a re-grant
+  // as A arrives: nothing preempted in that block (not B in C's stead);
+  // then A takes C's lane
+  Chan.p25.ntalkgroups = 3;
+  Chan.p25.talkgroups[0] = 701;
+  Chan.p25.talkgroups[1] = 702;
+  Chan.p25.talkgroups[2] = 703;
+  F = dv_follow_create(&Chan,2,lanes,NULL,NULL);
+  grant(DV_EVENT_GRANT,851287500,702,7002,1);
+  grant(DV_EVENT_GRANT,851912500,703,7003,2);
+  run(1,false);
+  run(10,true);
+  {
+    int const lb = lane_of(702), lc = lane_of(703);
+    grant(DV_EVENT_UPDATE,851912500,703,7003,3); // C's bearer granted again: pending
+    run(2,true);
+    grant(DV_EVENT_GRANT,852362500,701,7001,4);  // A, as C's transmission ends
+    F->lanes[lc].voice->st.call_serial++;
+    run(1,false);
+    check(lb >= 0 && lc >= 0 && lane_of(702) == lb && lane_of(703) == lc,
+	  "the worst lane lingering as a better call comes: nothing preempted that block, B kept");
+    run(1,false);
+    check(lane_of(701) == lc && lane_of(702) == lb,"then the better call takes the worst lane, not B's");
+  }
+  dv_follow_destroy(F);
+
   // One lane, the list: the old rule, a better call preempts
   Chan.p25.ntalkgroups = 4;
   Chan.p25.talkgroups[0] = 300;

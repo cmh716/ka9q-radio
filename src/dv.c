@@ -666,9 +666,12 @@ int demod_dv(void *arg){
   // A P25 Phase 1 or NXDN Type-C control channel can follow its voice grants,
   // an LTR home repeater the calls of the groups homed on it
   struct dv_events events = { .chan = chan, .system = is_nxdn ? "NXDN" : is_ltr ? "LTR" : "P25" };
-  // voice-channels: lanes beyond the first play on channels of their own
-  int const nextra = following ? chan->p25.nlanes : 0;
+  // voice-channels: lanes beyond the first play on channels of their own,
+  // open while this runs (closed at its end, whatever the reason)
+  int const nextra = following && chan->p25.voice_channels > 1 ? open_follow_lanes(chan) : 0;
   struct dv_lane_out *extra = nextra > 0 ? calloc((size_t)nextra,sizeof *extra) : NULL;
+  if(nextra > 0 && extra == NULL)
+    close_follow_lanes(chan); // nothing to serve them: one call at a time
   int const nlanes = 1 + (extra != NULL ? nextra : 0);
   if(following){
     chan_t *lane_chans[DV_FOLLOW_LANES] = {0};
@@ -1030,12 +1033,7 @@ int demod_dv(void *arg){
     publish_call(extra[i].chan,&none); // its call is over
   }
   free(extra);
-  // Coming back as a follower with lanes (a restart in the same mode): they
-  // stay. Otherwise they go: nothing would answer for them
-  bool const again = chan->demod_type != INVALID_DEMOD && chan->p25.follow && chan->p25.voice_channels > 1
-    && (chan->demod_type == NXDN_DEMOD || (chan->demod_type == P25_DEMOD && chan->p25.modulation != P25_PHASE2));
-  if(!again && chan->p25.nlanes > 0)
-    close_follow_lanes(chan);
+  close_follow_lanes(chan); // a restart opens them again
   if(gate != &gate_zero)
     free(gate);
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;

@@ -649,7 +649,7 @@ static int setup_hardware(char const *sname){
 }
 
 // called by loadconfig() to process one receiver section of a config file
-static int follow_lanes(chan_t *chan,chan_t const *template);
+static void keep_lane_template(chan_t *chan,chan_t const *template);
 static void *process_section(void *arg){
   char const *sname = (char *)arg;
   if(sname == NULL)
@@ -867,7 +867,7 @@ static void *process_section(void *arg){
     pthread_mutex_lock(&Channel_list_mutex);
     chan->state = CHANNEL_RUNNING;
     pthread_mutex_unlock(&Channel_list_mutex);
-    section_chans += follow_lanes(chan,&chan_template); // before its thread looks for them
+    keep_lane_template(chan,&chan_template); // its thread makes its voice lanes from it
     start_demod(chan);
     Total_channels++;
     section_chans++;
@@ -895,14 +895,30 @@ static void *process_section(void *arg){
   return NULL;
 }
 // voice-channels: a following control channel (P25, NXDN) that plays more
-// than one call at once gets a channel for each call after the first, its
-// name with -2, -3... added, its SSRC the next free after its own. They have
-// no threads: the control channel's sends their audio and status and
-// answers their polls. Returns how many were made
-static int follow_lanes(chan_t *chan,chan_t const *template){
+// than one call at once keeps its section's settings, to make a channel
+// for each call after the first from while its demodulator runs
+static void keep_lane_template(chan_t *chan,chan_t const *template){
+  chan->p25.lane_template = NULL;
   chan->p25.nlanes = 0;
   if(!chan->p25.follow || chan->p25.voice_channels < 2
      || (chan->demod_type != P25_DEMOD && chan->demod_type != NXDN_DEMOD))
+    return;
+  chan_t * const t = malloc(sizeof *t);
+  if(t == NULL)
+    return;
+  memcpy(t,template,sizeof *t);
+  t->p25.lane_template = NULL;
+  chan->p25.lane_template = t;
+}
+
+// The demodulator starting: its lane channels, named as it is with -2, -3...
+// added, their SSRCs the next free after its own. They have no threads: its
+// thread sends their audio and status and answers their polls, and closes
+// them when it ends (close_follow_lanes). Returns how many were made
+int open_follow_lanes(chan_t *chan){
+  close_follow_lanes(chan); // (none should be open)
+  chan_t const * const template = chan->p25.lane_template;
+  if(template == NULL || chan->p25.voice_channels < 2)
     return 0;
   int const want = chan->p25.voice_channels - 1;
   uint32_t ssrc = chan->output.rtp.ssrc + 1;
@@ -925,6 +941,7 @@ static int follow_lanes(chan_t *chan,chan_t const *template){
     lane->p25.follow = false;
     lane->p25.voice_channels = 1;
     lane->p25.nlanes = 0;
+    lane->p25.lane_template = NULL;
     lane->tune.freq = chan->tune.freq; // (where its calls are is in its status as the call's)
     snprintf(lane->name,sizeof lane->name,"%.90s-%d",chan->name,k + 2);
     pthread_mutex_unlock(&lane->status.lock);
@@ -932,7 +949,6 @@ static int follow_lanes(chan_t *chan,chan_t const *template){
     lane->state = CHANNEL_RUNNING;
     pthread_mutex_unlock(&Channel_list_mutex);
     chan->p25.lanes[chan->p25.nlanes++] = lane;
-    Total_channels++;
     if(Verbose)
       fprintf(stderr,"%s: voice lane %d on ssrc %u\n",chan->name,k + 2,lane->output.rtp.ssrc);
   }
@@ -1662,7 +1678,6 @@ void close_follow_lanes(chan_t *chan){
       fprintf(stderr,"%s: closing voice lane %s\n",chan->name,chan->p25.lanes[i]->name);
     close_chan(chan->p25.lanes[i]);
     chan->p25.lanes[i] = NULL;
-    Total_channels--;
   }
   chan->p25.nlanes = 0;
 }

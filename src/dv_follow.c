@@ -533,15 +533,16 @@ void dv_follow_block(struct dv_follow *f, dv_stats const *cc, int count){
     struct follow_lane * const l = &f->lanes[i];
     if(l->voice == NULL)
       return; // a lane is free: nothing waiting it could take
-    if(l->settled)
-      continue; // (as one lane always did: no preemption in the block it lingered or moved)
     int const p = priority(f,&l->cur);
     if(p >= worst_pri){
       worst_pri = p;
       worst = l;
     }
   }
-  if(worst == NULL)
+  // The worst lane lingering at a re-grant or just moved to its reply isn't
+  // preempted in this block (as one lane never was), and no better lane is
+  // taken instead: the next block decides
+  if(worst == NULL || worst->settled)
     return;
   struct follow_grant const *b = best_grant(f,worst);
   if(b != NULL && priority(f,b) < worst_pri && !(b->freq == worst->cur.freq && b->slot == worst->cur.slot)){

@@ -185,7 +185,8 @@ struct channel {
     bool follow;                  // control channel: play the calls it grants
     int voice_channels;           // voice-channels: follow this many calls at once (1-8)
     int nlanes;                   // the channels the calls after the first play on: voice_channels - 1
-    struct channel *lanes[7];     // (made with the control channel; they have no threads of their own)
+    struct channel *lanes[7];     // (open while its demodulator runs; they have no threads of their own)
+    struct channel *lane_template; // the section's settings, to make them from
     int ntalkgroups;              // follow only these, in priority order (0: all)
     uint32_t talkgroups[32];
     int ncontrol;                 // p25-control-channels: where else to look for the control channel
@@ -459,6 +460,7 @@ int reset_radio_status(chan_t *chan);
 bool decode_radio_commands(chan_t *chan,uint8_t const *buffer,int length);
 bool is_poll(uint8_t const * const buffer,int const length);
 void handle_lane_polls(chan_t *chan);
+int open_follow_lanes(chan_t *chan);
 void close_follow_lanes(chan_t *chan);
 bool handle_commands(chan_t *chan);
 int decode_radio_status(struct frontend *frontend,chan_t *channel,uint8_t const *buffer,int length);
