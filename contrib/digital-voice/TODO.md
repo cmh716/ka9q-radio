@@ -14,15 +14,23 @@ for DMR, D-STAR and YSF.
    M9PZL's FT-991A (52.06683, 1.14217, Suffolk) and HB9ETH (47.33383,
    8.11167, Aargau). Many radios send the no-position form (22 61), most
    with radio type 0x2b (not in YSFGateway's table; perhaps an FT-70D).
-2. [ ] **DMR GPS**, if it can be tested: in all the logs so far no DMR call
-   carried embedded GPS (no FLCO 8 in `lc=`); DMR radios send position as
-   data (LRRP), which Brandmeister handles itself.
-3. [ ] **Two-tone sequential paging (fire/EMS)**: `tones` (src/tones.c,
+2. [ ] **DMR GPS: parked** until there is a DMR radio to send a position
+   from. Nights on a Brandmeister talkgroup through the OpenSpot showed no
+   embedded GPS (no FLCO 8 in `lc=`) and no packet data: the data bursts
+   counted were noise (single bursts of random types between calls, their
+   headers failing BPTC and CRC), now refused by color code (`refused=`).
+   Radios send positions to Brandmeister's APRS gateway privately, it
+   seems, so a hotspot doesn't repeat others'. Ready for it: packet data is
+   decoded for diagnosis (dmr_data.h; `pdu=` in the -v log: headers,
+   blocks at each rate, CRC-32, IP/UDP, the bytes), the tables checked
+   against ETSI TS 102 361-1. Next: an LRRP (UDP 4001) or Hytera position
+   parser, from a real message.
+3. [x] **Two-tone sequential paging (fire/EMS)**: `tones` (src/tones.c,
    tone-detect.c): watches radiod's streams, logs each page by department,
    records it with the dispatch after it, and runs a command for chosen
    departments (contrib/page-alert-ntfy.sh: ntfy with the recording).
-   Tested on synthesised pages end to end; live test on
-   fire-dispatch.local (Lancaster FD, DCS 243) waiting.
+   Working live (Lancaster FD: Alden and Bowmansville pages found and
+   recorded, WAV or Ogg Opus with -F ogg).
 4. [ ] **P25 multi-call following** (`p25-voice-channels = N`): one
    control-channel decode, N tuners, one output stream each.
 5. [ ] **monitor: receiver summary**: the front end's level, A/D overloads,
