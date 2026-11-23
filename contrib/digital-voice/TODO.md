@@ -16,9 +16,13 @@ for DMR, D-STAR and YSF.
    with radio type 0x2b (not in YSFGateway's table; perhaps an FT-70D).
 2. [ ] **DMR GPS: parked** until there is a DMR radio to send a position
    from. Nights on a Brandmeister talkgroup through the OpenSpot showed no
-   embedded GPS (no FLCO 8 in `lc=`) and no packet data: the data bursts
-   counted were noise (single bursts of random types between calls, their
-   headers failing BPTC and CRC), now refused by color code (`refused=`).
+   embedded GPS (no FLCO 8 in `lc=`) and no validated packet data: the
+   data bursts counted looked like noise (single bursts of random types
+   between calls, the headers failing BPTC and CRC). Bursts with another
+   color code than the established one are now ignored, counted as
+   color-code refusals (`refused=`; mostly noise, though a real burst from
+   another system would count there too, and noise matching the color
+   code still reaches `data=`).
    Radios send positions to Brandmeister's APRS gateway privately, it
    seems, so a hotspot doesn't repeat others'. Ready for it: packet data is
    decoded for diagnosis (dmr_data.h; `pdu=` in the -v log: headers,
@@ -36,8 +40,8 @@ for DMR, D-STAR and YSF.
 5. [ ] **monitor: receiver summary**: the front end's level, A/D overloads,
    gain and the busiest channels, with recent peaks and counter deltas held
    for a while, so a brief event stays visible after it passes.
-6. [ ] **monitor: a wider Call field**, so less is truncated (talkgroup,
-   talker or alias, locator, D-STAR text / YSF route).
+6. [x] **monitor: a wider Call field** (9a6be012: it grows with the
+   terminal, 22-64 columns; calls stay, fading, after they end).
 7. [ ] **A spectrum display for the VHF/UHF tunings**, the way UberSDR
    shows HF. ka9q-web (`~/ka9q-web`, a web spectrum and waterfall) is a
    porting candidate, but doesn't build against this tree (it expects
