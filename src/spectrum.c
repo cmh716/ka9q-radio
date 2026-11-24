@@ -26,6 +26,7 @@ static void setup_wideband(chan_t *);
 static void setup_narrowband(chan_t *);
 static void narrowband_poll(chan_t *);
 static void wideband_poll(chan_t *);
+static void byte_scale(chan_t *,float const *,int);
 static long gcd(long a,long b);
 static long lcm(long a,long b);
 
@@ -278,28 +279,7 @@ static void narrowband_poll(chan_t *chan){
   }
   fftwf_free(fft_in);
   fftwf_free(fft_out);
-  float min_power = INFINITY;
-  float max_power = 0;
-
-  // scaling for byte bin format
-  for(int i=0; i < bin_count; i++){
-    if(bin_data[i] < min_power)
-      min_power = bin_data[i];
-    if(bin_data[i] > max_power)
-      max_power = bin_data[i];
-  }
-  if(max_power > 0 && min_power > 0){
-#if SPECTRUM_CLIP
-    chan->spectrum.base = power2dB(chan->sig.n0 * chan->spectrum.noise_bw);
-#else
-    chan->spectrum.base = power2dB(min_power);
-#endif
-#if FIXED_STEP
-    chan->spectrum.step = 0.5; // 0.5 dB fixed
-#else
-    chan->spectrum.step = (1./256.) * (power2dB(max_power) - chan->spectrum.base); // dB range
-#endif
-  }
+  byte_scale(chan,bin_data,bin_count);
 }
 
 static void wideband_poll(chan_t *chan){
@@ -493,30 +473,40 @@ static void wideband_poll(chan_t *chan){
     fftwf_free(fft_in);
     fftwf_free(fft_out);
   }
+  byte_scale(chan,bin_data,bin_count);
+
+}
+
+// The one-byte format's scale (base and step, dB), from the bins with power:
+// bins with none (outside the front end's passband, left at zero) sit at the
+// bottom, byte 0. No bin with power: no scale (NAN), and the reply carries no
+// bins, rather than these under a scale left from an earlier frame
+static void byte_scale(chan_t *chan,float const *bin_data,int bin_count){
   float min_power = INFINITY;
   float max_power = 0;
-
-  // scaling for byte bin format
   for(int i=0; i < bin_count; i++){
-    if(bin_data[i] < min_power)
+    if(bin_data[i] > 0 && bin_data[i] < min_power)
       min_power = bin_data[i];
     if(bin_data[i] > max_power)
       max_power = bin_data[i];
   }
-  if(max_power > 0 && min_power > 0){
+  if(!(max_power > 0)){
+    chan->spectrum.base = NAN;
+    chan->spectrum.step = NAN;
+    return;
+  }
 #if SPECTRUM_CLIP
-    chan->spectrum.base = power2dB(chan->sig.n0 * chan->spectrum.noise_bw);
-
+  chan->spectrum.base = power2dB(chan->sig.n0 * chan->spectrum.noise_bw);
 #else
-    chan->spectrum.base = power2dB(min_power);
+  chan->spectrum.base = power2dB(min_power);
 #endif
 #if FIXED_STEP
-    chan->spectrum.step = 0.5; // 0.25 dB fixed
+  chan->spectrum.step = 0.5; // 0.5 dB fixed
 #else
-    chan->spectrum.step = (power2dB(max_power) - chan->spectrum.base) * 0x1p-8; // dB range
+  chan->spectrum.step = (1./256.) * (power2dB(max_power) - chan->spectrum.base); // dB range
+  if(!(chan->spectrum.step >= 0.01f))
+    chan->spectrum.step = 0.01f; // every bin alike: any step will do, but not 0
 #endif
-  }
-
 }
 
 // Fill a buffer with compact frequency bin data, 1 byte each
