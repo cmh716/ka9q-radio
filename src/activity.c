@@ -4,8 +4,11 @@
 //   activity [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m s] [-v] radiod-status-group
 //
 // A spectrum channel of its own in radiod covers the whole front end
-// (6.25 kHz bins, as many FFTs averaged as radiod holds, ~80 ms: TDMA
-// bursts aren't missed), four times a second. Each bin has a noise floor of
+// (6.25 kHz bins), four times a second, each the average of as many FFTs as
+// radiod holds (~80 ms): sampled, not continuous. A transmission of half a
+// second or more (the shortest logged) is always sampled; shorter ones may
+// fall between; a TDMA burst (DMR, NXDN) is caught, on for about half the
+// window, so reads ~3 dB below its carrier. Each bin has a noise floor of
 // its own (falling fast, rising over half an hour: a strong signal's skirt
 // isn't activity, and a carrier that never stops is logged once, then taken
 // into the floor). Bins 10 dB above it, side by side, make a signal; a
@@ -27,7 +30,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <getopt.h>
-#include <locale.h>
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
@@ -365,6 +367,24 @@ static char const *when(int64_t ns,char *out,size_t size){
   strftime(out,size,"%Y-%m-%d %H:%M:%S",&tm);
   return out;
 }
+// A CSV field's text, quoted, quotes in it doubled
+static void csv_quote(char *out,size_t size,char const *in){
+  size_t k = 0;
+  if(size < 3){
+    if(size > 0)
+      out[0] = '\0';
+    return;
+  }
+  out[k++] = '"';
+  for(; *in != '\0' && k + 3 < size; in++){
+    if(*in == '"')
+      out[k++] = '"';
+    out[k++] = *in;
+  }
+  out[k++] = '"';
+  out[k] = '\0';
+}
+
 static char const *mode_guess(double width){
   // From the width alone, in 6.25 kHz bins: a guess
   if(width <= 6250)
@@ -383,14 +403,23 @@ static void close_tx(struct tx *t){
     return;
   double const chan = Raster * round(t->freq / Raster);
   char const *known = known_at(t->freq);
-  char a[32],b[32];
+  char a[32],b[32],kq[160];
+  csv_quote(kq,sizeof kq,known != NULL ? known : "");
+  // Logged, or not counted at all: the summary is rebuilt from the log at a
+  // restart, so it mustn't hold what the log doesn't
   FILE *fp = fopen(Log_path,"a");
-  if(fp != NULL){
+  bool ok = fp != NULL;
+  if(ok){
     if(ftell(fp) == 0)
       fprintf(fp,"start,end,frequency_mhz,channel_mhz,width_khz,seconds,db_over_floor,dbfs,known,mode_guess\n");
-    fprintf(fp,"%s,%s,%.4f,%.5f,%.2f,%.1f,%.1f,%.1f,\"%s\",\"%s\"\n",when(t->start,a,sizeof a),when(t->last,b,sizeof b),
-	    t->freq * 1e-6,chan * 1e-6,t->width * 1e-3,seconds,t->peak_over,t->peak_dbfs,known != NULL ? known : "",mode_guess(t->width));
-    fclose(fp);
+    fprintf(fp,"%s,%s,%.4f,%.5f,%.2f,%.1f,%.1f,%.1f,%s,\"%s\"\n",when(t->start,a,sizeof a),when(t->last,b,sizeof b),
+	    t->freq * 1e-6,chan * 1e-6,t->width * 1e-3,seconds,t->peak_over,t->peak_dbfs,kq,mode_guess(t->width));
+    ok = !ferror(fp);
+    ok = fclose(fp) == 0 && ok;
+  }
+  if(!ok){
+    fprintf(stderr,"%s: can't write the log: %s (a %.4f MHz transmission not recorded)\n",Log_path,strerror(errno),t->freq * 1e-6);
+    return;
   }
   if(Verbose)
     printf("%s  %.4f MHz  %4.1f s  +%.0f dB  %s\n",when(t->start,a,sizeof a),t->freq * 1e-6,seconds,t->peak_over,
@@ -406,18 +435,26 @@ static void write_summary(void){
   char tmp[4096];
   snprintf(tmp,sizeof tmp,"%s.tmp",Summary_path);
   FILE *fp = fopen(tmp,"w");
-  if(fp == NULL)
+  if(fp == NULL){
+    fprintf(stderr,"%s: can't write the summary: %s\n",Summary_path,strerror(errno));
     return;
+  }
   qsort(Stats,(size_t)Nstats,sizeof Stats[0],by_chan);
   fprintf(fp,"channel_mhz,transmissions,seconds,first,last,peak_db_over_floor,known\n");
   for(int i = 0; i < Nstats; i++){
     struct chanstat const *s = &Stats[i];
-    char a[32],b[32];
-    fprintf(fp,"%.5f,%d,%.0f,%s,%s,%.0f,\"%s\"\n",s->chan * 1e-6,s->count,s->seconds,when(s->first,a,sizeof a),
-	    when(s->last,b,sizeof b),s->peak,s->known);
+    char a[32],b[32],kq[160];
+    csv_quote(kq,sizeof kq,s->known);
+    fprintf(fp,"%.5f,%d,%.0f,%s,%s,%.0f,%s\n",s->chan * 1e-6,s->count,s->seconds,when(s->first,a,sizeof a),
+	    when(s->last,b,sizeof b),s->peak,kq);
   }
-  fclose(fp);
-  rename(tmp,Summary_path);
+  // The old summary is replaced only by a complete new one
+  bool ok = !ferror(fp);
+  ok = fclose(fp) == 0 && ok;
+  if(!ok || rename(tmp,Summary_path) != 0){
+    fprintf(stderr,"%s: can't write the summary: %s\n",Summary_path,strerror(errno));
+    unlink(tmp);
+  }
 }
 // The summary rebuilt from the log, at a restart
 static void reload_log(void){
@@ -440,8 +477,20 @@ static void reload_log(void){
     if(p == NULL || sscanf(p + 1,"%lf,%lf,%lf,%lf,%lf,%lf,%n",&f,&chan,&width,&seconds,&over,&dbfs,&consumed) < 6)
       continue;
     char const *k = p + 1 + consumed;
-    if(*k == '"')
-      sscanf(k + 1,"%127[^\"]",known);
+    if(*k == '"'){
+      // a quoted field, quotes in it doubled
+      size_t j = 0;
+      for(k++; *k != '\0' && j + 1 < sizeof known; k++){
+	if(*k == '"'){
+	  if(k[1] == '"')
+	    k++;
+	  else
+	    break;
+	}
+	known[j++] = *k;
+      }
+      known[j] = '\0';
+    }
     a.tm_isdst = b.tm_isdst = -1;
     tally(chan * 1e6,seconds,(int64_t)mktime(&a) * BILLION,(int64_t)mktime(&b) * BILLION,(float)over,known);
     n++;
@@ -462,17 +511,32 @@ static int cmp_float(void const *a,void const *b){
   return x < y ? -1 : x > y;
 }
 
+// Transmissions not heard for Hang are over: before a frame's signals are
+// matched (one coming back later is another transmission), and with no
+// usable frame (radiod not answering: an outage ends them too)
+static void expire(int64_t now){
+  for(int k = 0; k < MAX_TX; k++)
+    if(Txs[k].open && (double)(now - Txs[k].last) / BILLION > Hang)
+      close_tx(&Txs[k]);
+}
+
 static void process(double start,double rbw,int n,float base,float step,uint8_t const *bins,int64_t now){
   static float db[MAX_BINS],sorted[MAX_BINS];
-  int valid = 0;
+  expire(now);
+  // Byte 0 is the bottom of the scale: a quiet bin (or one with no power at
+  // all, outside the front end's passband; this asks only within it, so
+  // those are at the very edge at most): a valid, quiet reading either way
   for(int i = 0; i < n; i++){
-    db[i] = bins[i] == 0 ? NAN : base + bins[i] * step; // 0: no power (outside the passband), or at the bottom
-    if(isfinite(db[i]))
-      sorted[valid++] = db[i];
+    db[i] = base + bins[i] * step;
+    sorted[i] = db[i];
   }
-  if(valid < n / 4)
-    return;
+  int const valid = n;
   if(!Floor_ready || n != Floor_n || fabs(start - Floor_start) > rbw / 2){
+    // A new grid (the front end retuned): transmissions going on are logged
+    // as heard so far, not lost
+    for(int i = 0; i < MAX_TX; i++)
+      if(Txs[i].open)
+	close_tx(&Txs[i]);
     // A floor to start from: the median, everywhere (signals then stand out from it)
     qsort(sorted,(size_t)valid,sizeof sorted[0],cmp_float);
     float const median = sorted[valid / 2];
@@ -481,8 +545,6 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
     Floor_ready = true;
     Floor_n = n;
     Floor_start = start;
-    for(int i = 0; i < MAX_TX; i++)
-      Txs[i].open = false;
   }
   float const rise = (float)(Poll_s / Rise_tau);
   if(Verbose > 1){
@@ -564,10 +626,6 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
     else
       Floor[k] += rise * (db[k] - Floor[k]);
   }
-  // Transmissions not heard for a while are over
-  for(int k = 0; k < MAX_TX; k++)
-    if(Txs[k].open && (double)(now - Txs[k].last) / BILLION > Hang)
-      close_tx(&Txs[k]);
 }
 
 static volatile sig_atomic_t Stop;
@@ -582,7 +640,6 @@ static void usage(void){
 
 int main(int argc,char *argv[]){
   App_path = argv[0];
-  setlocale(LC_ALL,"");
   int ch;
   char const *configs[32];
   int nconfigs = 0;
@@ -636,6 +693,7 @@ int main(int argc,char *argv[]){
     bool const known = Fe_samprate > 0 && max_if > min_if;
     pthread_mutex_unlock(&Lock);
     if(!known){
+      expire(wall_ns());
       sleep(1);
       continue;
     }
@@ -679,6 +737,8 @@ int main(int argc,char *argv[]){
     int64_t const now = wall_ns();
     if(have && rbw > 0)
       process(freq - rbw * (n / 2),rbw,n,base,step,bins_copy,now); // (radiod's one-byte bins run low to high from -n/2)
+    else
+      expire(now); // no spectrum: time still passes
     if(now - last_summary > 60 * (int64_t)BILLION){
       write_summary();
       last_summary = now;
