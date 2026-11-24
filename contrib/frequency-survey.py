@@ -261,7 +261,8 @@ def listed_tone(row):
             except ValueError:
                 return value
         if kind == 'DCS' and value:
-            return 'D' + value.zfill(3)
+            inverted = (row.get('RX DCS Polarity') or '').strip().lower().startswith('inv')
+            return ('I' if inverted else 'D') + value.zfill(3)
         if kind in ('NONE', 'CSQ', 'CARRIER'):
             return 'none'
         return f'{kind} {value}'.strip()
@@ -271,9 +272,10 @@ def listed_tone(row):
     m = re.fullmatch(r'([\d.]+)\s*PL', text, re.I)
     if m:
         return f'{float(m.group(1)):.1f} PL'
-    m = re.fullmatch(r'D?(\d{3})\s*(N|DPL|DCS)?', text, re.I)
+    m = re.fullmatch(r'([DI])?(\d{3})\s*(N|I|DPL|DCS)?', text, re.I)
     if m:
-        return 'D' + m.group(1)
+        inverted = (m.group(1) or '').upper() == 'I' or (m.group(3) or '').upper() == 'I'
+        return ('I' if inverted else 'D') + m.group(2)
     if text.upper() == 'CSQ':
         return 'none'
     return text
@@ -307,20 +309,30 @@ def tone_check(row, results):
     commonest, heard = found
     row['Heard'] = heard
     listed = listed_tone(row)
-    if commonest and not re.fullmatch(r'[\d.]+ PL|[DI]\d{3}|none', commonest):
+    kinds = {m.group(1) for m in re.finditer(r'(?:^|; )(.+?) x\d+(?=; |$)', heard)}
+    if listed and commonest == listed:
+        row['Tone check'] = 'confirmed'
+    elif listed and listed != 'none' and listed in kinds:
+        # A shared frequency: the listed tone heard, another oftener
+        row['Tone check'] = f'heard, less often than {commonest}'
+    elif commonest and not re.fullmatch(r'[\d.]+ PL|[DI]\d{3}|none', commonest):
         row['Tone check'] = f'digital: {commonest}'
     elif commonest == 'none':
         row['Tone check'] = 'no tone heard' + (f' (listed {listed})' if listed and listed != 'none' else '')
-    elif listed and commonest == listed:
-        row['Tone check'] = 'confirmed'
     else:
         row['Tone check'] = f'differs: heard {commonest}' + (f' (listed {listed})' if listed else ' (none listed)')
+
+
+SURVEY_MAX = 1000  # tone-survey's streams (MAX_SESSIONS 1024)
 
 
 def survey_config(rows, path, group):
     """radiod sections for the candidates with RF activity: no tone squelch,
     analog and every digital mode (mixed), for tone-survey"""
     freqs = sorted({round(frequency_of(r)) for r in rows if r.get('Survey') == ACTIVE and frequency_of(r)})
+    if len(freqs) > SURVEY_MAX:
+        sys.exit(f'{len(freqs)} active frequencies: more than tone-survey follows at once ({SURVEY_MAX}). '
+                 f'Survey them in parts: narrow the candidates (or --range) and run each part in turn')
     with open(path, 'w') as f:
         f.write(f'# Written by frequency-survey.py for tone-survey: {len(freqs)} frequencies with RF activity,\n'
                 f'# without tone squelch. Put it in radiod\'s configuration directory while\n'

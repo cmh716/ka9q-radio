@@ -11,8 +11,9 @@
 // of audio) is judged as it ends: the tone found in most of it (monitor's
 // detector: of the 55 tones, one with over half their energy, every
 // 0.24 s), else the DCS code found most (radiod's decoder), else none; or,
-// if status says a digital call was on, its mode and IDs (P25 NAC,
-// talkgroup; DMR, NXDN...). Under half a second isn't judged; with no tone,
+// for a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...).
+// A change of call (radiod's call ID, at the RTP timestamp status gives for
+// it: FM into digital, one call into the next) ends a transmission too. Under half a second isn't judged; with no tone,
 // code or call, under 1.5 s is a scrap (the FM a mixed channel plays after
 // a digital call, a burst of noise) and isn't counted. The results, per frequency: transmissions,
 // first and last heard, the commonest, and all with their counts.
@@ -41,7 +42,7 @@
 #include "dcs.h"
 
 #define MAX_GROUPS 16
-#define MAX_SESSIONS 256
+#define MAX_SESSIONS 1024 // frequency-survey.py --survey-config writes at most 1000
 #define MAX_INFO 1024
 #define SAMPRATE 8000
 #define N_TONES 55
@@ -84,8 +85,15 @@ struct stream_info {
   int pt;
   enum encoding encoding;
   int samprate,channels;
-  char call_mode[16];   // as status has it now: "FM" while analog plays, the mode while digital
-  char call_id[64];     // its destination, source, NAC
+  // The calls radiod announces (mixed: "FM" while analog plays, the mode and
+  // IDs while digital), each with the RTP timestamp its audio starts at:
+  // queued until the audio gets there, however status and data interleave
+  bool have_last;
+  uint32_t last_id;            // the last announced
+  char last_label[96];
+  struct call_change { uint32_t timestamp,id; char label[96]; double received; } changes[16];
+  int nchanges;
+  bool untimed;                // an older radiod (no call timestamps): the last announced applies as it comes
   double seen;
 };
 static struct stream_info Info[MAX_INFO];
@@ -118,6 +126,7 @@ struct freqstat {
   int64_t first,last;
   int nkinds;
   struct { char what[64]; int count; } kinds[MAX_KINDS];
+  int other;            // the transmissions of kinds past MAX_KINDS
 };
 static struct freqstat Freqs[MAX_FREQS];
 static int Nfreqs;
@@ -151,7 +160,7 @@ static void tally(double freq,char const *what){
     strlcpy(f->kinds[f->nkinds].what,what,sizeof f->kinds[0].what);
     f->kinds[f->nkinds++].count = 1;
   } else
-    f->kinds[MAX_KINDS - 1].count++; // (lumped with the last kind)
+    f->other++;
 }
 
 static char const *utc(int64_t t,char *out,size_t size){
@@ -198,6 +207,11 @@ static void write_results(void){
       snprintf(item,sizeof item,"%s%s x%d",k ? "; " : "",f->kinds[order[k][0]].what,order[k][1]);
       strlcat(heard,item,sizeof heard);
     }
+    if(f->other > 0){
+      char item[64];
+      snprintf(item,sizeof item,"%sother x%d",f->nkinds ? "; " : "",f->other);
+      strlcat(heard,item,sizeof heard);
+    }
     char a[32],b[32];
     fprintf(fp,"%.5f,%d,%s,%s,\"%s\",\"%s\"\n",f->freq * 1e-6,f->transmissions,utc(f->first,a,sizeof a),utc(f->last,b,sizeof b),
 	    f->nkinds ? f->kinds[order[0][0]].what : "",heard);
@@ -237,7 +251,11 @@ struct session {
   bool dcs_inv[8];
   int dcs_n[8];
   int ndcs;
-  char digital[96];       // a digital call heard in it (mode and IDs), if any
+  // The call its audio is part of now (radiod's call ID; 0 none), and its
+  // label: the mode and IDs of a digital one, "" for analog. A change of
+  // call ends a transmission (FM into digital, one call into the next)
+  uint32_t call_id;
+  char digital[96];
 };
 static struct session Sessions[MAX_SESSIONS];
 
@@ -252,7 +270,6 @@ static void tx_begin(struct session *sp){
   init_dcs_decoder(&sp->dcs,(float)SAMPRATE);
   sp->dcs_votes = 0;
   sp->ndcs = 0;
-  sp->digital[0] = '\0';
 }
 
 // The transmission is over: judged, and tallied for its frequency
@@ -260,7 +277,6 @@ static void tx_end(struct session *sp){
   if(!sp->on)
     return;
   sp->on = false;
-  sp->rtp_init = false;
   if((double)sp->samples / SAMPRATE < Min_seconds)
     return;
   struct stream_info const *ip = info(&sp->sender,sp->ssrc,false);
@@ -298,11 +314,6 @@ static void tx_end(struct session *sp){
 static void audio(struct session *sp,float const *x,int n){
   if(!sp->on)
     tx_begin(sp);
-  // A digital call on (status says so): its mode and IDs, not tones
-  // (vocoded audio isn't for the CTCSS filters)
-  struct stream_info const *ip = info(&sp->sender,sp->ssrc,false);
-  if(ip != NULL && ip->call_mode[0] != '\0' && strcmp(ip->call_mode,"FM") != 0 && sp->digital[0] == '\0')
-    snprintf(sp->digital,sizeof sp->digital,"%s%s%s",ip->call_mode,ip->call_id[0] ? " " : "",ip->call_id);
   sp->samples += n;
   for(int i = 0; i < n; i++){
     for(int j = 0; j < N_TONES; j++)
@@ -366,8 +377,15 @@ static struct session *session(struct sockaddr_storage const *sender,uint32_t ss
     for(int i = 0; i < MAX_SESSIONS; i++)
       if(!Sessions[i].on && (oldest == NULL || Sessions[i].last_packet < oldest->last_packet))
 	oldest = &Sessions[i];
-    if(oldest == NULL || monotonic() - oldest->last_packet < 60)
+    if(oldest == NULL || monotonic() - oldest->last_packet < 60){
+      static double warned;
+      double const now = monotonic();
+      if(now - warned > 60){
+	fprintf(stderr,"%s: %d streams already, none idle: stream %u not surveyed\n",App_path,MAX_SESSIONS,ssrc);
+	warned = now;
+      }
       return NULL;
+    }
     end_session(oldest);
     free_one = oldest;
   }
@@ -378,6 +396,15 @@ static struct session *session(struct sockaddr_storage const *sender,uint32_t ss
   free_one->pt = -1;
   free_one->last_packet = monotonic();
   return free_one;
+}
+
+// A call change reaching the audio: another call ends the transmission;
+// the same one's IDs, come late, label it
+static void call_change(struct session *sp,uint32_t id,char const *label){
+  if(id != sp->call_id)
+    tx_end(sp);
+  sp->call_id = id;
+  strlcpy(sp->digital,label,sizeof sp->digital);
 }
 
 static void status(uint8_t const *buffer,int length,struct sockaddr_storage const *sender){
@@ -398,14 +425,64 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
     ip->samprate = chan.output.samprate;
     ip->channels = chan.output.channels > 0 ? chan.output.channels : 1;
   }
-  strlcpy(ip->call_mode,chan.dv.call_mode,sizeof ip->call_mode);
-  ip->call_id[0] = '\0';
-  if(strcmp(chan.dv.call_mode,"P25") == 0 && chan.p25.have_nac)
-    snprintf(ip->call_id,sizeof ip->call_id,"NAC %03X",chan.p25.last_nac);
-  if(chan.dv.call_dest[0] != '\0'){
-    char d[48];
-    snprintf(d,sizeof d,"%sTG %s",ip->call_id[0] ? " " : "",chan.dv.call_dest);
-    strlcat(ip->call_id,d,sizeof ip->call_id);
+  // The call: a digital one's mode and IDs (vocoded audio isn't for the
+  // CTCSS filters); analog (FM) or none, ""
+  char label[96] = "";
+  if(chan.dv.call_mode[0] != '\0' && strcmp(chan.dv.call_mode,"FM") != 0){
+    strlcpy(label,chan.dv.call_mode,sizeof label);
+    if(strcmp(chan.dv.call_mode,"P25") == 0 && chan.p25.have_nac){
+      char n[16];
+      snprintf(n,sizeof n," NAC %03X",chan.p25.last_nac);
+      strlcat(label,n,sizeof label);
+    }
+    if(chan.dv.call_dest[0] != '\0'){
+      strlcat(label," TG ",sizeof label);
+      strlcat(label,chan.dv.call_dest,sizeof label);
+    }
+  }
+  uint32_t const id = chan.dv.call_id;
+  if(ip->have_last && id == ip->last_id && strcmp(label,ip->last_label) == 0)
+    return; // no change
+  ip->have_last = true;
+  ip->last_id = id;
+  strlcpy(ip->last_label,label,sizeof ip->last_label);
+  ip->untimed = !chan.dv.call_timestamp_valid;
+  if(ip->untimed)
+    return; // applied by the next audio
+  if(ip->nchanges == (int)(sizeof ip->changes / sizeof ip->changes[0])){
+    for(int i = 0; i < MAX_SESSIONS; i++) // full: the oldest applies now
+      if(Sessions[i].inuse && Sessions[i].ssrc == ssrc && address_match(&Sessions[i].sender,sender))
+	call_change(&Sessions[i],ip->changes[0].id,ip->changes[0].label);
+    memmove(&ip->changes[0],&ip->changes[1],(size_t)(ip->nchanges - 1) * sizeof ip->changes[0]);
+    ip->nchanges--;
+  }
+  struct call_change *c = &ip->changes[ip->nchanges++];
+  c->timestamp = chan.dv.call_timestamp;
+  c->id = id;
+  strlcpy(c->label,label,sizeof c->label);
+  c->received = ip->seen;
+}
+
+// The calls due by this packet: each new call a transmission of its own
+static void calls_due(struct session *sp,struct stream_info *ip,uint32_t timestamp){
+  if(ip == NULL)
+    return;
+  if(ip->untimed){
+    if(ip->have_last)
+      call_change(sp,ip->last_id,ip->last_label);
+    return;
+  }
+  double const now = monotonic();
+  int k = 0;
+  // Its audio reached; or announced 2 s ago and still not (the stream's
+  // clock restarted, say): it applies anyway
+  while(k < ip->nchanges && ((int32_t)(timestamp - ip->changes[k].timestamp) >= 0 || now - ip->changes[k].received > 2.0)){
+    call_change(sp,ip->changes[k].id,ip->changes[k].label);
+    k++;
+  }
+  if(k > 0){
+    memmove(&ip->changes[0],&ip->changes[k],(size_t)(ip->nchanges - k) * sizeof ip->changes[0]);
+    ip->nchanges -= k;
   }
 }
 
@@ -440,7 +517,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   struct session *sp = session(sender,rtp.ssrc);
   if(sp == NULL)
     return;
-  struct stream_info const *ip = info(sender,rtp.ssrc,false);
+  struct stream_info *ip = info(sender,rtp.ssrc,false);
   if(ip != NULL && ip->pt >= 0){
     sp->pt = ip->pt;
     sp->encoding = ip->encoding;
@@ -448,8 +525,10 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     sp->channels = ip->channels;
   }
   double const now = monotonic();
-  if(now - sp->last_packet > Quiet_gap)
+  if(now - sp->last_packet > Quiet_gap){
     tx_end(sp);
+    sp->rtp_init = false; // the next transmission's numbering is its own
+  }
   sp->last_packet = now;
   enum encoding encoding = sp->pt == rtp.type ? sp->encoding : encoding_from_pt(rtp.type);
   int samprate = sp->pt == rtp.type ? sp->samprate : samprate_from_pt(rtp.type);
@@ -471,6 +550,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     if((double)ts_step / clock > Rtp_gap)
       tx_end(sp);
   }
+  calls_due(sp,ip,rtp.timestamp);
   float out[2880 * 2];
   if(opus){
     if(sp->opus == NULL){
@@ -599,8 +679,10 @@ int main(int argc,char *argv[]){
     }
     double const now = monotonic();
     for(int k = 0; k < MAX_SESSIONS; k++)
-      if(Sessions[k].inuse && Sessions[k].on && now - Sessions[k].last_packet > Quiet_gap)
+      if(Sessions[k].inuse && Sessions[k].on && now - Sessions[k].last_packet > Quiet_gap){
 	tx_end(&Sessions[k]); // its channel squelched: the transmission is over
+	Sessions[k].rtp_init = false;
+      }
     if(now - last_write > 60){
       write_results();
       last_write = now;

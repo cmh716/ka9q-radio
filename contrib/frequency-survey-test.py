@@ -330,5 +330,27 @@ survey.main(['-a', log, '-o', out18, '--tones', tones, cat2])
 rows18 = {r['Name']: r for r in csv.DictReader(open(out18))}
 check(rows18['x']['Tone check'] == 'confirmed' and rows18['y']['Tone check'].startswith('differs: heard 131.8 PL'),
       "the catalog's squelch columns read as listed tones")
+# Inverted DCS: the polarity column read; a shared frequency's less common
+# listed tone still heard
+tones2 = os.path.join(d, 'tones2.csv')
+with open(tones2, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['frequency_mhz', 'transmissions', 'first', 'last', 'commonest', 'heard'])
+    w.writerow(['453.50000', '5', '', '', 'D243', 'D243 x5'])
+    w.writerow(['424.12500', '5', '', '', '131.8 PL', '131.8 PL x4; 127.3 PL x1'])
+    w.writerow(['451.00000', '3', '', '', 'I023', 'I023 x3'])
+cat3 = os.path.join(d, 'cat3.csv')
+with open(cat3, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['ID', 'Name', 'RX MHz', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity'])
+    w.writerow(['a', 'inv listed, D heard', '453.500000', 'DCS', '243', 'Inverted'])
+    w.writerow(['b', 'shared', '424.125000', 'CTCSS', '127.3', ''])
+    w.writerow(['c', 'inv listed, I heard', '451.000000', 'DCS', '23', 'Inverted'])
+out19 = os.path.join(d, 'out19.csv')
+survey.main(['-a', log, '-o', out19, '--tones', tones2, cat3])
+rows19 = {r['Name']: r for r in csv.DictReader(open(out19))}
+check(rows19['inv listed, D heard']['Tone check'] == 'differs: heard D243 (listed I243)', 'I243 listed, D243 heard: differs')
+check(rows19['inv listed, I heard']['Tone check'] == 'confirmed', 'I023 listed, I023 heard: confirmed')
+check(rows19['shared']['Tone check'] == 'heard, less often than 131.8 PL', 'a shared frequency: the listed tone heard, less often')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
