@@ -64,7 +64,11 @@ void summary_reading(struct rx_summary *s,struct sum_reading const *r){
   if(overs > 0 && r->clocktime - at >= (int64_t)SUM_WINDOW_S * BILLION_NS)
     overs = 0;
   if(overs > 0 && at != r->clocktime){
-    int64_t const oid = bucket_of(at);
+    // Its bucket, or (under ten minutes old, but its bucket just out of the
+    // window: sixty apart, they'd share a slot) the oldest still in it
+    int64_t oid = bucket_of(at);
+    if(oid <= bucket_of(r->clocktime) - SUM_BUCKETS)
+      oid = bucket_of(r->clocktime) - SUM_BUCKETS + 1;
     int const o = (int)(oid % SUM_BUCKETS);
     if(f->bucket[o].id != oid){ // (held an older ten seconds, gone from the window: reused)
       f->bucket[o].id = oid;

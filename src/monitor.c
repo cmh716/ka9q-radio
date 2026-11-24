@@ -593,7 +593,7 @@ void *statproc(void *arg){
       char from[64],group[64] = "";
       address_text(&sender,from,sizeof from,false);
       address_text((struct sockaddr_storage const *)&sp->frontend.metadata_dest_socket,group,sizeof group,true);
-      snprintf(r.key,sizeof r.key,"%s %s %.40s",from,group,sp->frontend.description);
+      snprintf(r.key,sizeof r.key,"%s %s %s",from,group,sp->frontend.description);
       strlcpy(r.description,sp->frontend.description,sizeof r.description);
       if(isfinite(r.if_dbfs))
 	summary_reading(&Rx_summary,&r);

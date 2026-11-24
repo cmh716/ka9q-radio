@@ -99,6 +99,19 @@ int main(void){
   check(summary_view(&Sum,0,T0 + 980 * S,&v) && v.recent_overs == 0 && !v.recent_over,
 	"and gone once the last of them is ten minutes old");
 
+  // Codex: the last overload 599 s before its status, sixty buckets apart
+  // (one ring slot): counted until it is ten minutes old, not overwritten
+  memset(Sum.fe,0,sizeof Sum.fe);
+  {
+    int64_t const t1 = (T0 / (10 * S)) * (10 * S) + 600 * S + 9 * S; // 9 s into a bucket
+    reading_at("edge","edge",t1 - 700 * S,-30.0f,10,0);
+    reading_at("edge","edge",t1,-30.0f,12,(uint64_t)599 * 50000000ull); // last one at t1 - 599 s
+    check(summary_view(&Sum,0,t1,&v) && v.recent_overs == 2 && v.recent_over,
+	  "599 s old, sixty buckets back: counted, as the warning says (not overwritten by the new reading)");
+    check(summary_view(&Sum,0,t1 + 11 * S,&v) && v.recent_overs == 0 && !v.recent_over,
+	  "and both gone a few seconds on");
+  }
+
   // Two receivers with no description, sharing a status group, from two
   // addresses (monitor keys them by both): kept apart
   memset(Sum.fe,0,sizeof Sum.fe);

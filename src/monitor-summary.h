@@ -19,7 +19,7 @@
 
 // A front end, as one of its channels' status gave it
 struct sum_reading {
-  char key[128];                  // which receiver: its radiod's address and status group
+  char key[288];                  // which receiver: its host, status group and whole description
   char description[128];          // what it calls itself (a label: two can share one)
   int64_t clocktime;              // radiod's time of that status, ns
   double frequency;               // its LO, Hz
