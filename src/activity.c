@@ -67,6 +67,7 @@ static double const Rise_tau = 1800; // s: a floor's rise (a carrier that never 
 static double const Known_hz = 5000; // a transmission this near a known frequency is on it
 static double Shadow_hz = 150e3;      // a signal this near one heard at the same time,
 static double Shadow_db = 20;         // and this much weaker, is its skirt or splatter
+static double const Shadow_max = 15;  // s a transmission goes on through shadows alone
 
 static struct sockaddr_storage Ctl_dest;
 static char Iface[1024];
@@ -329,6 +330,7 @@ struct tx {
   float peak_dbfs;
   int64_t matched;      // the frame a clean detection last continued it (now)
   float level;          // its level (dBFS) when last seen clear
+  int64_t clean;        // when last seen clear (not only through a shadow)
 };
 #define MAX_TX 512
 static struct tx Txs[MAX_TX];
@@ -691,6 +693,7 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
     }
     if(t != NULL){
       t->matched = now;
+      t->clean = now;
       t->level = top;
       t->freq = (t->freq * t->wsum + f * w) / (t->wsum + w > 0 ? t->wsum + w : 1);
       if(t->wsum + w <= 0)
@@ -719,7 +722,8 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
     int candidates = 0;
     for(int k = 0; k < MAX_TX; k++)
       if(Txs[k].open && Txs[k].matched != now && fabs(Txs[k].freq - sig[a].f) <= rbw
-	 && fabsf(Txs[k].level - sig[a].top) <= 6){
+	 && fabsf(Txs[k].level - sig[a].top) <= 6
+	 && (double)(now - Txs[k].clean) / BILLION <= Shadow_max){ // (and not for long: a steady skirt mustn't keep it open)
 	only = &Txs[k];
 	candidates++;
       }
