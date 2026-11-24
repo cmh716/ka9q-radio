@@ -84,7 +84,7 @@ static bool coverage(double *lo,double *hi){
     max_if = +0.47 * Fe_samprate;
   }
   double const guard = fmin(GUARD_HZ,0.02 * (max_if - min_if));
-  bool const ok = Fe_center > 0 && max_if > min_if;
+  bool const ok = Fe_samprate > 0 && max_if > min_if; // (its LO may be 0 Hz)
   *lo = Fe_center + min_if + guard;
   *hi = Fe_center + max_if - guard;
   pthread_mutex_unlock(&Fe_lock);
@@ -173,7 +173,7 @@ static void *status_thread(void *arg){
     chan.spectrum.step = NAN;
     chan.output.power = NAN;
     decode_radio_status(&fe,&chan,buffer + 1,(int)length - 1);
-    if(fe.samprate > 0 && fe.frequency > 0){
+    if(fe.samprate > 0){ // (an LO of 0 Hz is valid: an HF front end's)
       pthread_mutex_lock(&Fe_lock);
       Fe_center = fe.frequency;
       Fe_samprate = fe.samprate;
@@ -437,7 +437,24 @@ static void serve_stream(int fd,char const *query){
     if(!Clients[i].used){
       c = &Clients[i];
       c->used = true;
-      c->ssrc = 0x57460000u + (uint32_t)(random() & 0xfff0) + (uint32_t)i; // "WF", distinct per slot
+      // Its SSRC: random in the upper half of the range, where radiod's own
+      // channels aren't (theirs are their frequencies in kHz), and none seen
+      // among radiod's channels or our other viewers. (radiod would take a
+      // command to a channel it has as for that channel: another waterfall's
+      // viewer colliding is a chance of about one in 2^31 per pair)
+      uint32_t ssrc;
+      bool clash;
+      do {
+	ssrc = 0x80000000u | (uint32_t)random() << 1 | (uint32_t)(random() & 1);
+	clash = false;
+	for(int j = 0; j < MAX_CLIENTS; j++)
+	  clash = clash || (Clients[j].used && Clients[j].ssrc == ssrc);
+	pthread_mutex_lock(&Chans_lock);
+	for(int j = 0; j < Nchans; j++)
+	  clash = clash || Chans[j].ssrc == ssrc;
+	pthread_mutex_unlock(&Chans_lock);
+      } while(clash || ssrc == 0xffffffffu);
+      c->ssrc = ssrc;
       pthread_mutex_lock(&c->lock); // (lock order: the clients', then a client's)
       c->fresh = false;
       pthread_mutex_unlock(&c->lock);
