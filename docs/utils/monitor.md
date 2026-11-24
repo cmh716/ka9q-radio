@@ -184,11 +184,12 @@ Above the channels (terminals of 22 lines or more; `S` hides or shows it) the
 receiver summary has a line for each front end: its description and LO
 frequency, IF level in dBFS with the highest of the last ten minutes and how
 long ago it was, gain (and AGC), A/D overloads since radiod started, in the
-last ten minutes, and how long since the last (in yellow while that was
-within ten minutes), and how old these figures are: they come with the
+last ten minutes, and how long since the last (in yellow while that count
+is above zero), and how old these figures are: they come with the
 channels' status, which radiod sends while a channel is active. Below it,
 the three channels with the most audio in the last ten minutes, and how
-much:
+much. The ten minutes are counted in steps of ten seconds, so an event can
+leave them up to ten seconds early or late:
 
     fobos 445.6000 MHz | IF -31.5 dBFS (peak -18.2, 3m ago) | gain 22 dB | A/D over 0 | 1s ago
     Busiest, 10 min: 424.70000 110 2:10 | 453.50000 0:45 | 454.55000 4 0:30
