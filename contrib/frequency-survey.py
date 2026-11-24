@@ -40,6 +40,8 @@ MATCH_HZ = 5000
 def parse_time(text):
     """activity's times: UTC if marked Z, else local (rows written before):
     as aware datetimes, so spans across daylight saving keep their length"""
+    if not isinstance(text, str):
+        raise ValueError('no time')  # (a truncated row's missing cell)
     text = text.strip()
     if text.endswith('Z'):
         return datetime.datetime.strptime(text[:-1], '%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc)
@@ -192,7 +194,10 @@ def survey(rows, transmissions, lo, hi, coverage=None):
         best = None
         for j in (k - 1, k):
             if 0 <= j < len(keys) and abs(keys[j] - hz) <= MATCH_HZ:
-                if spans is not None and not any(lo <= keys[j] <= hi for lo, hi in spans):
+                # In every span matching the time: where a retune and the
+                # transmission share a second (rows are to the second), only
+                # what both stretches watched can be credited
+                if spans is not None and not all(lo <= keys[j] <= hi for lo, hi in spans):
                     continue
                 if best is None or abs(keys[j] - hz) < abs(keys[best] - hz):
                     best = j

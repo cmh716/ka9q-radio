@@ -245,5 +245,29 @@ buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     survey.main(['-a', log3, '-u', cov2, '-o', os.path.join(d, 'out12.csv'), cands3])
 check('activity watched 0.17 days in all' in buf.getvalue(), "the console's total: overlapping stretches once (4 h)")
+# A retune within one second: both stretches match the transmission's time
+# exactly; a candidate only the later one watched is not credited
+cov5 = os.path.join(d, 'cov5.csv')
+with open(cov5, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-24 00:00:00Z', '2026-11-24 00:59:58Z', '440.00000', '450.00400'])
+    w.writerow(['2026-11-24 00:59:58Z', '2026-11-24 02:00:00Z', '450.00300', '460.00000'])
+out13 = os.path.join(d, 'out13.csv')
+survey.main(['-a', log4, '-u', cov5, '-o', out13, cands4])
+rows13 = {r['Name']: r for r in csv.DictReader(open(out13))}
+check(rows13['covered after']['Transmissions'] == '0', 'a retune in the same second: the later-only candidate not credited')
+# Truncated rows (missing cells): skipped, not fatal
+cov6 = os.path.join(d, 'cov6.csv')
+with open(cov6, 'w', newline='') as f:
+    f.write('start,end,lo_mhz,hi_mhz\n2026-11-24 00:00:00Z,2026-11-24 01:00:00Z,440.0,469.0\n2026-11-24 01:00:00Z\n')
+log5 = os.path.join(d, 'act5.csv')
+with open(log5, 'w', newline='') as f:
+    f.write('start,end,frequency_mhz,channel_mhz,width_khz,seconds,db_over_floor,dbfs,known,mode_guess\n'
+            '2026-11-24 00:30:00Z,2026-11-24 00:30:05Z,455.0000,455.00000,12.5,5,20,-80,"",""\n'
+            '2026-11-24 00:40:00Z\n')
+out14 = os.path.join(d, 'out14.csv')
+survey.main(['-a', log5, '-u', cov6, '-o', out14, cands3])
+check(next(csv.DictReader(open(out14)))['Transmissions'] == '1', 'truncated rows in the log and coverage: skipped, the rest read')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
