@@ -115,6 +115,7 @@ struct stream_info {
   double quiet_freq;              // where it was heard
   bool quiet_tail;                // begun just after a voice call: its hang time, not counted
   double call_seen;               // monotonic s, the last status with a digital call playing
+  char call_mode_seen[16];        // and its mode
   double seen;
 };
 static struct stream_info Info[MAX_INFO];
@@ -515,6 +516,7 @@ static void call_change(struct session *sp,uint32_t id,char const *label){
 
 // A digital transmission heard only in status is over: tallied
 static double const Quiet_status_gap = 6; // s between statuses (2 s asks) that ends one
+static double const Hang_max = 5;         // s a repeater's hang time after a call goes on, at most
 static void quiet_end(struct stream_info *ip){
   if(ip->quiet_label[0] == '\0')
     return;
@@ -537,8 +539,10 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
   memset(&chan,0,sizeof chan);
   decode_radio_status(&frontend,&chan,buffer + 1,length - 1);
   ip->seen = monotonic();
-  if(chan.tune.freq > 0 && ip->quiet_label[0] != '\0' && fabs(chan.tune.freq - ip->quiet_freq) > 1)
+  if(chan.tune.freq > 0 && ip->freq > 0 && fabs(chan.tune.freq - ip->freq) > 1){
     quiet_end(ip); // retuned: what was heard was heard there
+    ip->call_seen = 0; // (and a call there says nothing of here)
+  }
   if(chan.tune.freq > 0)
     ip->freq = chan.tune.freq;
   if(chan.output.encoding != NO_ENCODING && chan.output.samprate > 0){
@@ -571,10 +575,20 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
 	  snprintf(label,sizeof label,"%s (no voice)",modes[k]);
       }
     }
+    // (a mode's name: the label's first word)
+    size_t const qlen = strcspn(ip->quiet_label," ");
     if(calling){
-      if(ip->quiet_label[0] != '\0' && ip->seen - ip->quiet_first <= 3.0)
-	ip->quiet_label[0] = '\0'; // the call's run-up: the call covers it
+      if(ip->quiet_label[0] != '\0' && ip->seen - ip->quiet_first <= 3.0
+	 && strlen(chan.dv.call_mode) == qlen && strncmp(ip->quiet_label,chan.dv.call_mode,qlen) == 0)
+	ip->quiet_label[0] = '\0'; // the call's run-up (the same mode): the call covers it
       ip->call_seen = ip->seen;
+      strlcpy(ip->call_mode_seen,chan.dv.call_mode,sizeof ip->call_mode_seen);
+    }
+    // Hang time goes on at most this long after a call: past it, a
+    // transmission of its own, from there
+    if(ip->quiet_label[0] != '\0' && ip->quiet_tail && ip->seen - ip->call_seen > Hang_max){
+      ip->quiet_tail = false;
+      ip->quiet_first = ip->seen;
     }
     if(ip->quiet_label[0] != '\0' && (strcmp(label,ip->quiet_label) != 0 || ip->seen - ip->quiet_last > Quiet_status_gap))
       quiet_end(ip);
@@ -583,7 +597,9 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
 	strlcpy(ip->quiet_label,label,sizeof ip->quiet_label);
 	ip->quiet_first = ip->seen;
 	ip->quiet_freq = ip->freq;
-	ip->quiet_tail = ip->call_seen != 0 && ip->seen - ip->call_seen < 3.0;
+	size_t const llen = strcspn(label," ");
+	ip->quiet_tail = ip->call_seen != 0 && ip->seen - ip->call_seen < 3.0 // just after a call of its mode
+	  && strlen(ip->call_mode_seen) == llen && strncmp(label,ip->call_mode_seen,llen) == 0;
       }
       ip->quiet_last = ip->seen;
     }
