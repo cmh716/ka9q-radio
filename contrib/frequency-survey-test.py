@@ -61,17 +61,17 @@ with open(rr, 'w', newline='') as f:
 out = os.path.join(d, 'out.csv')
 survey.main(['-a', log, '-o', out, '--range', '422.1-469.1', rr])
 rows = {r['Frequency Output']: r for r in csv.DictReader(open(out))}
-check(rows['468.65625']['Survey'] == 'active' and rows['468.65625']['Transmissions'] == '30',
+check(rows['468.65625']['Survey'] == survey.ACTIVE and rows['468.65625']['Transmissions'] == '30',
       'transmissions go to the nearest candidate (468.654: 468.65625, not 468.650)')
-check(rows['468.65000']['Survey'].startswith('silent'), 'the farther candidate gets none')
+check(rows['468.65000']['Survey'] == survey.SILENT, 'the farther candidate gets none')
 check(rows['468.65625']['Pattern'] == 'regular, every ~64 s', 'a regular pattern found')
 check(rows['453.50000']['Transmissions'] == '3' and rows['453.50000']['Airtime s'] == '30'
       and rows['453.50000']['Pattern'] == '', 'three irregular transmissions: counted, airtime, no pattern')
-check(rows['424.12500']['Survey'].startswith('silent 1.0 days') and 'rare-use' in rows['424.12500']['Survey']
+check(rows['424.12500']['Survey'].startswith(survey.SILENT) and 'rare-use' in rows['424.12500']['Survey']
       and rows['424.12500']['Rare-use'] == 'yes', 'a silent fireground channel: silent, flagged rare-use')
-check(rows['425.00000']['Survey'] == 'silent 1.0 days' and rows['425.00000']['Rare-use'] == '',
+check(rows['425.00000']['Survey'] == survey.SILENT and rows['425.00000']['Rare-use'] == '',
       'a silent business channel: silent, not flagged')
-check(rows['155.00000']['Survey'] == 'outside coverage', 'VHF: outside the coverage')
+check(rows['155.00000']['Survey'] == survey.OUTSIDE, 'VHF: outside --range')
 check(rows['453.50000']['Busiest hours'] == '06h 07h', 'busiest hours')
 
 # The catalog's format
@@ -83,7 +83,43 @@ with open(cat, 'w', newline='') as f:
 out2 = os.path.join(d, 'out2.csv')
 survey.main(['-a', log, '-o', out2, cat])
 r = next(csv.DictReader(open(out2)))
-check(r['Survey'] == 'active' and r['Decision'] == 'Undecided' and r['Name'] == 'LncstrFD D1',
+check(r['Survey'] == survey.ACTIVE and r['Decision'] == 'Undecided' and r['Name'] == 'LncstrFD D1',
       "the catalog's format: evidence added, its columns kept")
+# Re-surveyed: nothing of the last survey kept (an annotated row, now outside the range)
+out3 = os.path.join(d, 'out3.csv')
+survey.main(['-a', log, '-o', out3, '--range', '422.1-460.0', out])
+rows3 = {r['Frequency Output']: r for r in csv.DictReader(open(out3))}
+r = rows3['468.65625']
+check(r['Survey'] == survey.OUTSIDE and r['Transmissions'] == '' and r['Pattern'] == '' and r['First heard'] == '',
+      'surveyed again, now outside: its old evidence cleared')
+# Near the range's edge, an outside candidate takes nothing from one inside
+edge = os.path.join(d, 'edge.csv')
+with open(edge, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['RX MHz', 'Name'])
+    w.writerow(['468.656250', 'inside'])
+    w.writerow(['468.655000', 'outside'])
+# 468.655 (outside) is nearer 468.654 than 468.65625 (inside): with both inside,
+# the nearer gets the transmissions; with only 468.65625 inside, it gets them
+out5 = os.path.join(d, 'out5.csv')
+survey.main(['-a', log, '-o', out5, '--range', '422.1-468.6560', edge])
+rows5 = {r['Name']: r for r in csv.DictReader(open(out5))}
+check(rows5['outside']['Survey'] == survey.ACTIVE, '(both inside: the nearer gets them)')
+out6 = os.path.join(d, 'out6.csv')
+survey.main(['-a', log, '-o', out6, '--range', '468.6554-469.0', edge])
+rows6 = {r['Name']: r for r in csv.DictReader(open(out6))}
+check(rows6['outside']['Survey'] == survey.OUTSIDE and rows6['inside']['Transmissions'] == '30',
+      'the nearer outside the range: the one inside gets the transmissions')
+# Never an input as the output
+import subprocess
+for target in (rr, log, os.path.join(d, '.', 'rr.csv')):
+    p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log, '-o', target, rr],
+                       capture_output=True, text=True)
+    check(p.returncode != 0 and 'an input' in p.stderr, f'output {os.path.basename(target)} (an input): refused')
+link = os.path.join(d, 'alias.csv')
+os.symlink(rr, link)
+p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log, '-o', link, rr],
+                   capture_output=True, text=True)
+check(p.returncode != 0, 'a symlink to an input: refused')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

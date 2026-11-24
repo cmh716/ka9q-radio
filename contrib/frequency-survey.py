@@ -9,13 +9,18 @@ Output Tone", ...) or the frequency catalog's inbox.csv or master.csv
 evidence added from activity's log (activity sees every carrier in its
 front end's coverage, whatever its tone, with no radiod configuration):
 transmissions, airtime, first and last heard, busiest hours, whether they
-come at regular intervals (telemetry), and a verdict: active, silent for
-the time the log covers, or outside the coverage. A service that is used
-rarely (fire, EMS, mutual aid...) is flagged, so that silence for a week
-isn't taken against it. Nothing is changed: decide in the catalog.
+come at regular intervals (telemetry), and a verdict: RF activity near the
+frequency, or none in this log. It is evidence of carriers only: their
+tone and who they are stay unverified (candidates sharing a frequency
+share its evidence). Silence means only that the log holds nothing there:
+the log doesn't record when activity ran or what the receiver covered.
+With --range (the front end's coverage, which you know), candidates
+outside it are marked so and get no evidence. A service used rarely (fire,
+EMS, mutual aid...) is flagged, so silence isn't taken against it. Nothing
+is changed: decide in the catalog.
 
-Each logged transmission counts for the nearest candidate within 5 kHz.
-The coverage is --range, or the span of frequencies in the log.
+Each logged transmission counts for the nearest candidate within 5 kHz,
+among those within --range.
 """
 # SPDX-License-Identifier: GPL-3.0-or-later
 import argparse
@@ -30,6 +35,9 @@ MATCH_HZ = 5000
 RARE = re.compile(r'fire|ems\b|ambulance|rescue|mutual|interop|tac\b|tact|tactical|emergency|hospital|med\b|'
                   r'fireground|incident|evac|hazmat|swat|disaster|ares|races|civil def', re.I)
 EVIDENCE = ['Survey', 'Transmissions', 'Airtime s', 'First heard', 'Last heard', 'Busiest hours', 'Pattern', 'Rare-use']
+ACTIVE = 'RF activity near frequency (tone, identity unverified)'
+SILENT = 'no RF activity in this log'
+OUTSIDE = 'outside --range' 
 
 
 def frequency_of(row):
@@ -92,9 +100,12 @@ def busiest_hours(starts):
     return ' '.join(f'{h:02d}h' for h in sorted(top))
 
 
-def survey(rows, transmissions, lo, hi, days):
+def survey(rows, transmissions, lo, hi):
+    """lo, hi: the coverage given (Hz), or None"""
     cands = [(i, frequency_of(r)) for i, r in enumerate(rows)]
-    freqs = sorted((f, i) for i, f in cands if f is not None)
+    inside = (lambda f: True) if lo is None else (lambda f: lo <= f <= hi)
+    # Only candidates within the coverage compete for transmissions
+    freqs = sorted((f, i) for i, f in cands if f is not None and inside(f))
     keys = [f for f, _ in freqs]
     heard = collections.defaultdict(list)
     import bisect
@@ -110,13 +121,15 @@ def survey(rows, transmissions, lo, hi, days):
             heard[keys[best]].append((start, end, secs))
     for i, f in cands:
         row = rows[i]
+        for e in EVIDENCE:
+            row[e] = ''  # an annotated file surveyed again: nothing of the last survey kept
         rare = rare_use(row)
         row['Rare-use'] = 'yes' if rare else ''
         if f is None:
             row['Survey'] = 'no frequency'
             continue
-        if not (lo <= f <= hi):
-            row['Survey'] = 'outside coverage'
+        if not inside(f):
+            row['Survey'] = OUTSIDE
             continue
         h = heard.get(f, [])
         row['Transmissions'] = str(len(h))
@@ -126,10 +139,20 @@ def survey(rows, transmissions, lo, hi, days):
             row['Last heard'] = max(e for _, e, _ in h).strftime('%Y-%m-%d %H:%M')
             row['Busiest hours'] = busiest_hours([s for s, _, _ in h])
             row['Pattern'] = pattern([s for s, _, _ in h])
-            row['Survey'] = 'active'
+            row['Survey'] = ACTIVE
         else:
-            row['Survey'] = (f'silent {days:.1f} days' + (' (rare-use: keep by service)' if rare else ''))
+            row['Survey'] = SILENT + (' (rare-use: keep by service)' if rare else '')
     return rows
+
+
+def same_file(a, b):
+    """Two paths naming one file (symlinks, spellings), existing or not"""
+    import os
+    def canon(p):
+        if os.path.exists(p):
+            return os.path.realpath(p)
+        return os.path.join(os.path.realpath(os.path.dirname(p) or '.'), os.path.basename(p))
+    return canon(a) == canon(b)
 
 
 def main(argv=None):
@@ -143,32 +166,35 @@ def main(argv=None):
     transmissions = read_activity(args.activity)
     if not transmissions:
         sys.exit(f'{args.activity}: no transmissions logged')
+    lo = hi = None
     if args.range:
         m = re.fullmatch(r'\s*([\d.]+)\s*-\s*([\d.]+)\s*', args.range)
-        if not m:
+        if not m or float(m.group(1)) >= float(m.group(2)):
             sys.exit('--range lo-hi, in MHz')
         lo, hi = float(m.group(1)) * 1e6, float(m.group(2)) * 1e6
-    else:
-        lo = min(t[0] for t in transmissions) - MATCH_HZ
-        hi = max(t[0] for t in transmissions) + MATCH_HZ
     first = min(t[1] for t in transmissions)
     last = max(t[2] for t in transmissions)
-    days = (last - first).total_seconds() / 86400
 
     with open(args.candidates, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         fields = list(reader.fieldnames or [])
         rows = list(reader)
-    rows = survey(rows, transmissions, lo, hi, days)
+    rows = survey(rows, transmissions, lo, hi)
     out = args.output or re.sub(r'(\.csv)?$', '-survey.csv', args.candidates, count=1)
+    for source in (args.candidates, args.activity):
+        if same_file(out, source):
+            sys.exit(f'{out}: that is {source}, an input: give another output')
     with open(out, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=fields + [e for e in EVIDENCE if e not in fields], extrasaction='ignore')
         w.writeheader()
         w.writerows(rows)
-    verdicts = collections.Counter(r.get('Survey', '').split(' (')[0].split(' ')[0] for r in rows)
-    print(f'{len(rows)} candidates, {len(transmissions)} transmissions over {days:.1f} days '
-          f'({lo / 1e6:.3f}-{hi / 1e6:.3f} MHz): ' +
-          ', '.join(f'{n} {v}' for v, n in verdicts.most_common()) + f'; written to {out}')
+    verdicts = collections.Counter(r.get('Survey', '').split(' (rare')[0] for r in rows)
+    print(f'{len(rows)} candidates; the log: {len(transmissions)} transmissions, {first:%Y-%m-%d %H:%M} to '
+          f'{last:%Y-%m-%d %H:%M} (not a record of how long activity ran)' +
+          (f'; coverage {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz' if lo is not None else '; no --range: nothing marked outside'))
+    for v, n in verdicts.most_common():
+        print(f'  {n:5d}  {v}')
+    print(f'written to {out}')
 
 
 if __name__ == '__main__':
