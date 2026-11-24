@@ -4,11 +4,13 @@
 //   activity [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m s] [-v] radiod-status-group
 //
 // A spectrum channel of its own in radiod covers the whole front end
-// (6.25 kHz bins), four times a second, each the average of as many FFTs as
-// radiod holds (~80 ms): sampled, not continuous. A transmission of half a
-// second or more (the shortest logged) is always sampled; shorter ones may
-// fall between; a TDMA burst (DMR, NXDN) is caught, on for about half the
-// window, so reads ~3 dB below its carrier. Each bin has a noise floor of
+// (6.25 kHz bins), nominally four times a second, each the average of as
+// many FFTs as radiod holds (nominally ~80 ms): sampled, not continuous. A
+// transmission of half a second or more (the shortest logged) is sampled
+// while radiod answers promptly (a reply can take up to a second to give up
+// on); shorter ones may fall between looks. A TDMA burst (DMR, NXDN), on for
+// about half a look, reads ~3 dB below its carrier; a weak one may stay
+// under the threshold. Each bin has a noise floor of
 // its own (falling fast, rising over half an hour: a strong signal's skirt
 // isn't activity, and a carrier that never stops is logged once, then taken
 // into the floor). Bins 10 dB above it, side by side, make a signal; a
@@ -407,9 +409,14 @@ static void close_tx(struct tx *t){
   csv_quote(kq,sizeof kq,known != NULL ? known : "");
   // Logged, or not counted at all: the summary is rebuilt from the log at a
   // restart, so it mustn't hold what the log doesn't
-  FILE *fp = fopen(Log_path,"a");
+  FILE *fp = fopen(Log_path,"a+");
   bool ok = fp != NULL;
   if(ok){
+    // A row left incomplete by a failed write: ended here, so this one
+    // starts a line of its own (the rebuild skips the incomplete one)
+    if(fseek(fp,-1,SEEK_END) == 0 && fgetc(fp) != '\n')
+      fputc('\n',fp);
+    fseek(fp,0,SEEK_END);
     if(ftell(fp) == 0)
       fprintf(fp,"start,end,frequency_mhz,channel_mhz,width_khz,seconds,db_over_floor,dbfs,known,mode_guess\n");
     fprintf(fp,"%s,%s,%.4f,%.5f,%.2f,%.1f,%.1f,%.1f,%s,\"%s\"\n",when(t->start,a,sizeof a),when(t->last,b,sizeof b),
@@ -432,10 +439,17 @@ static int by_chan(void const *a,void const *b){
   return x < y ? -1 : x > y;
 }
 static void write_summary(void){
+  // A temporary file of a name no other has (not "summary.tmp", which the
+  // log could be), renamed over the summary once complete
   char tmp[4096];
-  snprintf(tmp,sizeof tmp,"%s.tmp",Summary_path);
-  FILE *fp = fopen(tmp,"w");
+  snprintf(tmp,sizeof tmp,"%s.XXXXXX",Summary_path);
+  int const fd = mkstemp(tmp);
+  FILE *fp = fd >= 0 ? fdopen(fd,"w") : NULL;
   if(fp == NULL){
+    if(fd >= 0){
+      close(fd);
+      unlink(tmp);
+    }
     fprintf(stderr,"%s: can't write the summary: %s\n",Summary_path,strerror(errno));
     return;
   }
@@ -462,8 +476,15 @@ static void reload_log(void){
   if(fp == NULL)
     return;
   char line[1024];
-  int n = 0;
+  int n = 0,skipped = 0;
   while(fgets(line,sizeof line,fp) != NULL){
+    // Only a complete row: its newline, and its last field (the mode
+    // guess, quoted) closed. A write that failed partway left less
+    size_t const len = strlen(line);
+    if(len < 3 || line[len - 1] != '\n' || line[len - 2] != '"'){
+      skipped++;
+      continue;
+    }
     struct tm a = {0},b = {0};
     double f,chan,width,seconds,over,dbfs;
     char known[128] = "";
@@ -477,27 +498,35 @@ static void reload_log(void){
     if(p == NULL || sscanf(p + 1,"%lf,%lf,%lf,%lf,%lf,%lf,%n",&f,&chan,&width,&seconds,&over,&dbfs,&consumed) < 6)
       continue;
     char const *k = p + 1 + consumed;
-    if(*k == '"'){
-      // a quoted field, quotes in it doubled
+    if(*k != '"')
+      continue;
+    {
+      // a quoted field, quotes in it doubled; then the mode guess's, to the end
       size_t j = 0;
-      for(k++; *k != '\0' && j + 1 < sizeof known; k++){
+      bool closed = false;
+      for(k++; *k != '\0'; k++){
 	if(*k == '"'){
 	  if(k[1] == '"')
 	    k++;
-	  else
+	  else {
+	    closed = true;
 	    break;
+	  }
 	}
-	known[j++] = *k;
+	if(j + 1 < sizeof known)
+	  known[j++] = *k;
       }
       known[j] = '\0';
+      if(!closed || strncmp(k,"\",\"",3) != 0)
+	continue; // not a complete row
     }
     a.tm_isdst = b.tm_isdst = -1;
     tally(chan * 1e6,seconds,(int64_t)mktime(&a) * BILLION,(int64_t)mktime(&b) * BILLION,(float)over,known);
     n++;
   }
   fclose(fp);
-  if(Verbose)
-    fprintf(stderr,"%s: %d transmissions already logged\n",Log_path,n);
+  if(Verbose || skipped > 1) // (the header is one)
+    fprintf(stderr,"%s: %d transmissions already logged%s\n",Log_path,n,skipped > 1 ? ", incomplete rows skipped" : "");
 }
 
 // --- one spectrum ---
@@ -657,6 +686,17 @@ int main(int argc,char *argv[]){
   if(optind >= argc || !(Threshold > 0)){
     usage();
     exit(EX_USAGE);
+  }
+  {
+    // The log and the summary must be different files: the summary's
+    // rewrite would replace the log
+    char a[4096],b[4096];
+    char const *ra = realpath(Log_path,a) != NULL ? a : Log_path;
+    char const *rb = realpath(Summary_path,b) != NULL ? b : Summary_path;
+    if(strcmp(ra,rb) == 0 || strcmp(Log_path,Summary_path) == 0){
+      fprintf(stderr,"%s: the log and the summary must be different files\n",App_path);
+      exit(EX_USAGE);
+    }
   }
   for(int i = 0; i < nconfigs; i++)
     read_config(configs[i]);

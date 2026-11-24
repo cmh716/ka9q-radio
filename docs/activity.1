@@ -7,12 +7,15 @@ activity \- log transmissions anywhere in radiod's coverage, configured or not
 .SH DESCRIPTION
 activity watches everything radiod's front end covers (a Fobos at 50 MHz:
 about 422 to 469 MHz) through a spectrum channel of its own, 6.25 kHz bins
-four times a second, and logs each transmission it finds, whatever its tone
-or mode. Each look is the average of as many FFTs as radiod holds, about
-the last 80 ms: the band is sampled, not watched continuously. A
-transmission of half a second or more (the shortest logged) is always seen;
-a shorter one may fall between looks. A DMR or NXDN burst is caught, but,
-on for about half of each look, reads about 3 dB below its carrier.
+nominally four times a second, and logs each transmission it finds,
+whatever its tone or mode. Each look is the average of as many FFTs as
+radiod holds, nominally the last 80 ms: the band is sampled, not watched
+continuously. A transmission of half a second or more (the shortest logged)
+is sampled as long as radiod answers promptly (a late answer delays the
+next look, up to a second); a shorter one may fall between looks. Whether a
+sampled transmission is found depends on its level: a DMR or NXDN burst, on
+for about half of a look, reads about 3 dB below its carrier, so a weak one
+may stay under the threshold.
 .P
 Each bin has a noise floor of its own, falling at once to a quieter
 reading and rising over half an hour, so a strong station's skirt isn't
@@ -45,7 +48,7 @@ known frequencies and their names. May be given more than once.
 The log. Default activity.csv.
 .TP
 .B "\-s file"
-The summary. Default activity-summary.csv.
+The summary. Default activity-summary.csv. It must not be the log.
 .TP
 .B "\-t dB"
 How far above its floor a bin must be. Default 10.
