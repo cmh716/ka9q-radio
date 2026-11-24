@@ -584,12 +584,6 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
       ip->call_seen = ip->seen;
       strlcpy(ip->call_mode_seen,chan.dv.call_mode,sizeof ip->call_mode_seen);
     }
-    // Hang time goes on at most this long after a call: past it, a
-    // transmission of its own, from there
-    if(ip->quiet_label[0] != '\0' && ip->quiet_tail && ip->seen - ip->call_seen > Hang_max){
-      ip->quiet_tail = false;
-      ip->quiet_first = ip->seen;
-    }
     if(ip->quiet_label[0] != '\0' && (strcmp(label,ip->quiet_label) != 0 || ip->seen - ip->quiet_last > Quiet_status_gap))
       quiet_end(ip);
     if(label[0] != '\0'){
@@ -600,6 +594,12 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
 	size_t const llen = strcspn(label," ");
 	ip->quiet_tail = ip->call_seen != 0 && ip->seen - ip->call_seen < 3.0 // just after a call of its mode
 	  && strlen(ip->call_mode_seen) == llen && strncmp(label,ip->call_mode_seen,llen) == 0;
+      } else if(ip->quiet_tail && ip->seen - ip->call_seen > Hang_max){
+	// Hang time goes on at most so long after a call: this status still
+	// hearing it (the same, not past the gap: else ended above), it's a
+	// transmission of its own, from here
+	ip->quiet_tail = false;
+	ip->quiet_first = ip->seen;
       }
       ip->quiet_last = ip->seen;
     }
