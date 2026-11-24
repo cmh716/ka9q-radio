@@ -201,5 +201,49 @@ os.link(cov2, hard)
 p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log3, '-u', cov2, '-o', hard, cands3],
                    capture_output=True, text=True)
 check(p.returncode != 0 and 'an input' in p.stderr, 'a hard link to an input as the output: refused')
+# A retune: a transmission just before it goes to the candidate covered then,
+# not to a closer one covered only after
+cov3 = os.path.join(d, 'cov3.csv')
+with open(cov3, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    # the transmission (450.0035) in both spans; 450.000 only in the first, 450.005 only in the second
+    w.writerow(['2026-11-24 00:00:00Z', '2026-11-24 01:00:00Z', '440.00000', '450.00400'])
+    w.writerow(['2026-11-24 01:00:05Z', '2026-11-24 02:00:00Z', '450.00300', '460.00000'])
+log4 = os.path.join(d, 'act4.csv')
+with open(log4, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs', 'known',
+                'mode_guess'])
+    w.writerow(['2026-11-24 00:59:58Z', '2026-11-24 01:00:00Z', '450.0035', '450.00000', '12.5', '2', '20', '-80', '', ''])
+cands4 = os.path.join(d, 'cands4.csv')
+with open(cands4, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['RX MHz', 'Name'])
+    w.writerow(['450.000000', 'covered then'])
+    w.writerow(['450.005000', 'covered after'])
+out11 = os.path.join(d, 'out11.csv')
+survey.main(['-a', log4, '-u', cov3, '-o', out11, cands4])
+rows11 = {r['Name']: r for r in csv.DictReader(open(out11))}
+check(rows11['covered then']['Transmissions'] == '1' and rows11['covered after']['Transmissions'] == '0',
+      'just before a retune: credited to the candidate covered then, not a nearer one covered after')
+# Daylight saving: a stretch across the spring change, in local time (rows from before Z), is 10 minutes
+import time
+os.environ['TZ'] = 'America/New_York'
+time.tzset()
+cov4 = os.path.join(d, 'cov4.csv')
+with open(cov4, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-03-08 01:55:00', '2026-03-08 03:05:00', '440.00000', '469.00000'])
+    w.writerow(['2026-03-08 07:55:00Z', '2026-03-08 08:05:00Z', '440.00000', '469.00000'])
+c4 = survey.read_coverage(cov4)
+check(abs(survey.monitored_seconds(455e6, c4) - 1200) < 1, 'across the spring change (local 01:55-03:05 EST/EDT): 10 minutes; in UTC: 10')
+# The console's total: overlaps once
+import io, contextlib
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    survey.main(['-a', log3, '-u', cov2, '-o', os.path.join(d, 'out12.csv'), cands3])
+check('activity watched 0.17 days in all' in buf.getvalue(), "the console's total: overlapping stretches once (4 h)")
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

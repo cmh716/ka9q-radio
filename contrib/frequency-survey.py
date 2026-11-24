@@ -35,6 +35,15 @@ import statistics
 import sys
 
 MATCH_HZ = 5000
+
+
+def parse_time(text):
+    """activity's times: UTC if marked Z, else local (rows written before):
+    as aware datetimes, so spans across daylight saving keep their length"""
+    text = text.strip()
+    if text.endswith('Z'):
+        return datetime.datetime.strptime(text[:-1], '%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc)
+    return datetime.datetime.strptime(text, '%Y-%m-%d %H:%M:%S').astimezone()
 RARE = re.compile(r'fire|ems\b|ambulance|rescue|mutual|interop|tac\b|tact|tactical|emergency|hospital|med\b|'
                   r'fireground|incident|evac|hazmat|swat|disaster|ares|races|civil def', re.I)
 EVIDENCE = ['Survey', 'Monitored days', 'Transmissions', 'Airtime s', 'First heard', 'Last heard', 'Busiest hours',
@@ -51,8 +60,8 @@ def read_coverage(path):
     with open(path, newline='') as f:
         for r in csv.DictReader(f):
             try:
-                start = datetime.datetime.strptime(r['start'], '%Y-%m-%d %H:%M:%S')
-                end = datetime.datetime.strptime(r['end'], '%Y-%m-%d %H:%M:%S')
+                start = parse_time(r['start'])
+                end = parse_time(r['end'])
                 lo, hi = float(r['lo_mhz']) * 1e6, float(r['hi_mhz']) * 1e6
             except (KeyError, ValueError, TypeError):
                 continue
@@ -61,9 +70,9 @@ def read_coverage(path):
     return out
 
 
-def monitored_seconds(f, coverage):
-    """How long f was watched: the stretches covering it, overlaps merged"""
-    spans = sorted((s, e) for s, e, lo, hi in coverage if lo <= f <= hi)
+def merged_seconds(spans):
+    """The time a set of (start, end) spans covers, overlaps counted once"""
+    spans = sorted(spans)
     total, cur_s, cur_e = 0.0, None, None
     for s, e in spans:
         if cur_e is None or s > cur_e:
@@ -77,11 +86,21 @@ def monitored_seconds(f, coverage):
     return total
 
 
+def monitored_seconds(f, coverage):
+    """How long f was watched: the stretches covering it, overlaps merged"""
+    return merged_seconds((s, e) for s, e, lo, hi in coverage if lo <= f <= hi)
+
+
 SLACK = datetime.timedelta(seconds=10)  # (rows are to the second; a stretch's end is its last spectrum)
 
 
 def spans_at(coverage, when, hz):
-    """The spans (lo, hi) of the stretches watching hz at when"""
+    """The spans (lo, hi) of the stretches watching hz at when: those
+    containing it exactly; only if none, those within SLACK of it (rows are
+    to the second), so a stretch begun after a retune doesn't compete"""
+    exact = [(lo, hi) for s, e, lo, hi in coverage if s <= when <= e and lo <= hz <= hi]
+    if exact:
+        return exact
     return [(lo, hi) for s, e, lo, hi in coverage if s - SLACK <= when <= e + SLACK and lo <= hz <= hi]
 
 
@@ -111,8 +130,8 @@ def read_activity(path):
         for r in csv.DictReader(f):
             try:
                 hz = float(r['frequency_mhz']) * 1e6
-                start = datetime.datetime.strptime(r['start'], '%Y-%m-%d %H:%M:%S')
-                end = datetime.datetime.strptime(r['end'], '%Y-%m-%d %H:%M:%S')
+                start = parse_time(r['start'])
+                end = parse_time(r['end'])
                 secs = float(r['seconds'])
             except (KeyError, ValueError, TypeError):
                 continue  # an incomplete row (activity skips them too)
@@ -140,7 +159,7 @@ def pattern(starts):
 def busiest_hours(starts):
     if not starts:
         return ''
-    count = collections.Counter(s.hour for s in starts)
+    count = collections.Counter(s.astimezone().hour for s in starts)  # (local hours, whatever the log's zone)
     top = [h for h, _ in count.most_common(3)]
     return ' '.join(f'{h:02d}h' for h in sorted(top))
 
@@ -202,8 +221,8 @@ def survey(rows, transmissions, lo, hi, coverage=None):
         row['Transmissions'] = str(len(h))
         row['Airtime s'] = f'{sum(s for _, _, s in h):.0f}'
         if h:
-            row['First heard'] = min(s for s, _, _ in h).strftime('%Y-%m-%d %H:%M')
-            row['Last heard'] = max(e for _, e, _ in h).strftime('%Y-%m-%d %H:%M')
+            row['First heard'] = min(s for s, _, _ in h).strftime('%Y-%m-%d %H:%M %Z')
+            row['Last heard'] = max(e for _, e, _ in h).strftime('%Y-%m-%d %H:%M %Z')
             row['Busiest hours'] = busiest_hours([s for s, _, _ in h])
             row['Pattern'] = pattern([s for s, _, _ in h])
             row['Survey'] = ACTIVE
@@ -269,7 +288,7 @@ def main(argv=None):
             if transmissions else 'none')
     print(f'{len(rows)} candidates; the log: {len(transmissions)} transmissions, {span}' +
           (f'; range {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz' if lo is not None else '') +
-          (f'; activity watched {sum((e - s).total_seconds() for s, e, _, _ in coverage) / 86400:.2f} days in all'
+          (f'; activity watched {merged_seconds((s, e) for s, e, _, _ in coverage) / 86400:.2f} days in all'
            if coverage is not None else '; no coverage file: silence is only what the log lacks'))
     for v, n in verdicts.most_common():
         print(f'  {n:5d}  {v}')

@@ -370,12 +370,34 @@ static void tally(double chan,double seconds,int64_t start,int64_t end,float pea
     strlcpy(s->known,known,sizeof s->known);
 }
 
+// A time as written: UTC, marked Z ("2026-11-24 13:29:20Z"), so a span
+// across a daylight saving change is still its length
 static char const *when(int64_t ns,char *out,size_t size){
   time_t const t = (time_t)(ns / BILLION); // (wall_ns())
   struct tm tm;
-  localtime_r(&t,&tm);
-  strftime(out,size,"%Y-%m-%d %H:%M:%S",&tm);
+  gmtime_r(&t,&tm);
+  strftime(out,size,"%Y-%m-%d %H:%M:%SZ",&tm);
   return out;
+}
+// A time as read: UTC if marked Z, else local (rows written before),
+// ns; the text after it in *rest. false if it isn't one
+static bool parse_when(char const *text,int64_t *ns,char const **rest){
+  struct tm tm = {0};
+  char const *e = strptime(text,"%Y-%m-%d %H:%M:%S",&tm);
+  if(e == NULL)
+    return false;
+  time_t t;
+  if(*e == 'Z'){
+    t = timegm(&tm);
+    e++;
+  } else {
+    tm.tm_isdst = -1;
+    t = mktime(&tm);
+  }
+  *ns = (int64_t)t * BILLION;
+  if(rest != NULL)
+    *rest = e;
+  return true;
 }
 // A CSV field's text, quoted, quotes in it doubled
 static void csv_quote(char *out,size_t size,char const *in){
@@ -498,14 +520,14 @@ static void reload_log(void){
     size_t const len = strlen(line);
     if(len < 3 || line[len - 1] != '\n' || line[len - 2] != '"')
       continue;
-    struct tm a = {0},b = {0};
+    int64_t a,b;
     double f,chan,width,seconds,over,dbfs;
     char known[128] = "";
     int consumed = 0;
-    if(strptime(line,"%Y-%m-%d %H:%M:%S",&a) == NULL)
+    if(!parse_when(line,&a,NULL))
       continue; // the header
     char const *p = strchr(line,',');
-    if(p == NULL || strptime(p + 1,"%Y-%m-%d %H:%M:%S",&b) == NULL)
+    if(p == NULL || !parse_when(p + 1,&b,NULL))
       continue;
     p = strchr(p + 1,',');
     if(p == NULL || sscanf(p + 1,"%lf,%lf,%lf,%lf,%lf,%lf,%n",&f,&chan,&width,&seconds,&over,&dbfs,&consumed) < 6)
@@ -537,8 +559,7 @@ static void reload_log(void){
       if(q == NULL || q[1] != '\n')
 	continue;
     }
-    a.tm_isdst = b.tm_isdst = -1;
-    tally(chan * 1e6,seconds,(int64_t)mktime(&a) * BILLION,(int64_t)mktime(&b) * BILLION,(float)over,known);
+    tally(chan * 1e6,seconds,a,b,(float)over,known);
     n++;
   }
   fclose(fp);
