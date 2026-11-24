@@ -57,6 +57,11 @@ static double const Min_none = 1.5;      // shorter with no tone, code or call: 
                                          // channel's FM after a digital call, a noise burst), not counted
 static double const Quiet_gap = 1.0;     // s without packets: the transmission is over
 static double const Rtp_gap = 0.3;
+// Audio is held this long before it's judged, so a call's status, should it
+// come after the call's first packets, still marks where the call begins
+static double const Delay = 0.5;
+#define DELAY_SAMPLES 8000  // at SAMPRATE: twice Delay, and more
+#define DELAY_CHUNKS 128
 
 static float const PL_tones[N_TONES] = {
      67.0,  69.3,  71.9,  74.4,  77.0,  79.7,  82.5,  85.4,  88.5,  91.5,
@@ -90,10 +95,11 @@ struct stream_info {
   // queued until the audio gets there, however status and data interleave
   bool have_last;
   uint32_t last_id;            // the last announced
+  bool have_applied;
+  uint32_t applied_ts;         // the last boundary reached: an announcement before it is stale
   char last_label[96];
-  struct call_change { uint32_t timestamp,id; char label[96]; double received; } changes[16];
-  int nchanges;
-  bool untimed;                // an older radiod (no call timestamps): the last announced applies as it comes
+  struct call_change { uint32_t timestamp,id; char label[96]; double received; bool untimed; } changes[16];
+  int nchanges;                // (untimed: an older radiod, no call timestamps: from the audio that came after it)
   double seen;
 };
 static struct stream_info Info[MAX_INFO];
@@ -256,6 +262,12 @@ struct session {
   // call ends a transmission (FM into digital, one call into the next)
   uint32_t call_id;
   char digital[96];
+  // The delay line: decoded audio, each packet's with its RTP timestamp and
+  // arrival, and the ends of transmissions found in the stream, in order
+  float held[DELAY_SAMPLES];
+  uint64_t held_in,held_out;
+  struct { uint32_t timestamp; double arrived; int n; bool end; } chunks[DELAY_CHUNKS];
+  int chunk_head,nchunks;
 };
 static struct session Sessions[MAX_SESSIONS];
 
@@ -353,7 +365,9 @@ static void audio(struct session *sp,float const *x,int n){
   }
 }
 
+static void release_due(struct session *sp,bool all);
 static void end_session(struct session *sp){
+  release_due(sp,true);
   tx_end(sp);
   if(sp->opus != NULL)
     opus_decoder_destroy(sp->opus);
@@ -446,44 +460,102 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
   ip->have_last = true;
   ip->last_id = id;
   strlcpy(ip->last_label,label,sizeof ip->last_label);
-  ip->untimed = !chan.dv.call_timestamp_valid;
-  if(ip->untimed)
-    return; // applied by the next audio
+  bool const untimed = !chan.dv.call_timestamp_valid;
+  uint32_t const ts = chan.dv.call_timestamp;
+  if(!untimed && ip->have_applied && (int32_t)(ts - ip->applied_ts) < 0)
+    return; // older than a boundary already reached: delayed, stale
   if(ip->nchanges == (int)(sizeof ip->changes / sizeof ip->changes[0])){
-    for(int i = 0; i < MAX_SESSIONS; i++) // full: the oldest applies now
+    for(int i = 0; i < MAX_SESSIONS; i++) // full: the earliest applies now
       if(Sessions[i].inuse && Sessions[i].ssrc == ssrc && address_match(&Sessions[i].sender,sender))
 	call_change(&Sessions[i],ip->changes[0].id,ip->changes[0].label);
+    if(!ip->changes[0].untimed){
+      ip->have_applied = true;
+      ip->applied_ts = ip->changes[0].timestamp;
+    }
     memmove(&ip->changes[0],&ip->changes[1],(size_t)(ip->nchanges - 1) * sizeof ip->changes[0]);
     ip->nchanges--;
   }
-  struct call_change *c = &ip->changes[ip->nchanges++];
-  c->timestamp = chan.dv.call_timestamp;
+  // In stream order, however they came: after any at the same timestamp
+  // (the same call's later IDs)
+  int at = ip->nchanges;
+  while(!untimed && at > 0 && !ip->changes[at - 1].untimed && (int32_t)(ts - ip->changes[at - 1].timestamp) < 0)
+    at--;
+  memmove(&ip->changes[at + 1],&ip->changes[at],(size_t)(ip->nchanges - at) * sizeof ip->changes[0]);
+  ip->nchanges++;
+  struct call_change *c = &ip->changes[at];
+  c->timestamp = ts;
+  c->untimed = untimed;
   c->id = id;
   strlcpy(c->label,label,sizeof c->label);
   c->received = ip->seen;
 }
 
 // The calls due by this packet: each new call a transmission of its own
-static void calls_due(struct session *sp,struct stream_info *ip,uint32_t timestamp){
+static void calls_due(struct session *sp,struct stream_info *ip,uint32_t timestamp,double arrived){
   if(ip == NULL)
     return;
-  if(ip->untimed){
-    if(ip->have_last)
-      call_change(sp,ip->last_id,ip->last_label);
-    return;
-  }
-  double const now = monotonic();
   int k = 0;
-  // Its audio reached; or announced 2 s ago and still not (the stream's
+  // Its audio reached; or audio 5 s after it still not there (the stream's
   // clock restarted, say): it applies anyway
-  while(k < ip->nchanges && ((int32_t)(timestamp - ip->changes[k].timestamp) >= 0 || now - ip->changes[k].received > 2.0)){
-    call_change(sp,ip->changes[k].id,ip->changes[k].label);
+  // (untimed: the audio came after it)
+  while(k < ip->nchanges){
+    struct call_change const *c = &ip->changes[k];
+    if(c->untimed ? arrived < c->received : ((int32_t)(timestamp - c->timestamp) < 0 && arrived - c->received <= 5.0))
+      break;
+    call_change(sp,c->id,c->label);
+    if(!c->untimed){
+      ip->have_applied = true;
+      ip->applied_ts = c->timestamp;
+    }
     k++;
   }
   if(k > 0){
     memmove(&ip->changes[0],&ip->changes[k],(size_t)(ip->nchanges - k) * sizeof ip->changes[0]);
     ip->nchanges -= k;
   }
+}
+
+// Into the delay line: audio (n > 0) from the packet at timestamp, or the end
+// of a transmission (end)
+static void release(struct session *sp);
+static void hold(struct session *sp,uint32_t timestamp,float const *x,int n,bool end){
+  if(n > DELAY_SAMPLES)
+    n = DELAY_SAMPLES;
+  while(sp->nchunks == DELAY_CHUNKS || sp->held_in - sp->held_out + (uint64_t)n > DELAY_SAMPLES)
+    release(sp); // full: the oldest goes now
+  int const k = (sp->chunk_head + sp->nchunks++) % DELAY_CHUNKS;
+  sp->chunks[k].timestamp = timestamp;
+  sp->chunks[k].arrived = monotonic();
+  sp->chunks[k].n = n;
+  sp->chunks[k].end = end;
+  for(int i = 0; i < n; i++)
+    sp->held[(sp->held_in + (uint64_t)i) % DELAY_SAMPLES] = x[i];
+  sp->held_in += (uint64_t)n;
+}
+// The oldest out of the delay line: the calls due by its timestamp first
+static void release(struct session *sp){
+  if(sp->nchunks == 0)
+    return;
+  int const k = sp->chunk_head;
+  sp->chunk_head = (sp->chunk_head + 1) % DELAY_CHUNKS;
+  sp->nchunks--;
+  if(sp->chunks[k].end){
+    tx_end(sp);
+    return;
+  }
+  calls_due(sp,info(&sp->sender,sp->ssrc,false),sp->chunks[k].timestamp,sp->chunks[k].arrived);
+  float x[DELAY_SAMPLES];
+  int const n = sp->chunks[k].n;
+  for(int i = 0; i < n; i++)
+    x[i] = sp->held[(sp->held_out + (uint64_t)i) % DELAY_SAMPLES];
+  sp->held_out += (uint64_t)n;
+  audio(sp,x,n);
+}
+// What has been held long enough (all of it: at the end)
+static void release_due(struct session *sp,bool all){
+  double const now = monotonic();
+  while(sp->nchunks > 0 && (all || now - sp->chunks[sp->chunk_head].arrived >= Delay))
+    release(sp);
 }
 
 static void expect(struct session *sp,struct rtp_header const *rtp,uint32_t ts_units){
@@ -526,7 +598,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   }
   double const now = monotonic();
   if(now - sp->last_packet > Quiet_gap){
-    tx_end(sp);
+    hold(sp,0,NULL,0,true);
     sp->rtp_init = false; // the next transmission's numbering is its own
   }
   sp->last_packet = now;
@@ -548,9 +620,8 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     if(seq_step < 0 || ts_step < 0)
       return;
     if((double)ts_step / clock > Rtp_gap)
-      tx_end(sp);
+      hold(sp,0,NULL,0,true);
   }
-  calls_due(sp,ip,rtp.timestamp);
   float out[2880 * 2];
   if(opus){
     if(sp->opus == NULL){
@@ -561,7 +632,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     }
     int const n = opus_decode_float(sp->opus,dp,(opus_int32)payload,out,2880,0);
     if(n > 0){
-      audio(sp,out,n);
+      hold(sp,rtp.timestamp,out,n,false);
       expect(sp,&rtp,(uint32_t)n * (48000 / SAMPRATE));
     } else
       expect(sp,&rtp,0);
@@ -592,7 +663,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   }
   expect(sp,&rtp,(uint32_t)frames);
   if(samprate == SAMPRATE){
-    audio(sp,in,nin);
+    hold(sp,rtp.timestamp,in,nin,false);
     return;
   }
   if(sp->src == NULL){
@@ -604,7 +675,7 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   SRC_DATA d = {.data_in = in,.input_frames = nin,.data_out = out,.output_frames = (long)(sizeof out / sizeof out[0]),
 		.src_ratio = (double)SAMPRATE / samprate,.end_of_input = 0};
   if(src_process(sp->src,&d) == 0 && d.output_frames_gen > 0)
-    audio(sp,out,(int)d.output_frames_gen);
+    hold(sp,rtp.timestamp,out,(int)d.output_frames_gen,false);
 }
 
 static volatile sig_atomic_t Stop;
@@ -660,12 +731,14 @@ int main(int argc,char *argv[]){
     FD_ZERO(&set);
     for(int i = 0; i < nfds; i++)
       FD_SET(fds[i],&set);
-    struct timeval tv = {.tv_sec = 0,.tv_usec = 250000};
+    struct timeval tv = {.tv_sec = 0,.tv_usec = 50000}; // the delay line drained this often
     int const r = select(maxfd + 1,&set,NULL,NULL,&tv);
     if(r < 0 && errno != EINTR)
       break;
-    for(int i = 0; r > 0 && i < nfds; i++){
-      if(!FD_ISSET(fds[i],&set))
+    // Status before data: a call's announcement ahead of its audio, where both wait
+    for(int j = 0; r > 0 && j < 2 * nfds; j++){
+      int const i = j % nfds;
+      if(!FD_ISSET(fds[i],&set) || is_status[i] != (j < nfds))
 	continue;
       struct sockaddr_storage sender;
       socklen_t len = sizeof sender;
@@ -678,19 +751,26 @@ int main(int argc,char *argv[]){
 	data(buffer,size,&sender);
     }
     double const now = monotonic();
-    for(int k = 0; k < MAX_SESSIONS; k++)
-      if(Sessions[k].inuse && Sessions[k].on && now - Sessions[k].last_packet > Quiet_gap){
-	tx_end(&Sessions[k]); // its channel squelched: the transmission is over
-	Sessions[k].rtp_init = false;
+    for(int k = 0; k < MAX_SESSIONS; k++){
+      struct session *sp = &Sessions[k];
+      if(!sp->inuse)
+	continue;
+      release_due(sp,false);
+      if(sp->on && sp->nchunks == 0 && now - sp->last_packet > Quiet_gap){
+	tx_end(sp); // its channel squelched: the transmission is over
+	sp->rtp_init = false;
       }
+    }
     if(now - last_write > 60){
       write_results();
       last_write = now;
     }
   }
   for(int k = 0; k < MAX_SESSIONS; k++)
-    if(Sessions[k].inuse)
+    if(Sessions[k].inuse){
+      release_due(&Sessions[k],true);
       tx_end(&Sessions[k]);
+    }
   write_results();
   return 0;
 }
