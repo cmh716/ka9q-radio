@@ -84,10 +84,16 @@ function clampView(v){
   return {center, span};
 }
 
-let reconnectTimer = null;
+let reconnectTimer = null, generation = 0;
 function setView(v){
   view = clampView(v);
-  wctx.fillStyle = "#000"; wctx.fillRect(0, 0, wf.width, wf.height); // a new view: the old rows no longer line up
+  // A new view: the old stream's spectra no longer line up. Stop it now
+  // (not after the pause before the new one), drop its last frame, and
+  // clear the waterfall
+  generation++;
+  if(source){ source.close(); source = null; }
+  frame = null;
+  wctx.fillStyle = "#000"; wctx.fillRect(0, 0, wf.width, wf.height);
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(connect, 120);
   draw();
@@ -96,11 +102,15 @@ function setView(v){
 function connect(){
   if(source) source.close();
   sizeCanvases();
-  const bins = Math.max(256, Math.min(8192, spec.width));
+  const bins = Math.max(256, Math.min(8192, spec.width)) & ~1;
+  const mine = generation;
   source = new EventSource(`/stream?center=${Math.round(view.center)}&span=${Math.round(view.span)}&bins=${bins}`);
   statusEl.textContent = "";
-  source.onmessage = e => { frame = decode(JSON.parse(e.data)); addRow(); draw(); statusEl.textContent = ""; };
-  source.onerror = () => { statusEl.textContent = "reconnecting…"; };
+  source.onmessage = e => {
+    if(mine !== generation) return; // a stream for a view no longer shown
+    frame = decode(JSON.parse(e.data)); addRow(); draw(); statusEl.textContent = "";
+  };
+  source.onerror = () => { if(mine === generation) statusEl.textContent = "reconnecting…"; };
 }
 
 function decode(m){
@@ -268,12 +278,10 @@ async function start(){
   for(;;){
     try {
       const fe = await (await fetch("/info")).json();
-      if(fe.samprate > 0){
-        // a complex front end covers its sample rate about its centre (the
-        // edges in its filter's skirts: 94% kept); a real one, half of it
-        const usable = fe.real ? fe.samprate / 2 * 0.94 : fe.samprate * 0.94;
-        const c = fe.real ? fe.samprate / 4 : fe.center;
-        cover = {lo: c - usable / 2, hi: c + usable / 2};
+      if(fe.hi > fe.lo){
+        // the front end's coverage as it is tuned now, as the server allows
+        // views (it keeps them inside, whatever this asks)
+        cover = {lo: fe.lo, hi: fe.hi};
         document.getElementById("fe").textContent = `${fe.description || "receiver"} ${fmtMHz(cover.lo)}–${fmtMHz(cover.hi)} MHz`;
         break;
       }
