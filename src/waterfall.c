@@ -126,6 +126,10 @@ struct chaninfo {
   int64_t seen;
 };
 static struct chaninfo Chans[MAX_CHANS];
+// Others' spectrum channels heard (another waterfall's viewers, powers,
+// ka9q-web): their SSRCs, avoided for ours, for ten minutes
+#define MAX_SPECTRA 256
+static struct { uint32_t ssrc; int64_t seen; } Spectra[MAX_SPECTRA];
 static int Nchans;
 static pthread_mutex_t Chans_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -218,8 +222,24 @@ static void *status_thread(void *arg){
     pthread_mutex_unlock(&Clients_lock);
     if(ours)
       continue;
-    if(chan.demod_type == SPECT_DEMOD || chan.demod_type == SPECT2_DEMOD)
-      continue; // others' spectrum channels: not channels to mark
+    if(chan.demod_type == SPECT_DEMOD || chan.demod_type == SPECT2_DEMOD){
+      // Another's spectrum channel: not one to mark, but its SSRC taken
+      int64_t const now = gps_time_ns();
+      pthread_mutex_lock(&Chans_lock);
+      int k = 0;
+      for(int i = 0; i < MAX_SPECTRA; i++){
+	if(Spectra[i].ssrc == ssrc){
+	  k = i;
+	  break;
+	}
+	if(Spectra[i].seen < Spectra[k].seen)
+	  k = i; // else the oldest (or unused) entry
+      }
+      Spectra[k].ssrc = ssrc;
+      Spectra[k].seen = now;
+      pthread_mutex_unlock(&Chans_lock);
+      continue;
+    }
     if(demod_name_from_type(chan.demod_type) == NULL)
       continue; // no demodulator (a channel timing out says so last): nothing to mark
     if(!(chan.tune.freq > 0))
@@ -449,9 +469,12 @@ static void serve_stream(int fd,char const *query){
 	clash = false;
 	for(int j = 0; j < MAX_CLIENTS; j++)
 	  clash = clash || (Clients[j].used && Clients[j].ssrc == ssrc);
+	int64_t const now = gps_time_ns();
 	pthread_mutex_lock(&Chans_lock);
 	for(int j = 0; j < Nchans; j++)
 	  clash = clash || Chans[j].ssrc == ssrc;
+	for(int j = 0; j < MAX_SPECTRA; j++)
+	  clash = clash || (Spectra[j].ssrc == ssrc && now - Spectra[j].seen < 600 * (int64_t)BILLION);
 	pthread_mutex_unlock(&Chans_lock);
       } while(clash || ssrc == 0xffffffffu);
       c->ssrc = ssrc;
