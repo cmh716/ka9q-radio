@@ -26,7 +26,9 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+#include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,12 +59,45 @@ static int Wf_ctl_fd = -1, Wf_status_fd = -1;
 #define MAX_BINS 8192
 #define MAX_CHANS 512
 #define FRAME_MS 200                  // a spectrum every 200 ms
+#define MAX_CONNECTIONS 32            // HTTP connections at once
+#define IO_TIMEOUT_S 5                // to read a request, or write anything
+#define GUARD_HZ 25e3                 // views kept this far inside the front end's coverage (or 2% of it, if less)
 
 // The front end, from any status
 static pthread_mutex_t Fe_lock = PTHREAD_MUTEX_INITIALIZER;
 static double Fe_center, Fe_samprate;
+static double Fe_min_if, Fe_max_if;   // its coverage about its centre (0, 0: not yet known)
+static double Fe_blocktime;           // radiod's block, s (0: not yet known)
 static bool Fe_isreal;
 static char Fe_description[128];
+static _Atomic int Connections;
+
+// The range a view may take, Hz: the front end's coverage as it is tuned
+// now, less a guard, so that no spectrum channel's passband ever falls
+// outside it (radiod would retune the hardware for it, moving every other
+// channel). false until the front end is known
+static bool coverage(double *lo,double *hi){
+  pthread_mutex_lock(&Fe_lock);
+  double min_if = Fe_min_if, max_if = Fe_max_if;
+  if(!(max_if > min_if) && Fe_samprate > 0 && !Fe_isreal){
+    min_if = -0.47 * Fe_samprate; // (a front end that doesn't give its edges)
+    max_if = +0.47 * Fe_samprate;
+  }
+  double const guard = fmin(GUARD_HZ,0.02 * (max_if - min_if));
+  bool const ok = Fe_center > 0 && max_if > min_if;
+  *lo = Fe_center + min_if + guard;
+  *hi = Fe_center + max_if - guard;
+  pthread_mutex_unlock(&Fe_lock);
+  return ok;
+}
+// A lifetime for a spectrum channel, in radiod's blocks
+static int blocks(double seconds){
+  pthread_mutex_lock(&Fe_lock);
+  double const bt = Fe_blocktime > 0 ? Fe_blocktime : 0.02;
+  pthread_mutex_unlock(&Fe_lock);
+  int const n = (int)lrint(seconds / bt);
+  return n < 1 ? 1 : n;
+}
 
 // A browser's view: its spectrum channel, and the latest spectrum radiod sent it
 struct client {
@@ -143,6 +178,12 @@ static void *status_thread(void *arg){
       Fe_center = fe.frequency;
       Fe_samprate = fe.samprate;
       Fe_isreal = fe.isreal;
+      if(fe.max_IF > fe.min_IF){
+	Fe_min_if = fe.min_IF;
+	Fe_max_if = fe.max_IF;
+      }
+      if(fe.L > 0)
+	Fe_blocktime = fe.L / fe.samprate;
       strlcpy(Fe_description,fe.description,sizeof Fe_description);
       pthread_mutex_unlock(&Fe_lock);
     }
@@ -176,6 +217,8 @@ static void *status_thread(void *arg){
     }
     if(chan.demod_type == SPECT_DEMOD || chan.demod_type == SPECT2_DEMOD)
       continue; // others' spectrum channels: not channels to mark
+    if(demod_name_from_type(chan.demod_type) == NULL)
+      continue; // no demodulator (a channel timing out says so last): nothing to mark
     if(!(chan.tune.freq > 0))
       continue;
     // A channel: remember it for the markers
@@ -190,7 +233,8 @@ static void *status_thread(void *arg){
       struct chaninfo *ci = &Chans[k];
       ci->ssrc = ssrc;
       ci->freq = chan.tune.freq;
-      strlcpy(ci->mode,demod_name_from_type(chan.demod_type),sizeof ci->mode);
+      char const *mode = demod_name_from_type(chan.demod_type);
+      strlcpy(ci->mode,mode != NULL ? mode : "?",sizeof ci->mode);
       ci->active = isfinite(chan.output.power) || chan.dv.call_dest[0] != '\0';
       snprintf(ci->call,sizeof ci->call,"%s%s%s",chan.dv.call_dest,chan.dv.call_src[0] ? " " : "",chan.dv.call_src);
       repeater_t const *r = search_database((int)lrint(chan.tune.freq),0);
@@ -261,14 +305,20 @@ static void json_escape(char *out,size_t size,char const *in){
   }
   out[k] = '\0';
 }
-// A query parameter's value as a number, or the default
+// A query parameter's value as a number: the default if absent, NAN if
+// it isn't wholly a finite number
 static double query_number(char const *query,char const *name,double dflt){
   if(query == NULL)
     return dflt;
   size_t const len = strlen(name);
   for(char const *p = query; p != NULL && *p != '\0'; p = strchr(p,'&') ? strchr(p,'&') + 1 : NULL){
-    if(strncmp(p,name,len) == 0 && p[len] == '=')
-      return strtod(p + len + 1,NULL);
+    if(strncmp(p,name,len) == 0 && p[len] == '='){
+      char *end = NULL;
+      double const x = strtod(p + len + 1,&end);
+      if(end == p + len + 1 || (*end != '\0' && *end != '&') || !isfinite(x))
+	return NAN;
+      return x;
+    }
   }
   return dflt;
 }
@@ -292,24 +342,35 @@ static void serve_page(int fd){
     reply(fd,"404 Not Found","text/plain",msg,sizeof msg - 1);
     return;
   }
-  static char body[1 << 20];
-  size_t const len = fread(body,1,sizeof body,fp);
+  size_t const size = 1 << 20;
+  char *body = malloc(size); // its own: another request's mustn't change it as it goes
+  if(body == NULL){
+    fclose(fp);
+    return;
+  }
+  size_t const len = fread(body,1,size,fp);
   fclose(fp);
   reply(fd,"200 OK","text/html; charset=utf-8",body,len);
+  free(body);
 }
 
 static void serve_info(int fd){
   char body[512],desc[256];
+  double lo = 0,hi = 0;
+  bool const known = coverage(&lo,&hi);
   pthread_mutex_lock(&Fe_lock);
   json_escape(desc,sizeof desc,Fe_description);
-  snprintf(body,sizeof body,"{\"center\":%.0f,\"samprate\":%.0f,\"real\":%s,\"description\":\"%s\"}",
-	   Fe_center,Fe_samprate,Fe_isreal ? "true" : "false",desc);
+  snprintf(body,sizeof body,"{\"center\":%.0f,\"samprate\":%.0f,\"real\":%s,\"lo\":%.0f,\"hi\":%.0f,\"description\":\"%s\"}",
+	   Fe_center,Fe_samprate,Fe_isreal ? "true" : "false",known ? lo : 0,known ? hi : 0,desc);
   pthread_mutex_unlock(&Fe_lock);
   reply(fd,"200 OK","application/json",body,strlen(body));
 }
 
 static void serve_channels(int fd){
-  static char body[MAX_CHANS * 256];
+  enum { SIZE = MAX_CHANS * 256 };
+  char *body = malloc(SIZE); // its own (as the page's)
+  if(body == NULL)
+    return;
   size_t k = 0;
   body[k++] = '[';
   int64_t const now = gps_time_ns();
@@ -322,31 +383,43 @@ static void serve_channels(int fd){
     char call[128],name[128];
     json_escape(call,sizeof call,ci->call);
     json_escape(name,sizeof name,ci->name);
-    k += (size_t)snprintf(body + k,sizeof body - k,"%s{\"ssrc\":%u,\"freq\":%.0f,\"mode\":\"%s\",\"active\":%s,\"call\":\"%s\",\"name\":\"%s\"}",
+    k += (size_t)snprintf(body + k,SIZE - k,"%s{\"ssrc\":%u,\"freq\":%.0f,\"mode\":\"%s\",\"active\":%s,\"call\":\"%s\",\"name\":\"%s\"}",
 			  first ? "" : ",",ci->ssrc,ci->freq,ci->mode,ci->active ? "true" : "false",call,name);
     first = false;
-    if(k > sizeof body - 512)
+    if(k > SIZE - 512)
       break;
   }
   pthread_mutex_unlock(&Chans_lock);
   body[k++] = ']';
   reply(fd,"200 OK","application/json",body,k);
+  free(body);
 }
 
 // A browser's view, as Server-Sent Events, until it goes
 static void serve_stream(int fd,char const *query){
-  double const center = query_number(query,"center",0);
-  double const span = query_number(query,"span",0);
-  int bins = (int)query_number(query,"bins",2048);
-  if(!(center > 0) || !(span > 0)){
-    char const msg[] = "center and span (Hz) wanted\n";
+  double center = query_number(query,"center",NAN);
+  double span = query_number(query,"span",NAN);
+  double const want_bins = query_number(query,"bins",2048);
+  if(!isfinite(center) || !isfinite(span) || !isfinite(want_bins) || span < 1e3 || want_bins < 64 || want_bins > MAX_BINS){
+    char const msg[] = "center and span (Hz, span at least 1 kHz), bins (64-8192) wanted\n";
     reply(fd,"400 Bad Request","text/plain",msg,sizeof msg - 1);
     return;
   }
-  if(bins < 64)
-    bins = 64;
-  if(bins > MAX_BINS)
-    bins = MAX_BINS;
+  // Within the front end's coverage as tuned now: never a view that would
+  // have radiod move the hardware (and every other channel)
+  double lo,hi;
+  if(!coverage(&lo,&hi)){
+    char const msg[] = "radiod's front end not heard from yet\n";
+    reply(fd,"503 Service Unavailable","text/plain",msg,sizeof msg - 1);
+    return;
+  }
+  if(span > hi - lo)
+    span = hi - lo;
+  if(center < lo + span / 2)
+    center = lo + span / 2;
+  if(center > hi - span / 2)
+    center = hi - span / 2;
+  int const bins = (int)want_bins & ~1; // even: radiod's one-byte bins run from -n/2 for an even count
   double const rbw = span / bins;
   // A spectrum channel of its own
   struct client *c = NULL;
@@ -379,7 +452,7 @@ static void serve_stream(int fd,char const *query){
     encode_int(&bp,OUTPUT_SSRC,c->ssrc);
     encode_int(&bp,COMMAND_TAG,tag);
     encode_int(&bp,DEMOD_TYPE,SPECT2_DEMOD);
-    encode_int(&bp,LIFETIME,5 * 50); // 5 s without a poll: radiod closes it
+    encode_int(&bp,LIFETIME,blocks(5)); // 5 s without a poll: radiod closes it
     encode_double(&bp,RADIO_FREQUENCY,center);
     encode_int(&bp,BIN_COUNT,bins);
     encode_float(&bp,RESOLUTION_BW,(float)rbw);
@@ -404,13 +477,8 @@ static void serve_stream(int fd,char const *query){
       got_rbw = c->rbw;
       base = c->base;
       step = c->step;
-      // FFT order (DC up, then the negative frequencies) to low..high
-      int const first_neg = (n + 1) / 2;
-      int k = 0;
-      for(int i = first_neg; i < n; i++)
-	ordered[k++] = c->bins[i];
-      for(int i = 0; i < first_neg; i++)
-	ordered[k++] = c->bins[i];
+      // radiod sends one-byte bins low to high already (encode_byte_data)
+      memcpy(ordered,c->bins,(size_t)n);
     }
     pthread_mutex_unlock(&c->lock);
     if(have && n > 0 && got_rbw > 0){
@@ -425,12 +493,13 @@ static void serve_stream(int fd,char const *query){
     if(left > 0)
       usleep((useconds_t)(left / 1000));
   }
-  // Gone: close its spectrum channel (frequency 0)
+  // Gone: its spectrum channel ends now (a lifetime of one block; frequency
+  // 0 would only park it)
   uint8_t buffer[64],*bp = buffer;
   *bp++ = CMD;
   encode_int(&bp,OUTPUT_SSRC,c->ssrc);
   encode_int(&bp,COMMAND_TAG,(uint32_t)random());
-  encode_double(&bp,RADIO_FREQUENCY,0);
+  encode_int(&bp,LIFETIME,1);
   send_command(buffer,bp);
   if(Verbose)
     fprintf(stderr,"viewer ssrc %u gone\n",c->ssrc);
@@ -442,9 +511,15 @@ static void serve_stream(int fd,char const *query){
 static void *http_thread(void *arg){
   int const fd = (int)(intptr_t)arg;
   pthread_setname("wf http");
+  // Deadlines: a request must come within them, and a write that can't
+  // go (a stalled viewer) fails, freeing its thread and viewer slot
+  struct timeval const tv = { .tv_sec = IO_TIMEOUT_S };
+  setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof tv);
+  setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof tv);
   char req[4096];
   size_t len = 0;
-  while(len < sizeof req - 1){
+  int64_t const deadline = gps_time_ns() + IO_TIMEOUT_S * (int64_t)BILLION; // the whole request, however it trickles
+  while(len < sizeof req - 1 && gps_time_ns() < deadline){
     ssize_t const r = recv(fd,req + len,sizeof req - 1 - len,0);
     if(r <= 0)
       break;
@@ -473,6 +548,7 @@ static void *http_thread(void *arg){
     }
   }
   close(fd);
+  Connections--;
   return NULL;
 }
 
@@ -530,10 +606,17 @@ int main(int argc,char *argv[]){
     int const fd = accept(lfd,NULL,NULL);
     if(fd < 0)
       continue;
+    if(Connections >= MAX_CONNECTIONS){
+      close(fd); // bounded before any thread is made
+      continue;
+    }
+    Connections++;
     pthread_t h;
     if(pthread_create(&h,NULL,http_thread,(void *)(intptr_t)fd) == 0)
       pthread_detach(h);
-    else
+    else {
       close(fd);
+      Connections--;
+    }
   }
 }
