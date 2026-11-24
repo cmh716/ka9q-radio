@@ -102,9 +102,8 @@ int Nfds;                     // Number of streams
 pthread_mutex_t Sess_mutex = PTHREAD_MUTEX_INITIALIZER;
 struct rx_summary Rx_summary = { .lock = PTHREAD_MUTEX_INITIALIZER };
 
-// A receiver's identity for the summary, numerically (no name lookups on
-// the status path): its radiod's status group, else where its status came from
-static void receiver_key(struct sockaddr_storage const *a,char *out,size_t size){
+// An address, numerically (no name lookups on the status path)
+static void address_text(struct sockaddr_storage const *a,char *out,size_t size){
   char host[INET6_ADDRSTRLEN] = "";
   int port = 0;
   if(a->ss_family == AF_INET){
@@ -116,7 +115,10 @@ static void receiver_key(struct sockaddr_storage const *a,char *out,size_t size)
     inet_ntop(AF_INET6,&s->sin6_addr,host,sizeof host);
     port = ntohs(s->sin6_port);
   }
-  snprintf(out,size,"%s:%d",host,port);
+  if(host[0] == '\0')
+    out[0] = '\0'; // none
+  else
+    snprintf(out,size,"%s:%d",host,port);
 }
 PaStream *Pa_Stream;          // Portaudio stream handle
 int inDevNum;                 // Portaudio's audio output device index
@@ -583,11 +585,19 @@ void *statproc(void *arg){
 	.overranges = sp->frontend.overranges,
 	.samp_since_over = sp->frontend.samp_since_over,
       };
-      struct sockaddr_storage const *who = (struct sockaddr_storage const *)&sp->frontend.metadata_dest_socket;
-      receiver_key(who->ss_family == AF_INET || who->ss_family == AF_INET6 ? who : &sender,r.key,sizeof r.key);
+      // Which receiver: where its status comes from (each radiod its own
+      // address and port) and the status group it names (several can share one)
+      char from[64],group[64] = "";
+      address_text(&sender,from,sizeof from);
+      address_text((struct sockaddr_storage const *)&sp->frontend.metadata_dest_socket,group,sizeof group);
+      snprintf(r.key,sizeof r.key,"%s %s",from,group);
       strlcpy(r.description,sp->frontend.description,sizeof r.description);
       if(isfinite(r.if_dbfs))
 	summary_reading(&Rx_summary,&r);
+      // The channel's frequency and label for the busiest list, taken here
+      // with its status (the display mustn't read them as this writes them)
+      summary_channel_label(&Rx_summary,(int)(sp - Sessions),sp->ssrc,sp->chan.tune.freq,
+			    sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : sp->callsign);
     }
     // chan.output.power is in dBFS so no signal is -Infinity
     if(isnan(sp->chan.output.power) || !isfinite(sp->chan.output.power))
@@ -707,8 +717,10 @@ sess_t *lookup_or_create_session(struct sockaddr_storage const *sender,const uin
     }
   }
   // Assign an empty spot
-  if(first_idle == -1)
+  if(first_idle == -1){
+    pthread_mutex_unlock(&Sess_mutex);
     return NULL;
+  }
 
   sess_t * const sp = Sessions + first_idle;
   memset(sp,0,sizeof(sess_t));
@@ -719,6 +731,7 @@ sess_t *lookup_or_create_session(struct sockaddr_storage const *sender,const uin
   memcpy(&sp->sender,sender,sizeof(sp->sender));
   pthread_cond_init(&sp->qcond,NULL);
   pthread_mutex_init(&sp->qmutex,NULL);
+  summary_channel_reset(&Rx_summary,first_idle,ssrc); // its own history, from nothing
   atomic_store_explicit(&sp->inuse,true,memory_order_release);
   pthread_mutex_unlock(&Sess_mutex);
   return sp; // caller will set sp->inuse
@@ -732,6 +745,7 @@ int close_session(sess_t *sp){
   assert(sp >= Sessions && sp < Sessions + NSESSIONS);
   if(sp == Best_session)
     Best_session = NULL;
+  summary_channel_reset(&Rx_summary,(int)(sp - Sessions),0); // gone from the busiest list
 
   // Tell it to commit hari-kari
   atomic_store_explicit(&sp->terminate,true,memory_order_release);

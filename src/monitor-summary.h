@@ -19,7 +19,7 @@
 
 // A front end, as one of its channels' status gave it
 struct sum_reading {
-  char key[64];                   // which receiver: its radiod's status group, or its address
+  char key[128];                  // which receiver: its radiod's address and status group
   char description[128];          // what it calls itself (a label: two can share one)
   int64_t clocktime;              // radiod's time of that status, ns
   double frequency;               // its LO, Hz
@@ -48,6 +48,8 @@ struct sum_frontend {
 
 struct sum_channel {
   uint32_t ssrc;                  // whose figures these are (a slot reused by another starts again)
+  double freq;                    // its frequency and label, as its status last gave them
+  char label[32];
   struct {
     int64_t id;                   // which ten seconds, 0 unused
     float seconds;                // of audio in them
@@ -64,6 +66,10 @@ struct rx_summary {
 void summary_reading(struct rx_summary *s,struct sum_reading const *r);
 // Audio a channel played (in its slot), at now
 void summary_audio(struct rx_summary *s,int slot,uint32_t ssrc,double seconds,int64_t now);
+// A session made (ssrc) or closed (0) in a slot: its history starts again
+void summary_channel_reset(struct rx_summary *s,int slot,uint32_t ssrc);
+// A channel's frequency and label (a talkgroup, a callsign), from its status
+void summary_channel_label(struct rx_summary *s,int slot,uint32_t ssrc,double freq,char const *label);
 
 // What the dashboard shows of front end k, as of now (monitor's time): false if none
 struct sum_view {
@@ -76,9 +82,15 @@ struct sum_view {
   bool recent_over;               // within the last ten minutes
 };
 bool summary_view(struct rx_summary *s,int k,int64_t now,struct sum_view *v);
-// The channels with the most audio in the last ten minutes, most first:
-// their slots and seconds, up to n; returns how many (those with any to speak of)
-int summary_busiest(struct rx_summary *s,int *slots,double *seconds,int n,int64_t now);
+// The channels with the most audio in the last ten minutes, most first, up
+// to n; returns how many (those with any to speak of)
+struct sum_busy {
+  int slot;
+  double seconds;
+  double freq;
+  char label[32];
+};
+int summary_busiest(struct rx_summary *s,struct sum_busy *busy,int n,int64_t now);
 // "3m", "45s", "2h": a duration (ns) in its largest unit
 void summary_ago(int64_t ns,char *out,size_t size);
 // The front end line: "fobos 445.6000 MHz | IF -31.2 dBFS (peak -18.4, 3m ago) | gain 22 dB | A/D over 0 | 4s ago"

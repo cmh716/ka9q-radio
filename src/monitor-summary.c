@@ -47,13 +47,17 @@ void summary_reading(struct rx_summary *s,struct sum_reading const *r){
     f->first = r->clocktime;
   // Overloads since the last reading: its increase, or (radiod restarted,
   // its count starting again) all it has counted since
-  uint64_t const overs = !f->have_prev ? 0
+  uint64_t overs = !f->have_prev ? 0
     : r->overranges >= f->now.overranges ? r->overranges - f->now.overranges : r->overranges;
   bool const counted_up = f->have_prev ? overs > 0 : r->overranges > 0;
   f->now = *r;
   f->have_prev = true;
   if(counted_up && r->samprate > 0)
     f->last_over = r->clocktime - (int64_t)((double)r->samp_since_over / r->samprate * BILLION_NS);
+  // After a gap in status, the overloads it counts may all be older than
+  // the window: if even the last of them was, none belong in it
+  if(overs > 0 && f->last_over != 0 && r->clocktime - f->last_over >= (int64_t)SUM_WINDOW_S * BILLION_NS)
+    overs = 0;
   int64_t const id = bucket_of(r->clocktime);
   int const i = (int)(id % SUM_BUCKETS);
   if(f->bucket[i].id != id){
@@ -75,8 +79,8 @@ void summary_audio(struct rx_summary *s,int slot,uint32_t ssrc,double seconds,in
   pthread_mutex_lock(&s->lock);
   struct sum_channel * const c = &s->chan[slot];
   if(c->ssrc != ssrc){
-    memset(c,0,sizeof *c); // another stream in the slot
-    c->ssrc = ssrc;
+    pthread_mutex_unlock(&s->lock);
+    return; // not the stream the slot was last made for: not counted
   }
   int64_t const id = bucket_of(now);
   int const i = (int)(id % SUM_BUCKETS);
@@ -85,6 +89,27 @@ void summary_audio(struct rx_summary *s,int slot,uint32_t ssrc,double seconds,in
     c->bucket[i].seconds = 0;
   }
   c->bucket[i].seconds += (float)seconds;
+  pthread_mutex_unlock(&s->lock);
+}
+
+void summary_channel_reset(struct rx_summary *s,int slot,uint32_t ssrc){
+  if(slot < 0 || slot >= SUM_CHANNELS)
+    return;
+  pthread_mutex_lock(&s->lock);
+  memset(&s->chan[slot],0,sizeof s->chan[slot]);
+  s->chan[slot].ssrc = ssrc;
+  pthread_mutex_unlock(&s->lock);
+}
+
+void summary_channel_label(struct rx_summary *s,int slot,uint32_t ssrc,double freq,char const *label){
+  if(slot < 0 || slot >= SUM_CHANNELS)
+    return;
+  pthread_mutex_lock(&s->lock);
+  struct sum_channel * const c = &s->chan[slot];
+  if(c->ssrc == ssrc){
+    c->freq = freq;
+    snprintf(c->label,sizeof c->label,"%s",label != NULL ? label : "");
+  }
   pthread_mutex_unlock(&s->lock);
 }
 
@@ -121,7 +146,7 @@ static int by_seconds(void const *a,void const *b){
   double const x = Sort_seconds[*(int const *)a], y = Sort_seconds[*(int const *)b];
   return x > y ? -1 : x < y ? +1 : *(int const *)a - *(int const *)b;
 }
-int summary_busiest(struct rx_summary *s,int *slots,double *seconds,int n,int64_t now){
+int summary_busiest(struct rx_summary *s,struct sum_busy *busy,int n,int64_t now){
   static int all[SUM_CHANNELS]; // (under the lock)
   pthread_mutex_lock(&s->lock);
   int count = 0;
@@ -138,8 +163,11 @@ int summary_busiest(struct rx_summary *s,int *slots,double *seconds,int n,int64_
   if(count > n)
     count = n;
   for(int i = 0; i < count; i++){
-    slots[i] = all[i];
-    seconds[i] = Sort_seconds[all[i]];
+    struct sum_channel const * const c = &s->chan[all[i]];
+    busy[i].slot = all[i];
+    busy[i].seconds = Sort_seconds[all[i]];
+    busy[i].freq = c->freq;
+    snprintf(busy[i].label,sizeof busy[i].label,"%s",c->label);
   }
   pthread_mutex_unlock(&s->lock);
   return count;

@@ -509,16 +509,13 @@ static int ui_summary(int row,int64_t now){
   }
   if(rows == 0)
     ui_text(row + rows++,2,"Front end: waiting for status",A_DIM,UI_FRAME);
-  int slots[3];
-  double seconds[3];
-  int const n = summary_busiest(&Rx_summary,slots,seconds,3,now);
+  struct sum_busy busy[3];
+  int const n = summary_busiest(&Rx_summary,busy,3,now);
   int len = snprintf(line,sizeof line,"Busiest, 10 min:");
   for(int i = 0; i < n && len < (int)sizeof line; i++){
-    sess_t const *sp = &Sessions[slots[i]];
-    int const secs = (int)lrint(seconds[i]);
-    char const *name = sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : sp->callsign;
+    int const secs = (int)lrint(busy[i].seconds);
     len += snprintf(line + len,sizeof line - (size_t)len,"%s %.5f%s%s %d:%02d",i ? " |" : "",
-		    sp->chan.tune.freq/1e6,name[0] ? " " : "",name,secs / 60,secs % 60);
+		    busy[i].freq/1e6,busy[i].label[0] ? " " : "",busy[i].label,secs / 60,secs % 60);
   }
   if(n == 0)
     strlcat(line," no audio",sizeof line);

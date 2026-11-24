@@ -122,6 +122,8 @@ int main(void){
     summary_reading(&Rx_summary,&rd);
   }
   strcpy(sp->chan.dv.call_dest,"110");
+  summary_channel_reset(&Rx_summary,(int)(sp - Sessions),sp->ssrc); // (as a session's making does)
+  summary_channel_label(&Rx_summary,(int)(sp - Sessions),sp->ssrc,sp->chan.tune.freq,"110"); // (as its status does)
   summary_audio(&Rx_summary,(int)(sp - Sessions),sp->ssrc,2.0,gps_time_ns());
   dashboard();
   r = find_row("fobos 445.6000 MHz | IF -31.5 dBFS");

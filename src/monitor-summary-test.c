@@ -82,28 +82,54 @@ int main(void){
   reading_at("239.9.9.9:5006","rx",T0 + 30 * S,-30.0f,120,0);
   check(summary_view(&Sum,1,T0 + 31 * S,&v) && v.recent_overs == 320,"across a radiod restart: 200 before, 120 since");
 
-  // Two receivers with the same description (or none) are kept apart by identity
-  reading_at("239.5.5.5:5006","",T0 + 700 * S,-20.0f,0,0);
-  reading_at("239.6.6.6:5006","",T0 + 700 * S,-40.0f,0,0);
+  // A gap in status: the first status after it counts 5 more overloads, the
+  // last of them 20 minutes before it: none belong in the last ten minutes
+  reading_at("239.7.7.7:5006","gap",T0,-30.0f,10,0);
+  reading_at("239.7.7.7:5006","gap",T0 + 1800 * S,-30.0f,15,(uint64_t)1200 * 50000000ull);
+  check(summary_view(&Sum,2,T0 + 1801 * S,&v) && v.recent_overs == 0 && !v.recent_over && v.last_over == T0 + 600 * S,
+	"after a status gap, overloads known to be older than ten minutes: not counted recent");
+
+  // Two receivers with no description, sharing a status group, from two
+  // addresses (monitor keys them by both): kept apart
+  memset(Sum.fe,0,sizeof Sum.fe);
+  reading_at("192.168.0.10:5004 239.5.5.5:5006","",T0 + 700 * S,-20.0f,0,0);
+  reading_at("192.168.0.11:5004 239.5.5.5:5006","",T0 + 700 * S,-40.0f,0,0);
+  reading_at("192.168.0.10:5004 239.5.5.5:5006","",T0 + 702 * S,-21.0f,0,0);
   struct sum_view a,b;
-  check(summary_view(&Sum,2,T0 + 701 * S,&a) && summary_view(&Sum,3,T0 + 701 * S,&b)
-	&& fabsf(a.now.if_dbfs + 20) < 0.01f && fabsf(b.now.if_dbfs + 40) < 0.01f,"two unnamed receivers, apart");
+  check(summary_view(&Sum,0,T0 + 703 * S,&a) && summary_view(&Sum,1,T0 + 703 * S,&b)
+	&& fabsf(a.now.if_dbfs + 21) < 0.01f && fabsf(b.now.if_dbfs + 40) < 0.01f && fabsf(a.peak + 20) < 0.01f,
+	"two unnamed receivers on one status group, apart");
 
   // Busiest: seconds of audio played. Slot 3 60 s, slot 7 30 s, slot 9 a moment
+  summary_channel_reset(&Sum,3,111);
+  summary_channel_reset(&Sum,7,222);
+  summary_channel_reset(&Sum,9,333);
+  summary_channel_label(&Sum,3,111,424700000,"110");
+  summary_channel_label(&Sum,7,222,453500000,"Alden");
+  summary_channel_label(&Sum,7,999,1,"not its stream"); // another SSRC's label: ignored
   int64_t t = T0;
   for(int i = 0; i < 1200; i++, t += S / 10){
     if(i < 600) summary_audio(&Sum,3,111,0.1,t);
     if(i >= 600 && i < 900) summary_audio(&Sum,7,222,0.1,t);
     if(i == 1000) summary_audio(&Sum,9,333,0.02,t);
   }
-  int slots[3];
-  double secs[3];
-  int const n = summary_busiest(&Sum,slots,secs,3,t);
-  check(n == 2 && slots[0] == 3 && slots[1] == 7 && fabs(secs[0] - 60) < 0.01 && fabs(secs[1] - 30) < 0.01,
+  struct sum_busy busy[3];
+  int n = summary_busiest(&Sum,busy,3,t);
+  check(n == 2 && busy[0].slot == 3 && busy[1].slot == 7 && fabs(busy[0].seconds - 60) < 0.01 && fabs(busy[1].seconds - 30) < 0.01,
 	"busiest: 60 s, then 30 s of audio (a moment doesn't count)");
-  check(summary_busiest(&Sum,slots,secs,3,t + 700 * S) == 0,"ten minutes on, gone");
-  summary_audio(&Sum,7,999,0.1,t);
-  check(summary_busiest(&Sum,slots,secs,3,t) == 1 && slots[0] == 3,"another stream in a slot starts again");
+  check(strcmp(busy[0].label,"110") == 0 && busy[0].freq == 424700000 && strcmp(busy[1].label,"Alden") == 0,
+	"each with its own label and frequency, as its status gave them");
+  check(summary_busiest(&Sum,busy,3,t + 700 * S) == 0,"ten minutes on, gone");
+  // Slot 7 closed, then another session made in it: nothing of the old shows
+  summary_channel_reset(&Sum,7,0);
+  n = summary_busiest(&Sum,busy,3,t);
+  check(n == 1 && busy[0].slot == 3,"a closed slot drops out");
+  summary_channel_reset(&Sum,7,222); // even with the same SSRC
+  summary_audio(&Sum,7,222,0.1,t);
+  n = summary_busiest(&Sum,busy,3,t);
+  check(n == 1 && busy[0].slot == 3,"a new session in it starts from nothing, its SSRC the same or not");
+  summary_audio(&Sum,9,444,5.0,t); // audio of a stream the slot wasn't made for
+  check(summary_busiest(&Sum,busy,3,t) == 1,"audio from a stream not the slot's: not counted");
 
   char ago[16];
   summary_ago(45 * S,ago,sizeof ago);
