@@ -673,9 +673,14 @@ static void on_stop(int sig){
   Stop = 1;
 }
 
-// A path as its directory's real path and its name (the file needn't exist)
+// A path as its real path if it exists (a symlink followed to its target),
+// else as its directory's real path and its name
 static void canonical(char const *path,char *out,size_t size){
   char dir[4096],real[4096];
+  if(realpath(path,real) != NULL){
+    strlcpy(out,real,size);
+    return;
+  }
   char const *slash = strrchr(path,'/');
   char const *name = slash != NULL ? slash + 1 : path;
   if(slash == NULL)
