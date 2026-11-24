@@ -269,5 +269,16 @@ with open(log5, 'w', newline='') as f:
 out14 = os.path.join(d, 'out14.csv')
 survey.main(['-a', log5, '-u', cov6, '-o', out14, cands3])
 check(next(csv.DictReader(open(out14)))['Transmissions'] == '1', 'truncated rows in the log and coverage: skipped, the rest read')
+# Overlapping runs (no boundary): a candidate inside either qualifies
+cov7 = os.path.join(d, 'cov7.csv')
+with open(cov7, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-24 00:00:00Z', '2026-11-24 02:00:00Z', '440.00000', '450.00400'])
+    w.writerow(['2026-11-24 00:00:00Z', '2026-11-24 02:00:00Z', '450.00300', '460.00000'])
+out15 = os.path.join(d, 'out15.csv')
+survey.main(['-a', log4, '-u', cov7, '-o', out15, cands4])
+rows15 = {r['Name']: r for r in csv.DictReader(open(out15))}
+check(rows15['covered after']['Transmissions'] == '1', 'overlapping runs, well inside both: the nearer candidate credited')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

@@ -97,13 +97,19 @@ SLACK = datetime.timedelta(seconds=10)  # (rows are to the second; a stretch's e
 
 
 def spans_at(coverage, when, hz):
-    """The spans (lo, hi) of the stretches watching hz at when: those
-    containing it exactly; only if none, those within SLACK of it (rows are
-    to the second), so a stretch begun after a retune doesn't compete"""
-    exact = [(lo, hi) for s, e, lo, hi in coverage if s <= when <= e and lo <= hz <= hi]
-    if exact:
-        return exact
-    return [(lo, hi) for s, e, lo, hi in coverage if s - SLACK <= when <= e + SLACK and lo <= hz <= hi]
+    """The spans (lo, hi) of the stretches watching hz at when, and whether
+    any must all agree. Stretches with when strictly inside them: a
+    candidate inside any of them qualifies (overlapping runs). Only at a
+    stretch's first or last second (a retune and the transmission sharing
+    it: rows are to the second), or within SLACK of one: ambiguous, so a
+    candidate must be inside all of them"""
+    inner = [(lo, hi) for s, e, lo, hi in coverage if s < when < e and lo <= hz <= hi]
+    if inner:
+        return inner, False
+    edge = [(lo, hi) for s, e, lo, hi in coverage if s <= when <= e and lo <= hz <= hi]
+    if edge:
+        return edge, True
+    return [(lo, hi) for s, e, lo, hi in coverage if s - SLACK <= when <= e + SLACK and lo <= hz <= hi], True
 
 
 def frequency_of(row):
@@ -185,19 +191,18 @@ def survey(rows, transmissions, lo, hi, coverage=None):
     for hz, start, end, secs in transmissions:
         # With coverage: only a transmission heard where and when activity
         # was watching counts, and only for candidates inside that span
-        spans = None
+        spans, every = None, False
         if coverage is not None:
-            spans = spans_at(coverage, start, hz)
+            spans, every = spans_at(coverage, start, hz)
             if not spans:
                 continue
         k = bisect.bisect_left(keys, hz)
         best = None
         for j in (k - 1, k):
             if 0 <= j < len(keys) and abs(keys[j] - hz) <= MATCH_HZ:
-                # In every span matching the time: where a retune and the
-                # transmission share a second (rows are to the second), only
-                # what both stretches watched can be credited
-                if spans is not None and not all(lo <= keys[j] <= hi for lo, hi in spans):
+                # Inside a span matching the time; at an ambiguous boundary
+                # (a retune in the transmission's second), inside all of them
+                if spans is not None and not (all if every else any)(lo <= keys[j] <= hi for lo, hi in spans):
                     continue
                 if best is None or abs(keys[j] - hz) < abs(keys[best] - hz):
                     best = j
