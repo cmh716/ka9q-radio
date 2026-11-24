@@ -1,0 +1,41 @@
+.TH "WATERFALL" "1" "November 24, 2026" "ka9q-radio" "ka9q-radio Manual"
+.SH NAME
+waterfall \- a web spectrum and waterfall of radiod's front end
+.SH SYNOPSIS
+.B waterfall
+.RI "[\-p port] [\-H page] [\-r repeaters] [\-v] radiod-status-group"
+.SH DESCRIPTION
+waterfall serves a web page (http://host:8090/ by default) showing the
+spectrum and a scrolling waterfall of everything radiod's front end covers
+(for a Fobos at 50 MHz, about 47 MHz of it: 422 to 469 MHz around 445.6),
+with radiod's channels marked along the top, green while active, named from
+the repeater lists in /var/lib/ka9q-radio/repeaters.d. The mouse wheel
+zooms about the pointer, dragging pans, a double click zooms in four times
+there, and Full span shows it all again; the floor and range sliders set
+the colours, which otherwise follow the noise floor. Hovering gives the
+frequency and level under the pointer and the nearest channel.
+.P
+Each browser gets a spectrum channel of its own in radiod for the view it
+shows (one-byte bins, refreshed five times a second), which radiod closes
+when the browser goes. Wide views use the front end's own FFT; narrow
+zooms, a downconverter (radiod's spectrum crossover, 200 Hz per bin).
+Its channels are polled every three seconds.
+.SH OPTIONS
+.TP
+.B "\-p port"
+The HTTP port. Default 8090.
+.TP
+.B "\-H page"
+The page. Default /usr/local/share/ka9q-radio/waterfall.html.
+.TP
+.B "\-r directory"
+The repeater lists for channel names. Default /var/lib/ka9q-radio/repeaters.d.
+.TP
+.B "\-v"
+Say when viewers come and go.
+.SH EXAMPLE
+.nf
+waterfall fobos-uhf.local
+.fi
+.SH SEE ALSO
+radiod(8), monitor(1), powers(1)

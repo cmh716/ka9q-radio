@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<!-- waterfall: radiod's spectrum and waterfall (served by the waterfall program)
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waterfall</title>
+<style>
+  :root { --bg:#0b0e12; --panel:#151a21; --fg:#d8dee6; --dim:#7d8896; --accent:#3fb950; --warn:#d29922; --grid:#26303b; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.35 system-ui,-apple-system,Segoe UI,sans-serif; }
+  body { display:flex; flex-direction:column; }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 12px; background:var(--panel); border-bottom:1px solid var(--grid); }
+  header h1 { font-size:14px; margin:0 8px 0 0; font-weight:600; }
+  button { background:#222a35; color:var(--fg); border:1px solid #33404f; border-radius:4px; padding:3px 10px; font:inherit; cursor:pointer; }
+  button:hover { background:#2b3644; }
+  label { color:var(--dim); display:flex; align-items:center; gap:4px; }
+  input[type=range] { width:90px; }
+  #readout { margin-left:auto; font-variant-numeric:tabular-nums; color:var(--dim); white-space:nowrap; }
+  #status { color:var(--warn); }
+  main { position:relative; flex:1; min-height:0; }
+  canvas { position:absolute; left:0; width:100%; display:block; }
+  #spec { top:0; height:30%; cursor:crosshair; }
+  #wf { top:30%; height:70%; cursor:grab; image-rendering:pixelated; }
+  #info { position:absolute; right:12px; top:8px; background:rgba(21,26,33,.92); border:1px solid #33404f; border-radius:6px; padding:6px 10px; display:none; max-width:320px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Waterfall</h1>
+  <span id="fe"></span>
+  <button id="full" title="The whole coverage">Full span</button>
+  <button id="zin" title="Zoom in (or the mouse wheel)">+</button>
+  <button id="zout" title="Zoom out">&minus;</button>
+  <label>floor <input id="floor" type="range" min="-30" max="30" value="0"></label>
+  <label>range <input id="range" type="range" min="20" max="90" value="50"></label>
+  <span id="status"></span>
+  <span id="readout"></span>
+</header>
+<main>
+  <canvas id="spec"></canvas>
+  <canvas id="wf"></canvas>
+  <div id="info"></div>
+</main>
+<script>
+"use strict";
+const spec = document.getElementById("spec"), wf = document.getElementById("wf");
+const sctx = spec.getContext("2d"), wctx = wf.getContext("2d");
+const readout = document.getElementById("readout"), statusEl = document.getElementById("status"), info = document.getElementById("info");
+let cover = null;           // {lo, hi}: the front end's coverage, Hz
+let view = null;            // {center, span}
+let source = null, frame = null, channels = [];
+let floorEst = null;        // the noise floor, followed slowly (dB)
+
+const fmtMHz = hz => (hz / 1e6).toFixed(hz < 1e9 ? 4 : 3);
+
+function sizeCanvases(){
+  const dpr = window.devicePixelRatio || 1;
+  for(const c of [spec, wf]){
+    const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+    if(c.width !== w || c.height !== h){ c.width = w; c.height = h; }
+  }
+}
+
+// Colours: dark blue through cyan, yellow to red
+function colour(t){
+  t = Math.max(0, Math.min(1, t));
+  const stops = [[0,[0,0,20]],[0.25,[0,40,140]],[0.5,[0,170,200]],[0.7,[230,220,40]],[0.85,[240,120,0]],[1,[255,255,255]]];
+  for(let i = 1; i < stops.length; i++){
+    if(t <= stops[i][0]){
+      const [t0,c0] = stops[i-1], [t1,c1] = stops[i], f = (t - t0) / (t1 - t0);
+      return [0,1,2].map(k => Math.round(c0[k] + f * (c1[k] - c0[k])));
+    }
+  }
+  return [255,255,255];
+}
+const palette = Array.from({length:256}, (_, i) => colour(i / 255));
+
+function clampView(v){
+  const full = cover.hi - cover.lo;
+  let span = Math.min(Math.max(v.span, 20e3), full);
+  let center = Math.min(Math.max(v.center, cover.lo + span / 2), cover.hi - span / 2);
+  return {center, span};
+}
+
+let reconnectTimer = null;
+function setView(v){
+  view = clampView(v);
+  wctx.fillStyle = "#000"; wctx.fillRect(0, 0, wf.width, wf.height); // a new view: the old rows no longer line up
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(connect, 120);
+  draw();
+}
+
+function connect(){
+  if(source) source.close();
+  sizeCanvases();
+  const bins = Math.max(256, Math.min(8192, spec.width));
+  source = new EventSource(`/stream?center=${Math.round(view.center)}&span=${Math.round(view.span)}&bins=${bins}`);
+  statusEl.textContent = "";
+  source.onmessage = e => { frame = decode(JSON.parse(e.data)); addRow(); draw(); statusEl.textContent = ""; };
+  source.onerror = () => { statusEl.textContent = "reconnecting…"; };
+}
+
+function decode(m){
+  const raw = atob(m.bins), db = new Float32Array(m.n);
+  for(let i = 0; i < m.n; i++) db[i] = m.base + raw.charCodeAt(i) * m.step;
+  return {start: m.start, rbw: m.rbw, n: m.n, db};
+}
+
+// The frame resampled to the canvas width: the strongest bin in each pixel
+function columns(width){
+  const out = new Float32Array(width).fill(-200);
+  if(!frame) return out;
+  const lo = view.center - view.span / 2, hzPerPx = view.span / width;
+  for(let i = 0; i < frame.n; i++){
+    const x = Math.floor((frame.start + i * frame.rbw - lo) / hzPerPx);
+    if(x >= 0 && x < width && frame.db[i] > out[x]) out[x] = frame.db[i];
+  }
+  // fill pixels no bin fell in (zoomed in past the bins)
+  for(let x = 1; x < width; x++) if(out[x] === -200) out[x] = out[x-1];
+  return out;
+}
+
+function levels(){
+  const floor = (floorEst ?? -100) + Number(document.getElementById("floor").value) - 5;
+  const range = Number(document.getElementById("range").value);
+  return {floor, range};
+}
+
+function addRow(){
+  const cols = columns(wf.width);
+  // follow the noise floor: the 20th percentile, smoothed
+  const sorted = Array.from(cols).filter(v => v > -199).sort((a, b) => a - b);
+  if(sorted.length){
+    const p20 = sorted[Math.floor(sorted.length * 0.2)];
+    floorEst = floorEst === null ? p20 : floorEst + 0.05 * (p20 - floorEst);
+  }
+  const {floor, range} = levels();
+  const rowH = Math.max(1, Math.round(window.devicePixelRatio || 1));
+  wctx.drawImage(wf, 0, rowH); // scroll down
+  const img = wctx.createImageData(wf.width, rowH);
+  for(let x = 0; x < wf.width; x++){
+    const c = palette[Math.max(0, Math.min(255, Math.round((cols[x] - floor) / range * 255)))];
+    for(let r = 0; r < rowH; r++){
+      const k = (r * wf.width + x) * 4;
+      img.data[k] = c[0]; img.data[k+1] = c[1]; img.data[k+2] = c[2]; img.data[k+3] = 255;
+    }
+  }
+  wctx.putImageData(img, 0, 0);
+}
+
+function niceStep(span, px){
+  const raw = span / Math.max(1, px / 110);
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  for(const m of [1, 2, 2.5, 5, 10]) if(m * p >= raw) return m * p;
+  return 10 * p;
+}
+
+function draw(){
+  sizeCanvases();
+  const W = spec.width, H = spec.height, dpr = window.devicePixelRatio || 1;
+  sctx.fillStyle = "#0b0e12"; sctx.fillRect(0, 0, W, H);
+  if(!view) return;
+  const lo = view.center - view.span / 2;
+  const xOf = hz => (hz - lo) / view.span * W;
+  const {floor, range} = levels();
+  const yOf = db => H - 14 * dpr - (db - floor) / range * (H - 30 * dpr);
+  // grid and frequency axis
+  sctx.strokeStyle = "#26303b"; sctx.fillStyle = "#7d8896"; sctx.lineWidth = 1;
+  sctx.font = `${11 * dpr}px system-ui, sans-serif`; sctx.textAlign = "center";
+  const step = niceStep(view.span, W / dpr);
+  for(let f = Math.ceil(lo / step) * step; f <= lo + view.span; f += step){
+    const x = Math.round(xOf(f)) + 0.5;
+    sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, H - 14 * dpr); sctx.stroke();
+    sctx.fillText(fmtMHz(f), x, H - 3 * dpr);
+  }
+  sctx.textAlign = "left";
+  for(let d = Math.ceil(floor / 10) * 10; d < floor + range; d += 10){
+    const y = Math.round(yOf(d)) + 0.5;
+    sctx.beginPath(); sctx.moveTo(0, y); sctx.lineTo(W, y); sctx.stroke();
+    sctx.fillText(`${d} dB`, 4 * dpr, y - 2 * dpr);
+  }
+  // channel markers
+  sctx.textAlign = "center";
+  let lastLabel = -1e9;
+  for(const c of channels.slice().sort((a, b) => a.freq - b.freq)){
+    if(c.freq < lo || c.freq > lo + view.span) continue;
+    const x = Math.round(xOf(c.freq)) + 0.5;
+    sctx.strokeStyle = c.active ? "#3fb950" : "#5b6673";
+    sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, 8 * dpr); sctx.stroke();
+    if(x - lastLabel > 70 * dpr){
+      const label = c.name || c.call || fmtMHz(c.freq);
+      sctx.fillStyle = c.active ? "#3fb950" : "#7d8896";
+      sctx.fillText(label.slice(0, 14), x, 19 * dpr);
+      lastLabel = x;
+    }
+  }
+  // the trace
+  if(frame){
+    const cols = columns(W);
+    sctx.strokeStyle = "#e6edf3"; sctx.lineWidth = dpr;
+    sctx.beginPath();
+    for(let x = 0; x < W; x++){
+      const y = Math.max(0, Math.min(H - 14 * dpr, yOf(cols[x])));
+      x ? sctx.lineTo(x, y) : sctx.moveTo(x, y);
+    }
+    sctx.stroke();
+  }
+}
+
+// --- mouse: wheel zooms about the pointer, drag pans, hover reads out ---
+function hzAt(clientX, el){
+  const r = el.getBoundingClientRect();
+  return view.center - view.span / 2 + (clientX - r.left) / r.width * view.span;
+}
+function onWheel(e){
+  e.preventDefault();
+  if(!view) return;
+  const f = hzAt(e.clientX, e.currentTarget), k = e.deltaY < 0 ? 1 / 1.3 : 1.3;
+  setView({center: f + (view.center - f) * k, span: view.span * k});
+}
+let drag = null;
+function onDown(e){ if(view) drag = {x: e.clientX, center: view.center, w: e.currentTarget.getBoundingClientRect().width}; }
+function onMove(e){
+  if(!view) return;
+  const f = hzAt(e.clientX, e.currentTarget);
+  let level = "";
+  if(frame){
+    const i = Math.round((f - frame.start) / frame.rbw);
+    if(i >= 0 && i < frame.n) level = ` ${frame.db[i].toFixed(1)} dB`;
+  }
+  const near = channels.filter(c => Math.abs(c.freq - f) < view.span / 200).sort((a, b) => Math.abs(a.freq - f) - Math.abs(b.freq - f))[0];
+  readout.textContent = `${fmtMHz(f)} MHz${level}`;
+  if(near){
+    info.style.display = "block";
+    info.textContent = `${fmtMHz(near.freq)} MHz ${near.mode}${near.name ? " · " + near.name : ""}${near.call ? " · " + near.call : ""}${near.active ? " · active" : ""}`;
+  } else info.style.display = "none";
+  if(drag && e.buttons){
+    const dx = e.clientX - drag.x;
+    if(Math.abs(dx) > 2){ view = clampView({center: drag.center - dx / drag.w * view.span, span: view.span}); draw(); }
+  }
+}
+function onUp(){
+  if(drag && view.center !== drag.center) setView(view);
+  drag = null;
+}
+for(const el of [spec, wf]){
+  el.addEventListener("wheel", onWheel, {passive: false});
+  el.addEventListener("mousedown", onDown);
+  el.addEventListener("mousemove", onMove);
+  el.addEventListener("dblclick", e => setView({center: hzAt(e.clientX, e.currentTarget), span: view.span / 4}));
+}
+window.addEventListener("mouseup", onUp);
+document.getElementById("full").onclick = () => setView({center: (cover.lo + cover.hi) / 2, span: cover.hi - cover.lo});
+document.getElementById("zin").onclick = () => setView({center: view.center, span: view.span / 2});
+document.getElementById("zout").onclick = () => setView({center: view.center, span: view.span * 2});
+for(const id of ["floor", "range"]) document.getElementById(id).oninput = draw;
+window.addEventListener("resize", () => { if(view) setView(view); });
+
+async function pollChannels(){
+  try { channels = await (await fetch("/channels")).json(); draw(); } catch(e) {}
+  setTimeout(pollChannels, 2000);
+}
+
+async function start(){
+  for(;;){
+    try {
+      const fe = await (await fetch("/info")).json();
+      if(fe.samprate > 0){
+        // a complex front end covers its sample rate about its centre (the
+        // edges in its filter's skirts: 94% kept); a real one, half of it
+        const usable = fe.real ? fe.samprate / 2 * 0.94 : fe.samprate * 0.94;
+        const c = fe.real ? fe.samprate / 4 : fe.center;
+        cover = {lo: c - usable / 2, hi: c + usable / 2};
+        document.getElementById("fe").textContent = `${fe.description || "receiver"} ${fmtMHz(cover.lo)}–${fmtMHz(cover.hi)} MHz`;
+        break;
+      }
+    } catch(e) {}
+    statusEl.textContent = "waiting for radiod…";
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  setView({center: (cover.lo + cover.hi) / 2, span: cover.hi - cover.lo});
+  pollChannels();
+}
+start();
+</script>
+</body>
+</html>
