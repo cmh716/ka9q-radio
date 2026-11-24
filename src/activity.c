@@ -86,7 +86,13 @@ static double const Shadow_max = 15;  // s a transmission goes on through shadow
 static struct sockaddr_storage Ctl_dest;
 // The on-demand audit
 #define MAX_WATCH 8192
-static struct watch { double freq; int64_t asked; } Watch[MAX_WATCH]; // sorted by frequency
+static struct watch {
+  double freq;
+  int64_t asked;        // ns, last asked for its channel (0: none)
+  int64_t opened;       // ns, when its turn began
+  int64_t refused;      // ns, last heard while every channel was taken
+  int64_t rest_until;   // ns, its turn over: others first until then
+} Watch[MAX_WATCH];     // sorted by frequency
 static int Nwatch;
 static bool Audit;
 static struct sockaddr_storage Audit_dest;
@@ -96,6 +102,12 @@ static int Audit_max = 16;
 #define AUDIT_SSRC_END  (AUDIT_SSRC_BASE + 0x04000000u)
 static double const Audit_life = 30;   // s a channel outlives the last time it was asked for
 static double const Audit_every = 10;  // s between asks while it's heard
+#ifndef AUDIT_TURN
+#define AUDIT_TURN 120
+#define AUDIT_REST 300
+#endif
+static double const Audit_turn = AUDIT_TURN; // s a frequency keeps its channel while others wait
+static double const Audit_rest = AUDIT_REST; // s it then waits before another turn
 static double Audit_blocktime = 0.02;        // radiod's block, s (lifetimes count blocks)
 static char Iface[1024];
 static int Act_ctl_fd = -1, Act_status_fd = -1;
@@ -445,6 +457,28 @@ static void read_watch(char const *path){
   fprintf(stderr,"%s: %d frequencies to audit\n",path,added);
 }
 static void send_command(uint8_t *buffer,uint8_t *bp);
+static uint32_t audit_ssrc(double f){
+  return AUDIT_SSRC_BASE + (uint32_t)lrint(f / 125);
+}
+// Channels the audit holds now
+static int audit_busy(int64_t now){
+  int busy = 0;
+  for(int k = 0; k < Nwatch; k++)
+    if(Watch[k].asked != 0 && (double)(now - Watch[k].asked) / BILLION < Audit_life)
+      busy++;
+  return busy;
+}
+// Frequencies heard without a channel lately, for want of one (within secs)
+static int audit_refused(int64_t now,double secs){
+  int n = 0;
+  for(int k = 0; k < Nwatch; k++)
+    if(Watch[k].refused != 0 && (double)(now - Watch[k].refused) / BILLION < secs && now >= Watch[k].rest_until)
+      n++;
+  return n;
+}
+static bool audit_waiting(int64_t now){
+  return audit_refused(now,10) > 0;
+}
 // A transmission at f, heard now: the nearest frequency to audit within
 // Known_hz gets its channel (asked for again every Audit_every s)
 static void audit(double f,int64_t now){
@@ -464,19 +498,35 @@ static void audit(double f,int64_t now){
       w = &Watch[k];
   if(w == NULL)
     return;
+  if(now < w->rest_until)
+    return; // its turn was had: others first
   bool const live = w->asked != 0 && (double)(now - w->asked) / BILLION < Audit_life;
+  if(live && (double)(now - w->opened) / BILLION >= Audit_turn){
+    if(audit_waiting(now)){
+      // Its turn is over, and others are waiting: its channel goes now
+      // (a lifetime of one block), and it rests
+      uint8_t buffer[64],*bp = buffer;
+      *bp++ = CMD;
+      encode_int(&bp,OUTPUT_SSRC,audit_ssrc(w->freq));
+      encode_int(&bp,COMMAND_TAG,(uint32_t)random());
+      encode_int(&bp,LIFETIME,1);
+      send_command(buffer,bp);
+      w->asked = 0;
+      w->rest_until = now + (int64_t)(Audit_rest * BILLION);
+      if(Verbose)
+	fprintf(stderr,"audit: %.5f MHz: its turn over, its channel given to others\n",w->freq * 1e-6);
+      return;
+    }
+    w->opened = now; // nobody waiting: another turn
+  }
   if(live && (double)(now - w->asked) / BILLION < Audit_every)
     return;
   if(!live){
-    int busy = 0;
-    for(int k = 0; k < Nwatch; k++)
-      if(Watch[k].asked != 0 && (double)(now - Watch[k].asked) / BILLION < Audit_life)
-	busy++;
-    if(busy >= Audit_max){
-      if(Verbose)
-	fprintf(stderr,"audit: %.5f MHz heard, but %d channels already\n",w->freq * 1e-6,busy);
+    if(audit_busy(now) >= Audit_max){
+      w->refused = now; // (counted in the minute's line)
       return;
     }
+    w->opened = now;
     if(Verbose)
       fprintf(stderr,"audit: %.5f MHz heard: a channel\n",w->freq * 1e-6);
   }
@@ -485,7 +535,7 @@ static void audit(double f,int64_t now){
   *bp++ = CMD;
   // Its own SSRC, from the frequency (125 Hz steps), clear of radiod's
   // (kHz) and the spectrum channels' (the top bit)
-  encode_int(&bp,OUTPUT_SSRC,AUDIT_SSRC_BASE + (uint32_t)lrint(w->freq / 125));
+  encode_int(&bp,OUTPUT_SSRC,audit_ssrc(w->freq));
   encode_int(&bp,COMMAND_TAG,(uint32_t)random());
   encode_string(&bp,PRESET,"mixed",5);
   encode_double(&bp,RADIO_FREQUENCY,w->freq);
@@ -1210,6 +1260,12 @@ int main(int argc,char *argv[]){
       cover_idle(now);
     }
     if(now - last_summary > 60 * (int64_t)BILLION){
+      if(Audit && Verbose){
+	int const waiting = audit_refused(now,60);
+	fprintf(stderr,"audit: %d of %d channels in use%s",audit_busy(now),Audit_max,waiting ? "" : "\n");
+	if(waiting)
+	  fprintf(stderr,"; %d more frequencies heard in the last minute waited for one\n",waiting);
+      }
       write_summary();
       last_summary = now;
     }
