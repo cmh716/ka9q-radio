@@ -103,13 +103,16 @@ int main(void){
   // (one ring slot): counted until it is ten minutes old, not overwritten
   memset(Sum.fe,0,sizeof Sum.fe);
   {
-    int64_t const t1 = (T0 / (10 * S)) * (10 * S) + 600 * S + 9 * S; // 9 s into a bucket
+    int64_t const t1 = (T0 / (10 * S)) * (10 * S) + 600 * S + 8 * S; // its last overload 9 s into the bucket sixty back
     reading_at("edge","edge",t1 - 700 * S,-30.0f,10,0);
     reading_at("edge","edge",t1,-30.0f,12,(uint64_t)599 * 50000000ull); // last one at t1 - 599 s
     check(summary_view(&Sum,0,t1,&v) && v.recent_overs == 2 && v.recent_over,
 	  "599 s old, sixty buckets back: counted, as the warning says (not overwritten by the new reading)");
-    check(summary_view(&Sum,0,t1 + 11 * S,&v) && v.recent_overs == 0 && !v.recent_over,
-	  "and both gone a few seconds on");
+    check((t1 - 599 * S) / (10 * S) == t1 / (10 * S) - 60,"(the overload's bucket is sixty before its status's)");
+    check(summary_view(&Sum,0,t1 + 1 * S,&v) && v.recent_overs == 2 && v.recent_over,
+	  "past ten minutes by the clock, still in the count's window: count and warning together");
+    check(summary_view(&Sum,0,t1 + 2 * S,&v) && v.recent_overs == 0 && !v.recent_over,
+	  "and both gone together");
   }
 
   // Two receivers with no description, sharing a status group, from two

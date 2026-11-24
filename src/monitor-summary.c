@@ -77,6 +77,7 @@ void summary_reading(struct rx_summary *s,struct sum_reading const *r){
       f->bucket[o].overs = 0;
     }
     f->bucket[o].overs += overs;
+    f->counted = true;
     overs = 0;
   }
   int64_t const id = bucket_of(r->clocktime);
@@ -91,6 +92,8 @@ void summary_reading(struct rx_summary *s,struct sum_reading const *r){
     f->bucket[i].peak_time = r->clocktime;
   }
   f->bucket[i].overs += overs;
+  if(overs > 0)
+    f->counted = true;
   pthread_mutex_unlock(&s->lock);
 }
 
@@ -157,7 +160,11 @@ bool summary_view(struct rx_summary *s,int k,int64_t now,struct sum_view *v){
   }
   v->whole_window = now - f->first >= (int64_t)SUM_WINDOW_S * BILLION_NS;
   v->last_over = f->last_over;
-  v->recent_over = f->last_over != 0 && now - f->last_over < (int64_t)SUM_WINDOW_S * BILLION_NS;
+  // The warning goes with the count, so they agree; before any increase has
+  // been counted (monitor's first reading only says there were overloads),
+  // with the last one's time
+  v->recent_over = v->recent_overs > 0
+    || (!f->counted && f->last_over != 0 && now - f->last_over < (int64_t)SUM_WINDOW_S * BILLION_NS);
   pthread_mutex_unlock(&s->lock);
   return true;
 }

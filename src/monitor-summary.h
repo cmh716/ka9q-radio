@@ -38,6 +38,7 @@ struct sum_frontend {
   int64_t first;                  // the first reading's time
   bool have_prev;
   int64_t last_over;              // when the last overload was (radiod's time), 0 if none known
+  bool counted;                   // an increase has been counted into the buckets
   struct {
     int64_t id;                   // which ten seconds (time / bucket), 0 unused
     float peak;                   // the highest IF level in it
@@ -79,7 +80,8 @@ struct sum_view {
   uint64_t recent_overs;          // overloads in that time (or since monitor started, if less)
   bool whole_window;              // monitor has seen all of that time
   int64_t last_over;              // when the last overload was, 0 if none known
-  bool recent_over;               // within the last ten minutes
+  bool recent_over;               // the warning: overloads in the ten minutes' count (or, before
+                                  // any has been counted, the last within ten minutes)
 };
 bool summary_view(struct rx_summary *s,int k,int64_t now,struct sum_view *v);
 // The channels with the most audio in the last ten minutes, most first, up
