@@ -15,7 +15,7 @@
 // 0.24 s), else the DCS code found most (radiod's decoder), else none; or,
 // for a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...);
 // a digital transmission with no voice (encrypted, data: no audio), from
-// status alone, "DMR (no voice)", "P25 NAC 293 (no voice)".
+// a mixed channel's status alone, "DMR (no voice)", "P25 NAC 293 (no voice)".
 // A change of call (radiod's call ID, at the RTP timestamp status gives for
 // it: FM into digital, one call into the next) ends a transmission too. Under half a second isn't judged; with no tone,
 // code or call, under 1.5 s is a scrap (the FM a mixed channel plays after
@@ -112,6 +112,9 @@ struct stream_info {
   // status (activity's asks draw it): the mode radiod says it hears
   char quiet_label[64];
   double quiet_first,quiet_last;  // monotonic s, its first and last status
+  double quiet_freq;              // where it was heard
+  bool quiet_tail;                // begun just after a voice call: its hang time, not counted
+  double call_seen;               // monotonic s, the last status with a digital call playing
   double seen;
 };
 static struct stream_info Info[MAX_INFO];
@@ -515,10 +518,12 @@ static double const Quiet_status_gap = 6; // s between statuses (2 s asks) that 
 static void quiet_end(struct stream_info *ip){
   if(ip->quiet_label[0] == '\0')
     return;
-  if(Verbose)
-    printf("%.4f MHz  %.1f s  %s\n",ip->freq * 1e-6,ip->quiet_last - ip->quiet_first,ip->quiet_label);
-  fflush(stdout);
-  tally(ip->freq,ip->quiet_label);
+  if(!ip->quiet_tail){
+    if(Verbose)
+      printf("%.4f MHz  %.1f s  %s\n",ip->quiet_freq * 1e-6,ip->quiet_last - ip->quiet_first,ip->quiet_label);
+    fflush(stdout);
+    tally(ip->quiet_freq,ip->quiet_label);
+  }
   ip->quiet_label[0] = '\0';
 }
 
@@ -532,6 +537,8 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
   memset(&chan,0,sizeof chan);
   decode_radio_status(&frontend,&chan,buffer + 1,length - 1);
   ip->seen = monotonic();
+  if(chan.tune.freq > 0 && ip->quiet_label[0] != '\0' && fabs(chan.tune.freq - ip->quiet_freq) > 1)
+    quiet_end(ip); // retuned: what was heard was heard there
   if(chan.tune.freq > 0)
     ip->freq = chan.tune.freq;
   if(chan.output.encoding != NO_ENCODING && chan.output.samprate > 0){
@@ -540,27 +547,34 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
     ip->samprate = chan.output.samprate;
     ip->channels = chan.output.channels > 0 ? chan.output.channels : 1;
   }
-  // Digital, with no audio coming (radiod sends none for an encrypted or
-  // data transmission): what status says it hears, from its source field
-  // ("DMR TS1", "P25 N293", "NXDN 1234": the mode, a P25 NAC; not the
-  // radio, which would make each its own kind)
+  // Digital, with no voice (radiod sends no audio, and announces no call,
+  // for an encrypted or data transmission): what a mixed channel's status
+  // says it hears, from its source field ("DMR TS1", "P25 N293", "NXDN
+  // 1234": the mode, a P25 NAC; not the radio, which would make each its
+  // own kind). Told from a voice call by status alone, not by audio (FM
+  // audio says nothing of it): the sync status just before a call is the
+  // call's run-up, and what follows within 3 s of one its hang time
   {
-    struct session const *sp = NULL;
-    for(int i = 0; i < MAX_SESSIONS && sp == NULL; i++)
-      if(Sessions[i].inuse && Sessions[i].ssrc == ssrc && address_match(&Sessions[i].sender,sender))
-	sp = &Sessions[i];
-    bool const audio = sp != NULL && ip->seen - sp->last_packet < 3.0; // (and not a voice call's end)
+    bool const calling = chan.dv.call_id != 0 && chan.dv.call_mode[0] != '\0' && strcmp(chan.dv.call_mode,"FM") != 0;
     char label[64] = "";
     char const *src = chan.dv.source;
-    if(!audio && src[0] != '\0' && strcmp(src,"FM") != 0){
-      char mode[16];
+    if(!calling && chan.demod_type == DIGITAL_DEMOD){
+      static char const *const modes[] = {"P25","DMR","NXDN","M17","YSF","DSTAR"};
       size_t const len = strcspn(src," ");
-      snprintf(mode,sizeof mode,"%.*s",(int)(len < 15 ? len : 15),src);
-      unsigned nac;
-      if(strcmp(mode,"P25") == 0 && sscanf(src + len," N%3x",&nac) == 1)
-	snprintf(label,sizeof label,"P25 NAC %03X (no voice)",nac);
-      else
-	snprintf(label,sizeof label,"%s (no voice)",mode);
+      for(size_t k = 0; k < sizeof modes / sizeof modes[0] && label[0] == '\0'; k++){
+	if(len != strlen(modes[k]) || strncmp(src,modes[k],len) != 0)
+	  continue;
+	unsigned nac;
+	if(k == 0 && sscanf(src + len," N%3x",&nac) == 1)
+	  snprintf(label,sizeof label,"P25 NAC %03X (no voice)",nac);
+	else
+	  snprintf(label,sizeof label,"%s (no voice)",modes[k]);
+      }
+    }
+    if(calling){
+      if(ip->quiet_label[0] != '\0' && ip->seen - ip->quiet_first <= 3.0)
+	ip->quiet_label[0] = '\0'; // the call's run-up: the call covers it
+      ip->call_seen = ip->seen;
     }
     if(ip->quiet_label[0] != '\0' && (strcmp(label,ip->quiet_label) != 0 || ip->seen - ip->quiet_last > Quiet_status_gap))
       quiet_end(ip);
@@ -568,6 +582,8 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
       if(ip->quiet_label[0] == '\0'){
 	strlcpy(ip->quiet_label,label,sizeof ip->quiet_label);
 	ip->quiet_first = ip->seen;
+	ip->quiet_freq = ip->freq;
+	ip->quiet_tail = ip->call_seen != 0 && ip->seen - ip->call_seen < 3.0;
       }
       ip->quiet_last = ip->seen;
     }
@@ -750,10 +766,6 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     sp->channels = ip->channels;
   }
   double const now = monotonic();
-  // Audio within 3 s of a voiceless transmission heard in status: it was a
-  // voice call's start (status as the decoder synced) or end, not one
-  if(ip != NULL && ip->quiet_label[0] != '\0' && now - ip->quiet_last < 3.0)
-    ip->quiet_label[0] = '\0';
   if(now - sp->last_packet > Quiet_gap){
     // A new transmission: its numbering, and the stream's clock, may start
     // afresh. What's held is judged first; the call timeline restarts with
