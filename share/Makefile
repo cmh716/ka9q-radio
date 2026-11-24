@@ -26,7 +26,7 @@ install:
 	install -d -m 0775 $(DESTDIR)$(pkgdatadir)
 	install -m 0664 $(RX888) $(LUA) $(TEXT) $(DESTDIR)$(pkgdatadir)
 ifeq ($(strip $(DEB_BUILD_ARCH))$(UNAME_S),Linux)
-	chown radio:radio $(RX888) $(LUA) $(TEXT) $(DESTDIR)$(pkgdatadir)
+	cd $(DESTDIR)$(pkgdatadir) && chown radio:radio . $(RX888) $(LUA) $(TEXT)
 endif
 
 uninstall:
