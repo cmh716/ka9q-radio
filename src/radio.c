@@ -101,6 +101,7 @@ static char const *Global_keys[] = {
   "ring",
   "rtcp",
   "sap",
+  "spectrum-retunes",
   "static",
   "status",
   "tos",
@@ -124,6 +125,10 @@ struct ftab {
 chan_t Channel_list[Nchannels];
 double Blocktime = 0;      // Actual blocktime to give integral blocksize at input sample rate. Starts uninitialized
 double User_blocktime = DEFAULT_BLOCKTIME; // User's requested blocktime
+// A spectrum channel tuned outside the front end's coverage: retune the
+// front end for it (yes), or leave it to show what's there (no, the default:
+// a viewer panning a spectrum mustn't move every other channel)
+bool Spectrum_retunes = false;
 char const *Description; // Set either in [global] or [hardware]
 int Overlap = DEFAULT_OVERLAP;
 dictionary const *Preset_table;   // Table of presets, usually in /usr/local/share/ka9q-radio/presets.conf. can be const because it's never closed
@@ -316,6 +321,7 @@ int loadconfig(char const *file){
   }
   int const ip_tos = config_getint(Configtable,GLOBAL,"tos",DEFAULT_IP_TOS);
   Static_avahi = config_getboolean(Configtable,GLOBAL,"static",false);
+  Spectrum_retunes = config_getboolean(Configtable,GLOBAL,"spectrum-retunes",false);
   Affinity = config_getboolean(Configtable,GLOBAL,"affinity",false);
   bool const use_dns = config_getboolean(Configtable,GLOBAL,"dns",false);
   {
@@ -1233,6 +1239,10 @@ double set_freq(chan_t * const chan,double const f){
   // Tuning to 0 Hz is a special case, don't move front end
   // Essentially disables a chan
   if(f == 0)
+    return f;
+  // Nor does a spectrum channel, unless spectrum-retunes: one viewer's
+  // spectrum mustn't move the hardware under every other channel
+  if(!Spectrum_retunes && (chan->demod_type == SPECT_DEMOD || chan->demod_type == SPECT2_DEMOD))
     return f;
 
   pthread_mutex_lock(&Freq_mutex); // Protect front end tuner

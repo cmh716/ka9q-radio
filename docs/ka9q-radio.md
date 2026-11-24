@@ -182,6 +182,14 @@ Sets the Internet Protocol Type-of-Service (TOS) field in all outbound traffic.
 There is little reason to change this on a LAN with sufficient capacity.
 This parameter also applies only globally.
 
+### spectrum-retunes = (optional, default no)
+
+A spectrum channel (from *waterfall*, *powers*, *ka9q-web*...) tuned
+partly outside the front end's present coverage shows only what's there:
+it doesn't retune the front end, which would move every other channel.
+**yes** lets it retune the front end, as other channels' tuning does.
+This parameter applies only globally.
+
 ### blocktime = (optional, default 0.02)
 
 *ka9q-radio* filters with *fast convolution*;
