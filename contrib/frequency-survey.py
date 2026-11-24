@@ -14,7 +14,8 @@ frequency, or none in this log. It is evidence of carriers only: their
 tone and who they are stay unverified (candidates sharing a frequency
 share its evidence). With activity's coverage file (-u; by default the
 log's name with -coverage, if it's there), each candidate gets the time
-its frequency was actually watched: silence is "no RF activity in N days
+its frequency was actually watched (the log from before coverage was
+recorded counts as watched from its first transmission, as without one): silence is "no RF activity in N days
 monitored", and a frequency never watched is "not covered by activity".
 Without it, silence means only that the log holds nothing there. With
 --range (the front end's coverage, which you know), candidates outside it
@@ -402,6 +403,17 @@ def main(argv=None):
             sys.exit(f'{cover_path}: no coverage rows')
     if not transmissions and coverage is None:
         sys.exit(f'{args.activity}: no transmissions logged, and no coverage file to say it was watching')
+    if coverage is not None:
+        # The log from before coverage was recorded (an older activity):
+        # watched as the log says, from its first transmission until the
+        # coverage starts, across --range or the log's span, as with no
+        # coverage file at all
+        began = min(s for s, _, _, _ in coverage)
+        before = [(hz, start) for hz, start, _, _ in transmissions if start < began - SLACK]
+        if before:
+            blo = lo if lo is not None else min(hz for hz, _ in before)
+            bhi = hi if hi is not None else max(hz for hz, _ in before)
+            coverage.append((min(t for _, t in before), began - datetime.timedelta(seconds=1), blo, bhi))
     rows = survey(rows, transmissions, lo, hi, coverage)
     if args.tones:
         results = read_tones(args.tones)

@@ -362,5 +362,32 @@ hz = round(float(busiest['Frequency Output']) * 1e6)
 text2 = open(conf2).read()
 check(text2.count('m') >= 1 and f'{hz // 1000000}m{hz % 1000000:06d}' in text2 and text2.count('"') == 2
       and len(text2.split('freq = "')[1].split()) == 1, 'part 1 of size 1: the busiest frequency alone')
+# A log begun before coverage was recorded: the earlier transmissions count,
+# watched from the log's first until the coverage starts
+log9 = os.path.join(d, 'log9.csv')
+with open(log9, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs', 'known', 'mode_guess'])
+    w.writerow(['2026-11-24 01:00:00Z', '2026-11-24 01:00:02Z', '450.0000', '450.00000', '12.5', '2', '20', '-90', '', ''])
+    w.writerow(['2026-11-24 03:00:00Z', '2026-11-24 03:00:02Z', '460.0000', '460.00000', '12.5', '2', '20', '-90', '', ''])
+    w.writerow(['2026-11-24 10:30:00Z', '2026-11-24 10:30:02Z', '450.0000', '450.00000', '12.5', '2', '20', '-90', '', ''])
+with open(os.path.join(d, 'log9-coverage.csv'), 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-24 10:00:00Z', '2026-11-24 11:00:00Z', '440.00000', '470.00000'])
+cands9 = os.path.join(d, 'cands9.csv')
+with open(cands9, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['RX MHz', 'Name'])
+    w.writerow(['450.000000', 'a'])
+    w.writerow(['460.000000', 'b'])
+    w.writerow(['455.000000', 'quiet'])
+out21 = os.path.join(d, 'out21.csv')
+survey.main(['-a', log9, '-o', out21, cands9])
+rows21 = {r['Name']: r for r in csv.DictReader(open(out21))}
+check(rows21['a']['Transmissions'] == '2' and rows21['b']['Transmissions'] == '1',
+      'transmissions before the coverage file began counted')
+check(abs(float(rows21['quiet']['Monitored days']) - (9 * 3600 - 1 + 3600) / 86400) < 0.01,
+      'watched: from the first transmission to the coverage, and the coverage')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
