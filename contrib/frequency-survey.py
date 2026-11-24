@@ -323,25 +323,35 @@ def tone_check(row, results):
         row['Tone check'] = f'differs: heard {commonest}' + (f' (listed {listed})' if listed else ' (none listed)')
 
 
-SURVEY_MAX = 1000  # tone-survey's streams (MAX_SESSIONS 1024)
-
-
-def survey_config(rows, path, group):
+def survey_config(rows, path, group, size, part):
     """radiod sections for the candidates with RF activity: no tone squelch,
-    analog and every digital mode (mixed), for tone-survey"""
-    freqs = sorted({round(frequency_of(r)) for r in rows if r.get('Survey') == ACTIVE and frequency_of(r)})
-    if len(freqs) > SURVEY_MAX:
-        sys.exit(f'{len(freqs)} active frequencies: more than tone-survey follows at once ({SURVEY_MAX}). '
-                 f'Survey them in parts: narrow the candidates (or --range) and run each part in turn')
+    analog and every digital mode (mixed), for tone-survey. A batch at a
+    time (each channel costs CPU): the busiest first, size per part.
+    Returns (frequencies in this part, parts in all)"""
+    busy = {}
+    for r in rows:
+        f = frequency_of(r)
+        if r.get('Survey') == ACTIVE and f:
+            hz = round(f)
+            try:
+                n = int(r.get('Transmissions') or 0)
+            except ValueError:
+                n = 0
+            busy[hz] = max(busy.get(hz, 0), n)
+    order = sorted(busy, key=lambda hz: (-busy[hz], hz))
+    parts = max(1, -(-len(order) // size))
+    if not 1 <= part <= parts:
+        sys.exit(f'--survey-part {part}: there are {parts} parts of {size} ({len(order)} active frequencies)')
+    freqs = sorted(order[(part - 1) * size:part * size])
     with open(path, 'w') as f:
-        f.write(f'# Written by frequency-survey.py for tone-survey: {len(freqs)} frequencies with RF activity,\n'
-                f'# without tone squelch. Put it in radiod\'s configuration directory while\n'
+        f.write(f'# Written by frequency-survey.py for tone-survey: part {part} of {parts},\n'
+                f'# {len(freqs)} of {len(order)} frequencies with RF activity (busiest first), without\n'
+                f'# tone squelch. Put it in radiod\'s configuration directory while\n'
                 f'# surveying, then take it out.\n')
-        for k in range(0, len(freqs), 40):
-            chunk = freqs[k:k + 40]
-            f.write(f'\n[tone-survey-{k // 40 + 1}]\nmode = mixed\ndata = {group}\n')
-            f.write('freq = "' + ' '.join(f'{hz // 1000000}m{hz % 1000000:06d}' for hz in chunk) + '"\n')
-    return len(freqs)
+        if freqs:
+            f.write(f'\n[tone-survey]\nmode = mixed\ndata = {group}\n')
+            f.write('freq = "' + ' '.join(f'{hz // 1000000}m{hz % 1000000:06d}' for hz in freqs) + '"\n')
+    return len(freqs), parts
 
 
 def same_file(a, b):
@@ -366,6 +376,9 @@ def main(argv=None):
     ap.add_argument('--tones', help="tone-survey's results: each candidate's listed tone checked against what was heard")
     ap.add_argument('--survey-config', help="write radiod sections for tone-survey: the candidates with RF activity")
     ap.add_argument('--survey-group', default='tone-survey.local', help='their data group (default tone-survey.local)')
+    ap.add_argument('--survey-size', type=int, default=25,
+                    help='frequencies per part (default 25: each is a radiod channel, and costs CPU)')
+    ap.add_argument('--survey-part', type=int, default=1, help='which part, the busiest first (default 1)')
     args = ap.parse_args(argv)
 
     import os
@@ -419,8 +432,11 @@ def main(argv=None):
         print(f'  {n:5d}  {v}')
     print(f'written to {out}')
     if args.survey_config:
-        n = survey_config(rows, args.survey_config, args.survey_group)
-        print(f'{n} frequencies for tone-survey in {args.survey_config} (data {args.survey_group})')
+        if args.survey_size < 1:
+            sys.exit('--survey-size: at least 1')
+        n, parts = survey_config(rows, args.survey_config, args.survey_group, args.survey_size, args.survey_part)
+        print(f'part {args.survey_part} of {parts}: {n} frequencies for tone-survey in {args.survey_config}'
+              f' (data {args.survey_group})')
 
 
 if __name__ == '__main__':

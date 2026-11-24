@@ -352,5 +352,15 @@ rows19 = {r['Name']: r for r in csv.DictReader(open(out19))}
 check(rows19['inv listed, D heard']['Tone check'] == 'differs: heard D243 (listed I243)', 'I243 listed, D243 heard: differs')
 check(rows19['inv listed, I heard']['Tone check'] == 'confirmed', 'I023 listed, I023 heard: confirmed')
 check(rows19['shared']['Tone check'] == 'heard, less often than 131.8 PL', 'a shared frequency: the listed tone heard, less often')
+# Survey parts: the busiest first, size per part
+conf2 = os.path.join(d, 'survey2.conf')
+survey.main(['-a', log, '-o', os.path.join(d, 'out20.csv'), '--range', '422.1-469.1', '--survey-config', conf2,
+             '--survey-size', '1', rr])
+busiest = max((r for r in csv.DictReader(open(os.path.join(d, 'out20.csv'))) if r['Survey'] == survey.ACTIVE),
+              key=lambda r: int(r['Transmissions']))
+hz = round(float(busiest['Frequency Output']) * 1e6)
+text2 = open(conf2).read()
+check(text2.count('m') >= 1 and f'{hz // 1000000}m{hz % 1000000:06d}' in text2 and text2.count('"') == 2
+      and len(text2.split('freq = "')[1].split()) == 1, 'part 1 of size 1: the busiest frequency alone')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
