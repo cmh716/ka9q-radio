@@ -64,6 +64,12 @@ int demod_spectrum(void *arg){
   chan->response_needed = false;
   while(!restart_needed){
     restart_needed = handle_commands(chan);
+    // A command (or poll) just come may have changed what's asked for: the
+    // bins on hand aren't its until computed for it (a view outside the
+    // front end's coverage, say, leaves the channel inactive, and nothing
+    // computed: its reply must not carry the last view's bins)
+    if(chan->response_needed)
+      chan->spectrum.bins_ready = 0;
     // Must handle possible parameter changes from decode_radio_commands() BEFORE executing the downconverter,
     // which will act immediately on those changes. Otherwise segfaults occur when crossing between wideband and narrowband
     // modes because things are not properly set up for the poll when it comes
@@ -165,6 +171,7 @@ int demod_spectrum(void *arg){
 #endif
       } else
 	wideband_poll(chan);
+      chan->spectrum.bins_ready = chan->spectrum.bin_count;
 #ifdef RICE
       rice(chan); // experiment with rice encoding
 #endif
@@ -188,6 +195,7 @@ int demod_spectrum(void *arg){
   FREE(chan->spectrum.window);
   FREE(chan->spectrum.bin_data);
   chan->spectrum.bin_data_size = 0;
+  chan->spectrum.bins_ready = 0;
   FREE(chan->spectrum.ring);
   chan->spectrum.ring_size = 0;
   return chan->demod_type == INVALID_DEMOD ? -1 : 0;

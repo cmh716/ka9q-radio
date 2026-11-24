@@ -297,6 +297,7 @@ struct channel {
     int bin_count;     // Requested bin count
     float *bin_data;   // Array of real floats with bin_count elements
     int bin_data_size; // sizeof bin_data allocation, in floats
+    int bins_ready;    // bins computed for the request now in force (0: none yet); only these are sent
     float crossover;   // Crossover frequency between algorithms, Hz
     float shape;       // Analysis window parameter if any (kaiser β, gaussian σ)
     int fft_n;         // size of analysis FFT

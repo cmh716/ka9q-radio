@@ -905,7 +905,9 @@ static unsigned long encode_radio_status(struct frontend const * const frontend,
     encode_float(&bp, SPECTRUM_OVERLAP, chan->spectrum.overlap);
     // encode bin data here? maybe change this, it can be a lot
     // Also need to unwrap this, frequency data is dc....max positive max negative...least negative
-    if(chan->spectrum.bin_data == NULL)
+    // Only bins computed for this request, and as many as the buffer holds
+    if(chan->spectrum.bin_data == NULL || chan->spectrum.bins_ready != chan->spectrum.bin_count
+       || chan->spectrum.bin_data_size < chan->spectrum.bin_count)
       break;
     if(chan->demod_type == SPECT_DEMOD)
       encode_vector(&bp,BIN_DATA,chan->spectrum.bin_data,chan->spectrum.bin_count);
