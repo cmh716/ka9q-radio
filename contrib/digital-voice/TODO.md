@@ -43,19 +43,21 @@ for DMR, D-STAR and YSF.
    lane 2 took TG 110 while lane 0 had TG 163, and TG 4 while it had TG
    110; monitor shows the lanes as rows of their own (same frequency,
    SSRC +1, +2). Not yet seen live: P25, preemption, a restart.
-5. [ ] **monitor: receiver summary**: the front end's level, A/D overloads,
-   gain and the busiest channels, with recent peaks and counter deltas held
-   for a while, so a brief event stays visible after it passes. Done
-   (monitor-summary.c, `S`); live look waiting. Its figures come only with
-   channels' status (sent while one is active): polling radiod's status
-   group would make them steady, if wanted.
+5. [x] **monitor: receiver summary** (monitor-summary.c, `S`): each front
+   end's IF level with the ten minutes' peak, gain, A/D overloads (total,
+   ten minutes, last), its figures' age; the busiest channels. Seen live
+   2026-11-24 (IF -41.6 dBFS, a burst to -19, no overloads). Its figures
+   come only with channels' status: polling radiod's status group would
+   make them steady, if wanted.
 6. [x] **monitor: a wider Call field** (9a6be012: it grows with the
    terminal, 22-64 columns; calls stay, fading, after they end).
-7. [ ] **A spectrum display for the VHF/UHF tunings**, the way UberSDR
-   shows HF. ka9q-web (`~/ka9q-web`, a web spectrum and waterfall) is a
-   porting candidate, but doesn't build against this tree (it expects
-   older internal APIs). This tree's `powers` already polls radiod's
-   spectrum bins with the current protocol: a starting point for a viewer.
+7. [x] **Spectrum display**: `waterfall` (src/waterfall.c, share/
+   waterfall.html): a web spectrum and waterfall of the whole front end
+   (422-469 MHz), zoom and pan, channels marked; each viewer a spectrum
+   channel of its own. Works live (2026-11-24: it showed the Alden school
+   DMR repeater 0.4 mi away, 451.9875, as the strong local signal). radiod:
+   spectrum channels no longer retune the front end (spectrum-retunes).
+   Later, perhaps: listening in the browser.
 8. [ ] **Activity finder**: log carriers that come up on frequencies not in
    the configuration (frequency, time, length, a guess at the mode), to
    find unknown users (the "AldenMystery" channels) and build the list.
