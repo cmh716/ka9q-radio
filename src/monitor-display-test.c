@@ -113,22 +113,17 @@ int main(void){
   strcpy(sp->chan.dv.call_src,"HB9ETH");
   dashboard();
   check(find_row("ALL HB9ETH JN47bi") >= 0,"with the talker: the locator beside them");
-  // The receiver summary: the front end's line and the busiest channels
+  // The receiver summary (status and audio feed it; the dashboard shows it):
+  // the front end's line and the busiest channels
   resizeterm(30,160);
-  strcpy(sp->frontend.description,"fobos");
-  sp->frontend.frequency = 445600000;
-  sp->frontend.samprate = 50e6;
-  sp->frontend.if_power = dB2power(-31.5f);
-  sp->frontend.rf_gain = 22;
-  sp->chan.clocktime = gps_time_ns() - 2 * (int64_t)BILLION;
-  strcpy(sp->chan.dv.call_dest,"110");
-  for(int i = 0; i < 20; i++){ // two seconds of audio
-    sp->last_active = gps_time_ns();
-    sp->chan.clocktime += BILLION / 10;
-    dashboard();
-    struct timespec const tenth = { 0, 100000000 };
-    nanosleep(&tenth,NULL);
+  {
+    struct sum_reading rd = { .key = "239.1.2.3:5006", .description = "fobos", .clocktime = gps_time_ns() - BILLION,
+			      .frequency = 445600000, .samprate = 50e6, .if_dbfs = -31.5f, .rf_gain = 22 };
+    summary_reading(&Rx_summary,&rd);
   }
+  strcpy(sp->chan.dv.call_dest,"110");
+  summary_audio(&Rx_summary,(int)(sp - Sessions),sp->ssrc,2.0,gps_time_ns());
+  dashboard();
   r = find_row("fobos 445.6000 MHz | IF -31.5 dBFS");
   row_text(r,line,sizeof line);
   printf("     %s\n",line);

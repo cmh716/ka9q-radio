@@ -47,7 +47,6 @@ static int First_session = 0;
 static int Sessions_per_screen = 0;
 static int Current = 0;
 static bool help = false;
-static struct rx_summary Summary; // the receiver summary's history
 static bool Show_summary = true;  // 'S'
 
 
@@ -494,52 +493,29 @@ static void ui_last(sess_t const *sp,int64_t now,char *out,size_t size){
     snprintf(out,size,"%dd",(int)(s / 86400));
 }
 
-// The receiver summary: each front end's level, gain and overloads, the
-// last ten minutes' peak and overload count held, and the busiest channels.
-// Fed from every session (each carries its front end's status) at each
-// update; draws from row (if draw), returns the rows it took
-static int ui_summary(int row,int count,int64_t now,bool draw){
-  for(int i = 0; i < count; i++){
-    sess_t const *sp = Sess_ptr[i];
-    struct sum_reading const r = {
-      .description = sp->frontend.description,
-      .clocktime = sp->chan.clocktime,
-      .frequency = sp->frontend.frequency,
-      .samprate = sp->frontend.samprate,
-      .if_dbfs = power2dB(sp->frontend.if_power),
-      .rf_gain = sp->frontend.rf_gain,
-      .agc = sp->frontend.rf_agc,
-      .lna_gain = sp->frontend.lna_gain,
-      .mixer_gain = sp->frontend.mixer_gain,
-      .if_gain = sp->frontend.if_gain,
-      .overranges = sp->frontend.overranges,
-      .samp_since_over = sp->frontend.samp_since_over,
-    };
-    if(isfinite(r.if_dbfs))
-      summary_reading(&Summary,&r);
-    summary_activity(&Summary,(int)(sp - Sessions),sp->ssrc,now - sp->last_active < BILLION/2,now);
-  }
-  if(!draw)
-    return 0;
+// The receiver summary (Rx_summary, which status and audio feed): each front
+// end's level, gain and overloads, the last ten minutes' peak and overload
+// count held, and the channels with the most audio. Draws from row, returns
+// the rows it took
+static int ui_summary(int row,int64_t now){
   int rows = 0;
   char line[512];
   for(int k = 0; k < SUM_FRONTENDS && rows < 2; k++){
     struct sum_view v;
-    if(!summary_view(&Summary,k,&v))
+    if(!summary_view(&Rx_summary,k,now,&v))
       continue;
     summary_frontend_line(&v,now,line,sizeof line);
-    bool const overloaded = v.now->overranges > 0 && v.last_over != 0
-      && v.now->clocktime - v.last_over < (int64_t)SUM_WINDOW_S * BILLION;
-    ui_text(row + rows++,2,line,A_NORMAL,overloaded ? UI_WARNING : UI_FRAME);
+    ui_text(row + rows++,2,line,A_NORMAL,v.recent_over ? UI_WARNING : UI_FRAME);
   }
   if(rows == 0)
     ui_text(row + rows++,2,"Front end: waiting for status",A_DIM,UI_FRAME);
   int slots[3];
-  int const n = summary_busiest(&Summary,slots,3,now);
+  double seconds[3];
+  int const n = summary_busiest(&Rx_summary,slots,seconds,3,now);
   int len = snprintf(line,sizeof line,"Busiest, 10 min:");
   for(int i = 0; i < n && len < (int)sizeof line; i++){
     sess_t const *sp = &Sessions[slots[i]];
-    int const secs = (int)lrint(summary_seconds(&Summary,slots[i],now));
+    int const secs = (int)lrint(seconds[i]);
     char const *name = sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : sp->callsign;
     len += snprintf(line + len,sizeof line - (size_t)len,"%s %.5f%s%s %d:%02d",i ? " |" : "",
 		    sp->chan.tune.freq/1e6,name[0] ? " " : "",name,secs / 60,secs % 60);
@@ -575,9 +551,8 @@ static void dashboard(void){
   int top = 3; // the channels' rule
   if(summary){
     ui_rule(3," RECEIVER ");
-    top = 4 + ui_summary(4,count,now,true);
-  } else
-    ui_summary(0,count,now,false); // (its history goes on)
+    top = 4 + ui_summary(4,now);
+  }
   int const table_header = top + 1;
   int const table_end = details ? LINES-9 : LINES-3;
   Sessions_per_screen = max(1,table_end-table_header-1);

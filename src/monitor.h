@@ -15,6 +15,7 @@
 #include <portaudio.h>
 #include <assert.h>
 #include "radio.h"
+#include "monitor-summary.h"
 
 #define MAX_MCAST 20          // Maximum number of multicast addresses
 #define BUFFERSIZE (1<<18)    // about 2.73 sec at 48 kHz - must be power of 2 times page size (4k)!
@@ -220,6 +221,7 @@ extern char const *Pipe;
 extern struct sockaddr_in *Source_socket;
 
 extern sess_t Sessions[NSESSIONS];
+extern struct rx_summary Rx_summary; // the receiver summary: status and audio feed it, the dashboard shows it
 
 void load_id(void);
 void cleanup(void);

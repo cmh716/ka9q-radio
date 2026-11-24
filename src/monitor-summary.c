@@ -8,12 +8,20 @@
 
 #define BILLION_NS 1000000000LL
 
-static struct sum_frontend *find(struct rx_summary *s,char const *description){
-  char const *d = description != NULL ? description : "";
+static int64_t bucket_of(int64_t t){
+  return t / (SUM_BUCKET_S * BILLION_NS);
+}
+// A bucket id still within the ten minutes to now
+static bool in_window(int64_t id,int64_t now){
+  int64_t const now_id = bucket_of(now);
+  return id != 0 && id > now_id - SUM_BUCKETS && id <= now_id;
+}
+
+static struct sum_frontend *find(struct rx_summary *s,char const *key){
   struct sum_frontend *spare = NULL;
   for(int k = 0; k < SUM_FRONTENDS; k++){
     struct sum_frontend *f = &s->fe[k];
-    if(f->used && strcmp(f->description,d) == 0)
+    if(f->used && strcmp(f->now.key,key) == 0)
       return f;
     if(!f->used && spare == NULL)
       spare = f;
@@ -22,119 +30,118 @@ static struct sum_frontend *find(struct rx_summary *s,char const *description){
     return NULL; // more front ends than kept: the rest aren't summarised
   memset(spare,0,sizeof *spare);
   spare->used = true;
-  snprintf(spare->description,sizeof spare->description,"%s",d);
+  snprintf(spare->now.key,sizeof spare->now.key,"%s",key);
   return spare;
 }
 
 void summary_reading(struct rx_summary *s,struct sum_reading const *r){
   if(r->clocktime <= 0)
     return; // no time: can't place it
-  struct sum_frontend * const f = find(s,r->description);
-  if(f == NULL || r->clocktime <= f->now.clocktime)
+  pthread_mutex_lock(&s->lock);
+  struct sum_frontend * const f = find(s,r->key);
+  if(f == NULL || r->clocktime <= f->now.clocktime){
+    pthread_mutex_unlock(&s->lock);
     return; // nothing new (every channel's status repeats the front end's)
+  }
   if(f->first == 0)
     f->first = r->clocktime;
+  // Overloads since the last reading: its increase, or (radiod restarted,
+  // its count starting again) all it has counted since
+  uint64_t const overs = !f->have_prev ? 0
+    : r->overranges >= f->now.overranges ? r->overranges - f->now.overranges : r->overranges;
+  bool const counted_up = f->have_prev ? overs > 0 : r->overranges > 0;
   f->now = *r;
-  f->now.description = f->description;
-  int64_t const id = r->clocktime / (SUM_BUCKET_S * BILLION_NS);
+  f->have_prev = true;
+  if(counted_up && r->samprate > 0)
+    f->last_over = r->clocktime - (int64_t)((double)r->samp_since_over / r->samprate * BILLION_NS);
+  int64_t const id = bucket_of(r->clocktime);
   int const i = (int)(id % SUM_BUCKETS);
   if(f->bucket[i].id != id){
     f->bucket[i].id = id;
     f->bucket[i].peak = r->if_dbfs;
     f->bucket[i].peak_time = r->clocktime;
-    f->bucket[i].over_start = r->overranges;
+    f->bucket[i].overs = 0;
   } else if(r->if_dbfs > f->bucket[i].peak){
     f->bucket[i].peak = r->if_dbfs;
     f->bucket[i].peak_time = r->clocktime;
   }
+  f->bucket[i].overs += overs;
+  pthread_mutex_unlock(&s->lock);
 }
 
-void summary_activity(struct rx_summary *s,int slot,uint32_t ssrc,bool active,int64_t now){
-  if(slot < 0 || slot >= SUM_CHANNELS)
+void summary_audio(struct rx_summary *s,int slot,uint32_t ssrc,double seconds,int64_t now){
+  if(slot < 0 || slot >= SUM_CHANNELS || !(seconds > 0))
     return;
+  pthread_mutex_lock(&s->lock);
   struct sum_channel * const c = &s->chan[slot];
-  if(c->ssrc != ssrc || c->updated == 0 || now < c->updated){
-    memset(c,0,sizeof *c);
+  if(c->ssrc != ssrc){
+    memset(c,0,sizeof *c); // another stream in the slot
     c->ssrc = ssrc;
-    c->updated = now;
-    return;
   }
-  double const dt = (double)(now - c->updated) / BILLION_NS;
-  c->updated = now;
-  if(!active || dt > SUM_BUCKET_S)
-    return; // (a gap that long: not known to have been audio throughout)
-  int64_t const id = now / (SUM_BUCKET_S * BILLION_NS);
+  int64_t const id = bucket_of(now);
   int const i = (int)(id % SUM_BUCKETS);
   if(c->bucket[i].id != id){
     c->bucket[i].id = id;
     c->bucket[i].seconds = 0;
   }
-  c->bucket[i].seconds += (float)dt;
+  c->bucket[i].seconds += (float)seconds;
+  pthread_mutex_unlock(&s->lock);
 }
 
-double summary_seconds(struct rx_summary const *s,int slot,int64_t now){
-  if(slot < 0 || slot >= SUM_CHANNELS)
-    return 0;
-  struct sum_channel const * const c = &s->chan[slot];
-  int64_t const now_id = now / (SUM_BUCKET_S * BILLION_NS);
-  double sum = 0;
-  for(int i = 0; i < SUM_BUCKETS; i++)
-    if(c->bucket[i].id != 0 && c->bucket[i].id > now_id - SUM_BUCKETS && c->bucket[i].id <= now_id)
-      sum += c->bucket[i].seconds;
-  return sum;
-}
-
-bool summary_view(struct rx_summary const *s,int k,struct sum_view *v){
-  if(k < 0 || k >= SUM_FRONTENDS || !s->fe[k].used)
+bool summary_view(struct rx_summary *s,int k,int64_t now,struct sum_view *v){
+  if(k < 0 || k >= SUM_FRONTENDS)
     return false;
+  pthread_mutex_lock(&s->lock);
   struct sum_frontend const * const f = &s->fe[k];
+  if(!f->used){
+    pthread_mutex_unlock(&s->lock);
+    return false;
+  }
   memset(v,0,sizeof *v);
-  v->now = &f->now;
+  v->now = f->now;
   v->peak = -INFINITY;
-  int64_t const now_id = f->now.clocktime / (SUM_BUCKET_S * BILLION_NS);
-  int64_t oldest = 0;
-  uint64_t oldest_overs = f->now.overranges;
   for(int i = 0; i < SUM_BUCKETS; i++){
-    int64_t const id = f->bucket[i].id;
-    if(id == 0 || id <= now_id - SUM_BUCKETS || id > now_id)
-      continue; // unused, or older than ten minutes
+    if(!in_window(f->bucket[i].id,now))
+      continue; // unused, or older than ten minutes (by monitor's clock: they age even if status stops)
     if(f->bucket[i].peak > v->peak){
       v->peak = f->bucket[i].peak;
       v->peak_time = f->bucket[i].peak_time;
     }
-    if(oldest == 0 || id < oldest){
-      oldest = id;
-      oldest_overs = f->bucket[i].over_start;
-    }
+    v->recent_overs += f->bucket[i].overs;
   }
-  // Overloads since the oldest bucket's start (a restart of radiod resets
-  // its count: then all it has counted since)
-  v->recent_overs = f->now.overranges >= oldest_overs ? f->now.overranges - oldest_overs : f->now.overranges;
-  v->whole_window = f->now.clocktime - f->first >= (int64_t)SUM_WINDOW_S * BILLION_NS;
-  if(f->now.overranges > 0 && f->now.samprate > 0)
-    v->last_over = f->now.clocktime - (int64_t)((double)f->now.samp_since_over / f->now.samprate * BILLION_NS);
+  v->whole_window = now - f->first >= (int64_t)SUM_WINDOW_S * BILLION_NS;
+  v->last_over = f->last_over;
+  v->recent_over = f->last_over != 0 && now - f->last_over < (int64_t)SUM_WINDOW_S * BILLION_NS;
+  pthread_mutex_unlock(&s->lock);
   return true;
 }
 
-static double Sort_seconds[SUM_CHANNELS]; // (the display thread's alone)
+static double Sort_seconds[SUM_CHANNELS]; // (under the lock)
 static int by_seconds(void const *a,void const *b){
   double const x = Sort_seconds[*(int const *)a], y = Sort_seconds[*(int const *)b];
   return x > y ? -1 : x < y ? +1 : *(int const *)a - *(int const *)b;
 }
-int summary_busiest(struct rx_summary const *s,int *slots,int n,int64_t now){
-  int all[SUM_CHANNELS];
+int summary_busiest(struct rx_summary *s,int *slots,double *seconds,int n,int64_t now){
+  static int all[SUM_CHANNELS]; // (under the lock)
+  pthread_mutex_lock(&s->lock);
   int count = 0;
   for(int i = 0; i < SUM_CHANNELS; i++){
-    if(s->chan[i].updated == 0)
-      continue;
-    Sort_seconds[i] = summary_seconds(s,i,now);
-    if(Sort_seconds[i] >= 0.5) // anything to speak of
+    double sum = 0;
+    for(int b = 0; b < SUM_BUCKETS; b++)
+      if(in_window(s->chan[i].bucket[b].id,now))
+	sum += s->chan[i].bucket[b].seconds;
+    Sort_seconds[i] = sum;
+    if(sum >= 0.5) // anything to speak of
       all[count++] = i;
   }
   qsort(all,(size_t)count,sizeof all[0],by_seconds);
   if(count > n)
     count = n;
-  memcpy(slots,all,(size_t)count * sizeof all[0]);
+  for(int i = 0; i < count; i++){
+    slots[i] = all[i];
+    seconds[i] = Sort_seconds[all[i]];
+  }
+  pthread_mutex_unlock(&s->lock);
   return count;
 }
 
@@ -152,8 +159,8 @@ void summary_ago(int64_t ns,char *out,size_t size){
     snprintf(out,size,"%lldd",(long long)(s / 86400));
 }
 
-void summary_frontend_line(struct sum_view const *v,int64_t wall_now,char *out,size_t size){
-  struct sum_reading const * const r = v->now;
+void summary_frontend_line(struct sum_view const *v,int64_t now,char *out,size_t size){
+  struct sum_reading const * const r = &v->now;
   char gain[64] = "";
   if(r->lna_gain != 0 || r->mixer_gain != 0 || r->if_gain != 0)
     snprintf(gain,sizeof gain," | gain LNA %d mix %d IF %d",r->lna_gain,r->mixer_gain,r->if_gain);
@@ -164,21 +171,21 @@ void summary_frontend_line(struct sum_view const *v,int64_t wall_now,char *out,s
   char peak[48] = "";
   if(isfinite(v->peak)){
     char ago[16];
-    summary_ago(r->clocktime - v->peak_time,ago,sizeof ago);
+    summary_ago(now - v->peak_time,ago,sizeof ago);
     snprintf(peak,sizeof peak," (peak %.1f, %s ago)",v->peak,ago);
   }
   char over[96];
-  if(r->overranges == 0)
+  if(r->overranges == 0 && v->recent_overs == 0)
     snprintf(over,sizeof over," | A/D over 0");
   else {
     char ago[16] = "?";
     if(v->last_over != 0)
-      summary_ago(r->clocktime - v->last_over,ago,sizeof ago);
+      summary_ago(now - v->last_over,ago,sizeof ago);
     snprintf(over,sizeof over," | A/D over %llu, %s%llu, last %s ago",(unsigned long long)r->overranges,
 	     v->whole_window ? "10m: " : "here: ",(unsigned long long)v->recent_overs,ago);
   }
   char age[16];
-  summary_ago(wall_now - r->clocktime,age,sizeof age);
+  summary_ago(now - r->clocktime,age,sizeof age);
   snprintf(out,size,"%s%s%.4f MHz | IF %.1f dBFS%s%s%s | %s ago",
 	   r->description[0] ? r->description : "",r->description[0] ? " " : "",
 	   r->frequency * 1e-6,r->if_dbfs,peak,gain,over,age);

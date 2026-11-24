@@ -361,6 +361,7 @@ static void *decode_task(void *arg){
     }
     // count active time even when muted
     sp->tot_active += (float)sp->frame_size / sp->samprate;
+    summary_audio(&Rx_summary,(int)(sp - Sessions),sp->ssrc,(double)sp->frame_size / sp->samprate,gps_time_ns());
     sp->active += (float)sp->frame_size / sp->samprate;
     upsample(sp);
     copy_to_stream(sp);

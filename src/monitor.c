@@ -17,6 +17,7 @@
 #endif
 #include <sysexits.h>
 #include <poll.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <time.h>
 #include <sys/socket.h>
@@ -99,6 +100,24 @@ float Portaudio_delay;
 pthread_t Repeater_thread;
 int Nfds;                     // Number of streams
 pthread_mutex_t Sess_mutex = PTHREAD_MUTEX_INITIALIZER;
+struct rx_summary Rx_summary = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+// A receiver's identity for the summary, numerically (no name lookups on
+// the status path): its radiod's status group, else where its status came from
+static void receiver_key(struct sockaddr_storage const *a,char *out,size_t size){
+  char host[INET6_ADDRSTRLEN] = "";
+  int port = 0;
+  if(a->ss_family == AF_INET){
+    struct sockaddr_in const *s = (struct sockaddr_in const *)a;
+    inet_ntop(AF_INET,&s->sin_addr,host,sizeof host);
+    port = ntohs(s->sin_port);
+  } else if(a->ss_family == AF_INET6){
+    struct sockaddr_in6 const *s = (struct sockaddr_in6 const *)a;
+    inet_ntop(AF_INET6,&s->sin6_addr,host,sizeof host);
+    port = ntohs(s->sin6_port);
+  }
+  snprintf(out,size,"%s:%d",host,port);
+}
 PaStream *Pa_Stream;          // Portaudio stream handle
 int inDevNum;                 // Portaudio's audio output device index
 int64_t Start_time;
@@ -547,6 +566,29 @@ void *statproc(void *arg){
     // Decoding into a temp copy and then memcpy would write zeroes into unsent parameters
     // Lock and signal the queue so the data handler can atomically wait for the squelch to open
     decode_radio_status(&sp->frontend,&sp->chan,buffer+1,length-1);
+    {
+      // The receiver summary: this status's front end figures, taken
+      // together here, as they came (the display mustn't read them as this
+      // thread writes them)
+      struct sum_reading r = {
+	.clocktime = sp->chan.clocktime,
+	.frequency = sp->frontend.frequency,
+	.samprate = sp->frontend.samprate,
+	.if_dbfs = power2dB(sp->frontend.if_power),
+	.rf_gain = sp->frontend.rf_gain,
+	.agc = sp->frontend.rf_agc,
+	.lna_gain = sp->frontend.lna_gain,
+	.mixer_gain = sp->frontend.mixer_gain,
+	.if_gain = sp->frontend.if_gain,
+	.overranges = sp->frontend.overranges,
+	.samp_since_over = sp->frontend.samp_since_over,
+      };
+      struct sockaddr_storage const *who = (struct sockaddr_storage const *)&sp->frontend.metadata_dest_socket;
+      receiver_key(who->ss_family == AF_INET || who->ss_family == AF_INET6 ? who : &sender,r.key,sizeof r.key);
+      strlcpy(r.description,sp->frontend.description,sizeof r.description);
+      if(isfinite(r.if_dbfs))
+	summary_reading(&Rx_summary,&r);
+    }
     // chan.output.power is in dBFS so no signal is -Infinity
     if(isnan(sp->chan.output.power) || !isfinite(sp->chan.output.power))
       sp->squelch_open = false; // only turned off here; turned on in the data path
