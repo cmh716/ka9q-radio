@@ -96,20 +96,29 @@ def monitored_seconds(f, coverage):
 SLACK = datetime.timedelta(seconds=10)  # (rows are to the second; a stretch's end is its last spectrum)
 
 
-def spans_at(coverage, when, hz):
-    """The spans (lo, hi) of the stretches watching hz at when, and whether
-    any must all agree. Stretches with when strictly inside them: a
-    candidate inside any of them qualifies (overlapping runs). Only at a
-    stretch's first or last second (a retune and the transmission sharing
-    it: rows are to the second), or within SLACK of one: ambiguous, so a
-    candidate must be inside all of them"""
-    inner = [(lo, hi) for s, e, lo, hi in coverage if s < when < e and lo <= hz <= hi]
-    if inner:
-        return inner, False
-    edge = [(lo, hi) for s, e, lo, hi in coverage if s <= when <= e and lo <= hz <= hi]
-    if edge:
-        return edge, True
-    return [(lo, hi) for s, e, lo, hi in coverage if s - SLACK <= when <= e + SLACK and lo <= hz <= hi], True
+def eligible_at(coverage, when, hz):
+    """Who can be credited a transmission at hz, when: a test of a
+    candidate's frequency, or None if activity wasn't watching then.
+    Stretches containing when (endpoints included): a candidate inside any
+    of them. At a hand-off (one stretch ending in the second another begins:
+    a retune, rows being to the second) which held the transmission can't be
+    told: a candidate must be inside both, unless some other stretch has
+    when strictly inside it and covers it. With none containing when, those
+    within SLACK of it: inside all of them"""
+    matches = [(s, e, lo, hi) for s, e, lo, hi in coverage if s <= when <= e and lo <= hz <= hi]
+    if matches:
+        ending = [(lo, hi) for s, e, lo, hi in matches if e == when]
+        starting = [(lo, hi) for s, e, lo, hi in matches if s == when]
+        if ending and starting:
+            inner = [(lo, hi) for s, e, lo, hi in matches if s < when < e]
+            pair = ending + starting
+            return lambda f: any(lo <= f <= hi for lo, hi in inner) or all(lo <= f <= hi for lo, hi in pair)
+        spans = [(lo, hi) for _, _, lo, hi in matches]
+        return lambda f: any(lo <= f <= hi for lo, hi in spans)
+    near = [(lo, hi) for s, e, lo, hi in coverage if s - SLACK <= when <= e + SLACK and lo <= hz <= hi]
+    if near:
+        return lambda f: all(lo <= f <= hi for lo, hi in near)
+    return None
 
 
 def frequency_of(row):
@@ -191,18 +200,16 @@ def survey(rows, transmissions, lo, hi, coverage=None):
     for hz, start, end, secs in transmissions:
         # With coverage: only a transmission heard where and when activity
         # was watching counts, and only for candidates inside that span
-        spans, every = None, False
+        ok = None
         if coverage is not None:
-            spans, every = spans_at(coverage, start, hz)
-            if not spans:
+            ok = eligible_at(coverage, start, hz)
+            if ok is None:
                 continue
         k = bisect.bisect_left(keys, hz)
         best = None
         for j in (k - 1, k):
             if 0 <= j < len(keys) and abs(keys[j] - hz) <= MATCH_HZ:
-                # Inside a span matching the time; at an ambiguous boundary
-                # (a retune in the transmission's second), inside all of them
-                if spans is not None and not (all if every else any)(lo <= keys[j] <= hi for lo, hi in spans):
+                if ok is not None and not ok(keys[j]):
                     continue
                 if best is None or abs(keys[j] - hz) < abs(keys[best] - hz):
                     best = j

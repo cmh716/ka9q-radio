@@ -280,5 +280,21 @@ out15 = os.path.join(d, 'out15.csv')
 survey.main(['-a', log4, '-u', cov7, '-o', out15, cands4])
 rows15 = {r['Name']: r for r in csv.DictReader(open(out15))}
 check(rows15['covered after']['Transmissions'] == '1', 'overlapping runs, well inside both: the nearer candidate credited')
+# A run ending at the transmission's second while another (no hand-off: it
+# began earlier) goes on: the ending run's candidate is credited
+cov8 = os.path.join(d, 'cov8.csv')
+with open(cov8, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-24 00:00:00Z', '2026-11-24 00:59:58Z', '440.00000', '450.00400'])  # ends then
+    w.writerow(['2026-11-24 00:30:00Z', '2026-11-24 02:00:00Z', '450.00300', '460.00000'])  # strictly inside
+cands5 = os.path.join(d, 'cands5.csv')
+with open(cands5, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['RX MHz', 'Name'])
+    w.writerow(['450.002000', 'ending run only'])
+out16 = os.path.join(d, 'out16.csv')
+survey.main(['-a', log4, '-u', cov8, '-o', out16, cands5])
+check(next(csv.DictReader(open(out16)))['Transmissions'] == '1', 'a run ending at that second (no hand-off): its candidate credited')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
