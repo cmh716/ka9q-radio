@@ -32,7 +32,9 @@
 // nearest) gets a channel in radiod for as long as it's busy: mode
 // "mixed" (analog FM with no tone squelch, and every digital mode), sent to
 // the audit group, where tone-survey measures its tone or digital IDs.
-// The channel is asked for again every 10 s while it's heard, and lapses
+// The channel is asked for again every 2 s while it's heard (each ask has
+// radiod send its status, which tone-survey reads: a digital transmission
+// with no voice, encrypted or data, has no audio to send it), and lapses
 // 30 s after (radiod's lifetime): no configuration, and only as many
 // channels as are busy, at most -A (16) at once. The start of a
 // transmission (~half a second, as it's seen and the channel made) is
@@ -101,7 +103,8 @@ static int Audit_max = 16;
 #define AUDIT_SSRC_BASE 0x60000000u
 #define AUDIT_SSRC_END  (AUDIT_SSRC_BASE + 0x04000000u)
 static double const Audit_life = 30;   // s a channel outlives the last time it was asked for
-static double const Audit_every = 10;  // s between asks while it's heard
+static double const Audit_every = 2;   // s between asks while it's heard (each draws the channel's status:
+                                       // a digital transmission with no voice, encrypted or data, sends none else)
 #ifndef AUDIT_TURN
 #define AUDIT_TURN 120
 #define AUDIT_REST 300

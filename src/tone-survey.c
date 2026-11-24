@@ -13,7 +13,9 @@
 // of audio) is judged as it ends: the tone found in most of it (monitor's
 // detector: of the 55 tones, one with over half their energy, every
 // 0.24 s), else the DCS code found most (radiod's decoder), else none; or,
-// for a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...).
+// for a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...);
+// a digital transmission with no voice (encrypted, data: no audio), from
+// status alone, "DMR (no voice)", "P25 NAC 293 (no voice)".
 // A change of call (radiod's call ID, at the RTP timestamp status gives for
 // it: FM into digital, one call into the next) ends a transmission too. Under half a second isn't judged; with no tone,
 // code or call, under 1.5 s is a scrap (the FM a mixed channel plays after
@@ -106,6 +108,10 @@ struct stream_info {
   char last_label[96];
   struct call_change { uint32_t timestamp,id; char label[96]; double received; bool untimed; } changes[CALL_QUEUE];
   int nchanges;                // (untimed: an older radiod, no call timestamps: from the audio that came after it)
+  // A digital transmission with no voice (encrypted, data): no audio, only
+  // status (activity's asks draw it): the mode radiod says it hears
+  char quiet_label[64];
+  double quiet_first,quiet_last;  // monotonic s, its first and last status
   double seen;
 };
 static struct stream_info Info[MAX_INFO];
@@ -504,6 +510,18 @@ static void call_change(struct session *sp,uint32_t id,char const *label){
   strlcpy(sp->digital,label,sizeof sp->digital);
 }
 
+// A digital transmission heard only in status is over: tallied
+static double const Quiet_status_gap = 6; // s between statuses (2 s asks) that ends one
+static void quiet_end(struct stream_info *ip){
+  if(ip->quiet_label[0] == '\0')
+    return;
+  if(Verbose)
+    printf("%.4f MHz  %.1f s  %s\n",ip->freq * 1e-6,ip->quiet_last - ip->quiet_first,ip->quiet_label);
+  fflush(stdout);
+  tally(ip->freq,ip->quiet_label);
+  ip->quiet_label[0] = '\0';
+}
+
 static void status(uint8_t const *buffer,int length,struct sockaddr_storage const *sender){
   if(length < 2 || buffer[0] != STATUS)
     return;
@@ -521,6 +539,38 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
     ip->encoding = chan.output.encoding;
     ip->samprate = chan.output.samprate;
     ip->channels = chan.output.channels > 0 ? chan.output.channels : 1;
+  }
+  // Digital, with no audio coming (radiod sends none for an encrypted or
+  // data transmission): what status says it hears, from its source field
+  // ("DMR TS1", "P25 N293", "NXDN 1234": the mode, a P25 NAC; not the
+  // radio, which would make each its own kind)
+  {
+    struct session const *sp = NULL;
+    for(int i = 0; i < MAX_SESSIONS && sp == NULL; i++)
+      if(Sessions[i].inuse && Sessions[i].ssrc == ssrc && address_match(&Sessions[i].sender,sender))
+	sp = &Sessions[i];
+    bool const audio = sp != NULL && ip->seen - sp->last_packet < 3.0; // (and not a voice call's end)
+    char label[64] = "";
+    char const *src = chan.dv.source;
+    if(!audio && src[0] != '\0' && strcmp(src,"FM") != 0){
+      char mode[16];
+      size_t const len = strcspn(src," ");
+      snprintf(mode,sizeof mode,"%.*s",(int)(len < 15 ? len : 15),src);
+      unsigned nac;
+      if(strcmp(mode,"P25") == 0 && sscanf(src + len," N%3x",&nac) == 1)
+	snprintf(label,sizeof label,"P25 NAC %03X (no voice)",nac);
+      else
+	snprintf(label,sizeof label,"%s (no voice)",mode);
+    }
+    if(ip->quiet_label[0] != '\0' && (strcmp(label,ip->quiet_label) != 0 || ip->seen - ip->quiet_last > Quiet_status_gap))
+      quiet_end(ip);
+    if(label[0] != '\0'){
+      if(ip->quiet_label[0] == '\0'){
+	strlcpy(ip->quiet_label,label,sizeof ip->quiet_label);
+	ip->quiet_first = ip->seen;
+      }
+      ip->quiet_last = ip->seen;
+    }
   }
   // The call: a digital one's mode and IDs (vocoded audio isn't for the
   // CTCSS filters); analog (FM) or none, ""
@@ -700,6 +750,10 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
     sp->channels = ip->channels;
   }
   double const now = monotonic();
+  // Audio within 3 s of a voiceless transmission heard in status: it was a
+  // voice call's start (status as the decoder synced) or end, not one
+  if(ip != NULL && ip->quiet_label[0] != '\0' && now - ip->quiet_last < 3.0)
+    ip->quiet_label[0] = '\0';
   if(now - sp->last_packet > Quiet_gap){
     // A new transmission: its numbering, and the stream's clock, may start
     // afresh. What's held is judged first; the call timeline restarts with
@@ -872,6 +926,9 @@ int main(int argc,char *argv[]){
 	data(buffer,size,&sender);
     }
     double const now = monotonic();
+    for(int k = 0; k < MAX_INFO; k++)
+      if(Info[k].inuse && Info[k].quiet_label[0] != '\0' && now - Info[k].quiet_last > Quiet_status_gap)
+	quiet_end(&Info[k]);
     for(int k = 0; k < MAX_SESSIONS; k++){
       struct session *sp = &Sessions[k];
       if(!sp->inuse)
@@ -887,6 +944,9 @@ int main(int argc,char *argv[]){
       last_write = now;
     }
   }
+  for(int k = 0; k < MAX_INFO; k++)
+    if(Info[k].inuse)
+      quiet_end(&Info[k]);
   for(int k = 0; k < MAX_SESSIONS; k++)
     if(Sessions[k].inuse){
       release_due(&Sessions[k],true);
