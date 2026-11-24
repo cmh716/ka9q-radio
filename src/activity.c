@@ -41,6 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sysexits.h>
 #include <time.h>
 #include <unistd.h>
@@ -680,6 +681,12 @@ static void canonical(char const *path,char *out,size_t size){
   if(realpath(path,real) != NULL){
     strlcpy(out,real,size);
     return;
+  }
+  struct stat st;
+  if(lstat(path,&st) == 0 && S_ISLNK(st.st_mode)){
+    // A symlink to nothing yet: where it would lead can't be compared
+    fprintf(stderr,"%s: %s is a symlink to a file that doesn't exist: give the file itself\n",App_path,path);
+    exit(EX_USAGE);
   }
   char const *slash = strrchr(path,'/');
   char const *name = slash != NULL ? slash + 1 : path;
