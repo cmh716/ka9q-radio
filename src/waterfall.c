@@ -190,16 +190,17 @@ static void *status_thread(void *arg){
     uint32_t const ssrc = chan.output.rtp.ssrc;
     if(ssrc == 0)
       continue; // the front end alone
-    // A spectrum for one of ours?
-    struct client *c = NULL;
+    // A spectrum for one of ours? Found and given to it under the clients'
+    // lock, so its slot can't go to another viewer in between
+    bool ours = false;
+    static uint8_t bins[MAX_BINS];
+    int const n = byte_bins(buffer + 1,(int)length - 1,bins,MAX_BINS);
     pthread_mutex_lock(&Clients_lock);
-    for(int i = 0; i < MAX_CLIENTS; i++)
-      if(Clients[i].used && Clients[i].ssrc == ssrc)
-	c = &Clients[i];
-    pthread_mutex_unlock(&Clients_lock);
-    if(c != NULL){
-      static uint8_t bins[MAX_BINS];
-      int const n = byte_bins(buffer + 1,(int)length - 1,bins,MAX_BINS);
+    for(int i = 0; i < MAX_CLIENTS && !ours; i++){
+      struct client * const c = &Clients[i];
+      if(!c->used || c->ssrc != ssrc)
+	continue;
+      ours = true;
       if(n > 0 && isfinite(chan.spectrum.base) && isfinite(chan.spectrum.step)){
 	pthread_mutex_lock(&c->lock);
 	c->tag = get_tag(buffer + 1,(int)length - 1);
@@ -213,8 +214,10 @@ static void *status_thread(void *arg){
 	pthread_cond_broadcast(&c->cond);
 	pthread_mutex_unlock(&c->lock);
       }
-      continue;
     }
+    pthread_mutex_unlock(&Clients_lock);
+    if(ours)
+      continue;
     if(chan.demod_type == SPECT_DEMOD || chan.demod_type == SPECT2_DEMOD)
       continue; // others' spectrum channels: not channels to mark
     if(demod_name_from_type(chan.demod_type) == NULL)
@@ -258,7 +261,13 @@ static void *channel_poll_thread(void *arg){
   (void)arg;
   pthread_setname("wf poll");
   while(true){
+    // The front end's own status (SSRC 0), heard even with no channel running
     uint8_t buffer[64],*bp = buffer;
+    *bp++ = CMD;
+    encode_int(&bp,OUTPUT_SSRC,0);
+    encode_int(&bp,COMMAND_TAG,(uint32_t)random());
+    send_command(buffer,bp);
+    bp = buffer;
     *bp++ = CMD;
     encode_int(&bp,OUTPUT_SSRC,0xffffffff);
     encode_int(&bp,COMMAND_TAG,(uint32_t)random());
@@ -429,7 +438,9 @@ static void serve_stream(int fd,char const *query){
       c = &Clients[i];
       c->used = true;
       c->ssrc = 0x57460000u + (uint32_t)(random() & 0xfff0) + (uint32_t)i; // "WF", distinct per slot
+      pthread_mutex_lock(&c->lock); // (lock order: the clients', then a client's)
       c->fresh = false;
+      pthread_mutex_unlock(&c->lock);
     }
   }
   pthread_mutex_unlock(&Clients_lock);
@@ -452,7 +463,7 @@ static void serve_stream(int fd,char const *query){
     encode_int(&bp,OUTPUT_SSRC,c->ssrc);
     encode_int(&bp,COMMAND_TAG,tag);
     encode_int(&bp,DEMOD_TYPE,SPECT2_DEMOD);
-    encode_int(&bp,LIFETIME,blocks(5)); // 5 s without a poll: radiod closes it
+    encode_int(&bp,LIFETIME,blocks(2)); // 2 s without a poll (a viewer gone): radiod closes it
     encode_double(&bp,RADIO_FREQUENCY,center);
     encode_int(&bp,BIN_COUNT,bins);
     encode_float(&bp,RESOLUTION_BW,(float)rbw);
@@ -493,14 +504,9 @@ static void serve_stream(int fd,char const *query){
     if(left > 0)
       usleep((useconds_t)(left / 1000));
   }
-  // Gone: its spectrum channel ends now (a lifetime of one block; frequency
-  // 0 would only park it)
-  uint8_t buffer[64],*bp = buffer;
-  *bp++ = CMD;
-  encode_int(&bp,OUTPUT_SSRC,c->ssrc);
-  encode_int(&bp,COMMAND_TAG,(uint32_t)random());
-  encode_int(&bp,LIFETIME,1);
-  send_command(buffer,bp);
+  // Gone: its spectrum channel ends with its lifetime, unpolled. (No
+  // command to end it: radiod makes a channel for a command to an SSRC it
+  // doesn't have, which one sent after it had already ended would do)
   if(Verbose)
     fprintf(stderr,"viewer ssrc %u gone\n",c->ssrc);
   pthread_mutex_lock(&Clients_lock);
@@ -530,7 +536,9 @@ static void *http_thread(void *arg){
   }
   req[len] = '\0';
   char method[8] = "",path[1024] = "";
-  if(sscanf(req,"%7s %1023s",method,path) == 2 && strcmp(method,"GET") == 0){
+  if(strstr(req,"\r\n\r\n") == NULL){
+    // Incomplete (timed out, closed, or too long): not routed
+  } else if(sscanf(req,"%7s %1023s",method,path) == 2 && strcmp(method,"GET") == 0){
     char *query = strchr(path,'?');
     if(query != NULL)
       *query++ = '\0';
