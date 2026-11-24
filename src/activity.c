@@ -562,6 +562,13 @@ static void expire(int64_t now){
       close_tx(&Txs[k]);
 }
 
+struct sig { double f,w,width; float over,top; bool shadow; };
+static struct sig const *Sort_sig;
+static int by_strength(void const *a,void const *b){
+  float const x = Sort_sig[*(int const *)a].top, y = Sort_sig[*(int const *)b].top;
+  return x > y ? -1 : x < y ? +1 : *(int const *)a - *(int const *)b;
+}
+
 static void process(double start,double rbw,int n,float base,float step,uint8_t const *bins,int64_t now){
   static float db[MAX_BINS],sorted[MAX_BINS];
   expire(now);
@@ -601,7 +608,7 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
 	    n,rbw,start * 1e-6,valid,most,(start + at * rbw) * 1e-6);
   }
   // Signals: runs of bins above their floors (a one-bin gap bridged)
-  static struct sig { double f,w,width; float over,top; bool shadow; } sig[MAX_BINS / 2];
+  static struct sig sig[MAX_BINS / 2];
   int nsig = 0;
   int i = 0;
   while(i < n && nsig < MAX_BINS / 2){
@@ -636,18 +643,36 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
   // its floor: the strong one's skirt raises the floor near it) within
   // Shadow_hz is its splatter or skirt (a transmitter in the house, a
   // repeater down the road), not a transmission of its own
+  // Strongest first, and only signals kept can shadow others: the radius
+  // runs from a real signal, not on from one shadow to the next
+  static int order[MAX_BINS / 2];
+  for(int a = 0; a < nsig; a++)
+    order[a] = a;
+  Sort_sig = sig;
+  qsort(order,(size_t)nsig,sizeof order[0],by_strength);
   int shadowed = 0;
-  for(int a = 0; a < nsig; a++){
-    for(int b = 0; b < nsig && !sig[a].shadow; b++)
-      if(b != a && sig[b].top - sig[a].top >= Shadow_db && fabs(sig[b].f - sig[a].f) <= Shadow_hz)
-	sig[a].shadow = true;
-    shadowed += sig[a].shadow;
+  for(int x = 0; x < nsig; x++){
+    struct sig *s1 = &sig[order[x]];
+    for(int y = 0; y < x && !s1->shadow; y++){
+      struct sig const *s2 = &sig[order[y]];
+      if(!s2->shadow && s2->top - s1->top >= Shadow_db && fabs(s2->f - s1->f) <= Shadow_hz)
+	s1->shadow = true;
+    }
+    shadowed += s1->shadow;
   }
   if(Verbose > 1 && shadowed > 0)
     fprintf(stderr,"%d of %d signals taken for a stronger one's skirt\n",shadowed,nsig);
   for(int a = 0; a < nsig; a++){
-    if(sig[a].shadow)
+    if(sig[a].shadow){
+      // A shadow begins nothing, but a transmission already tracked (from
+      // frames where it stood clear) goes on through it, not split
+      for(int k = 0; k < MAX_TX; k++)
+	if(Txs[k].open && fabs(Txs[k].freq - sig[a].f) <= fmax(1.5 * rbw,Known_hz)){
+	  Txs[k].last = now;
+	  break;
+	}
       continue;
+    }
     double const f = sig[a].f,w = sig[a].w,width = sig[a].width;
     float const over = sig[a].over,top = sig[a].top;
     // Continue a transmission at that frequency, or begin one
@@ -724,6 +749,17 @@ static void canonical(char const *path,char *out,size_t size){
   snprintf(out,size,"%s/%s",real,name);
 }
 
+// An option's number, wholly, finite and in range, or the program stops
+static double number(char const *text,char const *opt,double lo,double hi){
+  char *end = NULL;
+  double const x = strtod(text,&end);
+  if(end == text || *end != '\0' || !isfinite(x) || x < lo || x > hi){
+    fprintf(stderr,"%s %s: a number from %g to %g wanted\n",opt,text,lo,hi);
+    exit(EX_USAGE);
+  }
+  return x;
+}
+
 static void usage(void){
   fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m seconds] [-S kHz] [-D dB] [-v] radiod-status-group\n",App_path);
 }
@@ -738,10 +774,10 @@ int main(int argc,char *argv[]){
     case 'c': if(nconfigs < 32) configs[nconfigs++] = optarg; break;
     case 'l': Log_path = optarg; break;
     case 's': Summary_path = optarg; break;
-    case 't': Threshold = strtod(optarg,NULL); break;
-    case 'm': Min_seconds = strtod(optarg,NULL); break;
-    case 'S': Shadow_hz = strtod(optarg,NULL) * 1e3; break;
-    case 'D': Shadow_db = strtod(optarg,NULL); break;
+    case 't': Threshold = number(optarg,"-t",0.1,100); break;
+    case 'm': Min_seconds = number(optarg,"-m",0,3600); break;
+    case 'S': Shadow_hz = number(optarg,"-S",0,10000) * 1e3; break; // 0: the rule off
+    case 'D': Shadow_db = number(optarg,"-D",1,100); break;
     case 'v': Verbose++; break;
     default: usage(); exit(EX_USAGE);
     }

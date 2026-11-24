@@ -60,7 +60,10 @@ How far above its floor a bin must be. Default 10.
 The shortest transmission logged. Default 0.5.
 .TP
 .B "\-S kHz"
-How near a stronger signal a weaker one is taken for its skirt. Default 150.
+How near a stronger signal a weaker one is taken for its skirt. Default
+150; 0 turns the rule off. Only signals kept can shadow others (the
+strongest first), so the distance is always from a real signal; and a
+transmission already followed goes on through a shadow, not split by it.
 .TP
 .B "\-D dB"
 How much stronger (in dBFS) that one must be. Default 20.
