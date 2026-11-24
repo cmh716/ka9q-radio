@@ -19,7 +19,8 @@
 // code or call, under 1.5 s is a scrap (the FM a mixed channel plays after
 // a digital call, a burst of noise) and isn't counted. The results, per frequency: transmissions,
 // first and last heard, the commonest, and all with their counts.
-// Rewritten every minute and at exit (SIGINT, SIGTERM).
+// Rewritten every minute and at exit (SIGINT, SIGTERM); at a start, an
+// earlier run's results there are read back and added to.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE 1
 #include <errno.h>
@@ -172,6 +173,81 @@ static void tally(double freq,char const *what){
     f->kinds[f->nkinds++].count = 1;
   } else
     f->other++;
+}
+
+// The results of an earlier run, so a restart adds to them: each
+// frequency's line ("453.32500,9,first,last,"151.4 PL","151.4 PL x8; none x1"")
+static int64_t parse_utc(char const *text){
+  struct tm tm = {0};
+  char const *end = strptime(text,"%Y-%m-%d %H:%M:%SZ",&tm);
+  return end != NULL ? (int64_t)timegm(&tm) : 0;
+}
+static void load_results(void){
+  FILE *fp = fopen(Results_path,"r");
+  if(fp == NULL)
+    return; // (a first run)
+  char line[4096];
+  int loaded = 0;
+  while(fgets(line,sizeof line,fp) != NULL && Nfreqs < MAX_FREQS){
+    char *field[6];
+    int n = 0;
+    for(char *p = line; n < 6 && p != NULL; n++){
+      if(*p == '"'){ // quoted: to the closing quote (the labels hold no quotes)
+	field[n] = ++p;
+	p = strchr(p,'"');
+	if(p == NULL)
+	  break;
+	*p++ = '\0';
+	p = *p == ',' ? p + 1 : NULL;
+      } else {
+	field[n] = p;
+	p = strchr(p,',');
+	if(p != NULL)
+	  *p++ = '\0';
+      }
+    }
+    if(n < 6)
+      continue; // (the header has six too: its frequency isn't a number)
+    char *end;
+    double const mhz = strtod(field[0],&end);
+    if(end == field[0] || !(mhz > 0))
+      continue;
+    struct freqstat *f = &Freqs[Nfreqs];
+    memset(f,0,sizeof *f);
+    f->freq = mhz * 1e6;
+    f->first = parse_utc(field[2]);
+    f->last = parse_utc(field[3]);
+    // "what xN" each, "; " between
+    for(char *item = field[5],*next; item != NULL && *item != '\0'; item = next){
+      next = strstr(item,"; ");
+      if(next != NULL){
+	*next = '\0';
+	next += 2;
+      }
+      char *x = NULL; // the last " x"
+      for(char *q = strstr(item," x"); q != NULL; q = strstr(q + 1," x"))
+	x = q;
+      int const count = x != NULL ? atoi(x + 2) : 0;
+      if(x == NULL || count <= 0)
+	continue;
+      *x = '\0';
+      f->transmissions += count;
+      if(strcmp(item,"other") == 0)
+	f->other += count;
+      else if(f->nkinds < MAX_KINDS){
+	strlcpy(f->kinds[f->nkinds].what,item,sizeof f->kinds[0].what);
+	f->kinds[f->nkinds++].count = count;
+      } else
+	f->other += count;
+    }
+    if(f->transmissions > 0){
+      Nfreqs++;
+      loaded++;
+    }
+  }
+  fclose(fp);
+  if(loaded > 0)
+    fprintf(stderr,"%s: %d frequencies' results from %s, added to\n",App_path,loaded,Results_path);
 }
 
 static char const *utc(int64_t t,char *out,size_t size){
@@ -767,6 +843,7 @@ int main(int argc,char *argv[]){
     exit(EX_UNAVAILABLE);
   signal(SIGINT,stop);
   signal(SIGTERM,stop);
+  load_results();
   fprintf(stderr,"%s: watching %d group%s; results in %s\n",App_path,nfds / 2,nfds / 2 == 1 ? "" : "s",Results_path);
   uint8_t buffer[PKTSIZE];
   double last_write = monotonic();
