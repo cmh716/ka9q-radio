@@ -296,5 +296,39 @@ with open(cands5, 'w', newline='') as f:
 out16 = os.path.join(d, 'out16.csv')
 survey.main(['-a', log4, '-u', cov8, '-o', out16, cands5])
 check(next(csv.DictReader(open(out16)))['Transmissions'] == '1', 'a run ending at that second (no hand-off): its candidate credited')
+# Stage 2: tone-survey's results against the listed tones; the survey config
+tones = os.path.join(d, 'tones.csv')
+with open(tones, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['frequency_mhz', 'transmissions', 'first', 'last', 'commonest', 'heard'])
+    w.writerow(['453.50000', '5', '', '', 'D243', 'D243 x5'])
+    w.writerow(['468.65625', '9', '', '', 'none', 'none x9'])
+    w.writerow(['424.12500', '3', '', '', '131.8 PL', '131.8 PL x2; none x1'])
+    w.writerow(['425.00000', '2', '', '', 'P25 NAC 469 TG 10003', 'P25 NAC 469 TG 10003 x2'])
+out17 = os.path.join(d, 'out17.csv')
+conf = os.path.join(d, 'survey.conf')
+survey.main(['-a', log, '-o', out17, '--range', '422.1-469.1', '--tones', tones, '--survey-config', conf, rr])
+rows17 = {r['Frequency Output']: r for r in csv.DictReader(open(out17))}
+check(rows17['453.50000']['Tone check'] == 'confirmed', 'D243 listed, D243 heard: confirmed')
+check(rows17['424.12500']['Tone check'] == 'differs: heard 131.8 PL (listed 127.3 PL)'
+      and rows17['424.12500']['Heard'] == '131.8 PL x2; none x1', '127.3 listed, 131.8 heard: differs, with what was heard')
+check(rows17['468.65625']['Tone check'] == 'no tone heard', 'nothing listed, none heard: no tone heard')
+check(rows17['425.00000']['Tone check'] == 'digital: P25 NAC 469 TG 10003', 'a digital call heard: its mode and IDs')
+check(rows17['468.65000']['Tone check'] == 'not surveyed yet', 'a frequency tone-survey has no results for: not surveyed yet')
+text = open(conf).read()
+check('mode = mixed' in text and 'data = tone-survey.local' in text and '468m656250' in text and '453m500000' in text
+      and '425m000000' not in text and '468m650000' not in text, 'the survey config: the active candidates only, mixed, its group')
+# The catalog's form of the listed tone
+cat2 = os.path.join(d, 'cat2.csv')
+with open(cat2, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['ID', 'Name', 'RX MHz', 'RX Squelch Type', 'RX Squelch Value'])
+    w.writerow(['a', 'x', '453.500000', 'DCS', '243'])
+    w.writerow(['b', 'y', '424.125000', 'CTCSS', '127.3'])
+out18 = os.path.join(d, 'out18.csv')
+survey.main(['-a', log, '-o', out18, '--tones', tones, cat2])
+rows18 = {r['Name']: r for r in csv.DictReader(open(out18))}
+check(rows18['x']['Tone check'] == 'confirmed' and rows18['y']['Tone check'].startswith('differs: heard 131.8 PL'),
+      "the catalog's squelch columns read as listed tones")
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

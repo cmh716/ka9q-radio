@@ -49,7 +49,7 @@ def parse_time(text):
 RARE = re.compile(r'fire|ems\b|ambulance|rescue|mutual|interop|tac\b|tact|tactical|emergency|hospital|med\b|'
                   r'fireground|incident|evac|hazmat|swat|disaster|ares|races|civil def', re.I)
 EVIDENCE = ['Survey', 'Monitored days', 'Transmissions', 'Airtime s', 'First heard', 'Last heard', 'Busiest hours',
-            'Pattern', 'Rare-use']
+            'Pattern', 'Rare-use', 'Heard', 'Tone check']
 ACTIVE = 'RF activity near frequency (tone, identity unverified)'
 SILENT = 'no RF activity in this log'
 OUTSIDE = 'outside --range'
@@ -249,6 +249,89 @@ def survey(rows, transmissions, lo, hi, coverage=None):
     return rows
 
 
+def listed_tone(row):
+    """A candidate's listed receive tone, as tone-survey writes them: "127.3 PL",
+    "D243", "none" (carrier squelch), or its text as listed, or ''"""
+    kind = (row.get('RX Squelch Type') or '').strip().upper()
+    value = (row.get('RX Squelch Value') or '').strip()
+    if kind:  # the catalog's form
+        if kind == 'CTCSS' and value:
+            try:
+                return f'{float(value):.1f} PL'
+            except ValueError:
+                return value
+        if kind == 'DCS' and value:
+            return 'D' + value.zfill(3)
+        if kind in ('NONE', 'CSQ', 'CARRIER'):
+            return 'none'
+        return f'{kind} {value}'.strip()
+    text = (row.get('PL Output Tone') or row.get('Source RX Tone') or '').strip()
+    if not text:
+        return ''
+    m = re.fullmatch(r'([\d.]+)\s*PL', text, re.I)
+    if m:
+        return f'{float(m.group(1)):.1f} PL'
+    m = re.fullmatch(r'D?(\d{3})\s*(N|DPL|DCS)?', text, re.I)
+    if m:
+        return 'D' + m.group(1)
+    if text.upper() == 'CSQ':
+        return 'none'
+    return text
+
+
+def read_tones(path):
+    """tone-survey's results: frequency (Hz) -> (commonest, all heard)"""
+    out = {}
+    with open(path, newline='') as f:
+        for r in csv.DictReader(f):
+            try:
+                out[round(float(r['frequency_mhz']) * 1e6)] = (r.get('commonest') or '', r.get('heard') or '')
+            except (KeyError, ValueError, TypeError):
+                continue
+    return out
+
+
+def tone_check(row, results):
+    """Its listed tone against what tone-survey heard on its frequency"""
+    f = frequency_of(row)
+    if f is None:
+        return
+    found = None
+    for hz, v in results.items():
+        if abs(hz - f) <= 1000:
+            found = v
+            break
+    if found is None:
+        row['Tone check'] = 'not surveyed yet'
+        return
+    commonest, heard = found
+    row['Heard'] = heard
+    listed = listed_tone(row)
+    if commonest and not re.fullmatch(r'[\d.]+ PL|[DI]\d{3}|none', commonest):
+        row['Tone check'] = f'digital: {commonest}'
+    elif commonest == 'none':
+        row['Tone check'] = 'no tone heard' + (f' (listed {listed})' if listed and listed != 'none' else '')
+    elif listed and commonest == listed:
+        row['Tone check'] = 'confirmed'
+    else:
+        row['Tone check'] = f'differs: heard {commonest}' + (f' (listed {listed})' if listed else ' (none listed)')
+
+
+def survey_config(rows, path, group):
+    """radiod sections for the candidates with RF activity: no tone squelch,
+    analog and every digital mode (mixed), for tone-survey"""
+    freqs = sorted({round(frequency_of(r)) for r in rows if r.get('Survey') == ACTIVE and frequency_of(r)})
+    with open(path, 'w') as f:
+        f.write(f'# Written by frequency-survey.py for tone-survey: {len(freqs)} frequencies with RF activity,\n'
+                f'# without tone squelch. Put it in radiod\'s configuration directory while\n'
+                f'# surveying, then take it out.\n')
+        for k in range(0, len(freqs), 40):
+            chunk = freqs[k:k + 40]
+            f.write(f'\n[tone-survey-{k // 40 + 1}]\nmode = mixed\ndata = {group}\n')
+            f.write('freq = "' + ' '.join(f'{hz // 1000000}m{hz % 1000000:06d}' for hz in chunk) + '"\n')
+    return len(freqs)
+
+
 def same_file(a, b):
     """Two paths naming one file (symlinks, spellings, hard links), existing or not"""
     import os
@@ -268,6 +351,9 @@ def main(argv=None):
     ap.add_argument('-u', '--coverage', help="activity's coverage file (default: the log's name with -coverage, if there)")
     ap.add_argument('-o', '--output', help='where the annotated rows go (default: <candidates>-survey.csv)')
     ap.add_argument('--range', help='the coverage, MHz: lo-hi (default: the span of the log)')
+    ap.add_argument('--tones', help="tone-survey's results: each candidate's listed tone checked against what was heard")
+    ap.add_argument('--survey-config', help="write radiod sections for tone-survey: the candidates with RF activity")
+    ap.add_argument('--survey-group', default='tone-survey.local', help='their data group (default tone-survey.local)')
     args = ap.parse_args(argv)
 
     import os
@@ -292,8 +378,18 @@ def main(argv=None):
     if not transmissions and coverage is None:
         sys.exit(f'{args.activity}: no transmissions logged, and no coverage file to say it was watching')
     rows = survey(rows, transmissions, lo, hi, coverage)
+    if args.tones:
+        results = read_tones(args.tones)
+        for r in rows:
+            tone_check(r, results)
     out = args.output or re.sub(r'(\.csv)?$', '-survey.csv', args.candidates, count=1)
-    for source in (args.candidates, args.activity) + ((cover_path,) if coverage is not None else ()):
+    inputs = (args.candidates, args.activity) + ((cover_path,) if coverage is not None else ()) + \
+        ((args.tones,) if args.tones else ())
+    if args.survey_config:
+        for source in inputs + (out,):
+            if same_file(args.survey_config, source):
+                sys.exit(f'{args.survey_config}: that is {source}: give another file for the survey config')
+    for source in inputs:
         if same_file(out, source):
             sys.exit(f'{out}: that is {source}, an input: give another output')
     with open(out, 'w', newline='') as f:
@@ -310,6 +406,9 @@ def main(argv=None):
     for v, n in verdicts.most_common():
         print(f'  {n:5d}  {v}')
     print(f'written to {out}')
+    if args.survey_config:
+        n = survey_config(rows, args.survey_config, args.survey_group)
+        print(f'{n} frequencies for tone-survey in {args.survey_config} (data {args.survey_group})')
 
 
 if __name__ == '__main__':
