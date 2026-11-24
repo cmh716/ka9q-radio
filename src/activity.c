@@ -57,7 +57,7 @@ char const *App_path;
 
 static char const *Log_path = "activity.csv";
 static char const *Summary_path = "activity-summary.csv";
-static char const *Coverage_path = "activity-coverage.csv";
+static char const *Coverage_path;    // (default: the log's name with -coverage)
 static double Threshold = 10;      // dB above a bin's floor
 static double Min_seconds = 0.5;   // shorter: noise
 static double const Hang = 2.0;    // s without a signal: its transmission is over
@@ -796,6 +796,12 @@ static void on_stop(int sig){
   Stop = 1;
 }
 
+// Two existing files that are one (hard links)
+static bool same_inode(char const *a,char const *b){
+  struct stat x,y;
+  return stat(a,&x) == 0 && stat(b,&y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino;
+}
+
 // A path as its real path if it exists (a symlink followed to its target),
 // else as its directory's real path and its name
 static void canonical(char const *path,char *out,size_t size){
@@ -861,6 +867,16 @@ int main(int argc,char *argv[]){
     usage();
     exit(EX_USAGE);
   }
+  if(Coverage_path == NULL){
+    // The log's name with -coverage (activity.csv: activity-coverage.csv),
+    // as frequency-survey.py looks for it
+    static char path[4096];
+    size_t len = strlen(Log_path);
+    if(len >= 4 && strcmp(Log_path + len - 4,".csv") == 0)
+      len -= 4;
+    snprintf(path,sizeof path,"%.*s-coverage.csv",(int)len,Log_path);
+    Coverage_path = path;
+  }
   {
     // The log, the summary and the coverage must be different files (the
     // summary's rewrite would replace the others; appends would mix).
@@ -869,7 +885,8 @@ int main(int argc,char *argv[]){
     canonical(Log_path,a,sizeof a);
     canonical(Summary_path,b,sizeof b);
     canonical(Coverage_path,c,sizeof c);
-    if(strcmp(a,b) == 0 || strcmp(a,c) == 0 || strcmp(b,c) == 0){
+    if(strcmp(a,b) == 0 || strcmp(a,c) == 0 || strcmp(b,c) == 0
+       || same_inode(Log_path,Summary_path) || same_inode(Log_path,Coverage_path) || same_inode(Summary_path,Coverage_path)){
       fprintf(stderr,"%s: the log, the summary and the coverage must be different files\n",App_path);
       exit(EX_USAGE);
     }
@@ -877,6 +894,18 @@ int main(int argc,char *argv[]){
   for(int i = 0; i < nconfigs; i++)
     read_config(configs[i]);
   reload_log();
+  {
+    // The log made now, with its header, so a run that hears nothing still
+    // leaves one (frequency-survey.py reads it with the coverage)
+    FILE *fp = fopen(Log_path,"a");
+    if(fp == NULL){
+      fprintf(stderr,"%s: %s\n",Log_path,strerror(errno));
+      exit(EX_CANTCREAT);
+    }
+    if(ftell(fp) == 0)
+      fprintf(fp,"start,end,frequency_mhz,channel_mhz,width_khz,seconds,db_over_floor,dbfs,known,mode_guess\n");
+    fclose(fp);
+  }
   srandom((unsigned)gps_time_ns());
   My_ssrc = 0x80000000u | (uint32_t)random() << 1 | (uint32_t)(random() & 1); // clear of radiod's own (see waterfall.c)
 
@@ -890,7 +919,8 @@ int main(int argc,char *argv[]){
   pthread_t t;
   pthread_create(&t,NULL,status_thread,NULL);
   pthread_create(&t,NULL,poll_thread,NULL);
-  fprintf(stderr,"%s: radiod %s, %d known frequencies; log %s, summary %s\n",App_path,argv[optind],Nknown,Log_path,Summary_path);
+  fprintf(stderr,"%s: radiod %s, %d known frequencies; log %s, summary %s, coverage %s\n",App_path,argv[optind],Nknown,
+	  Log_path,Summary_path,Coverage_path);
 
   signal(SIGINT,on_stop);
   signal(SIGTERM,on_stop);

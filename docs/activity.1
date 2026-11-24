@@ -36,7 +36,7 @@ guess at the kind of signal from its width alone. The summary
 channel's transmissions, time on the air, first and last heard and name;
 at a restart it is rebuilt from the log, so it covers the whole log.
 .P
-The coverage file (activity-coverage.csv) records when activity was
+The coverage file (activity-coverage.csv, by default) records when activity was
 watching, and what: a row per stretch of continuous monitoring, its start,
 end and the span watched (lo_mhz, hi_mhz). A stretch ends after 5 seconds
 without a spectrum (radiod gone, say), when the span changes (the front
@@ -62,8 +62,10 @@ The log. Default activity.csv.
 The summary. Default activity-summary.csv. It must not be the log.
 .TP
 .B "\-u file"
-The coverage file. Default activity-coverage.csv. The log, summary and
-coverage must be three different files.
+The coverage file. Default: the log's name with -coverage
+(activity-coverage.csv; uhf.csv: uhf-coverage.csv), where
+frequency-survey.py looks for it. The log, summary and coverage must be
+three different files (hard links included).
 .TP
 .B "\-t dB"
 How far above its floor a bin must be. Default 10.

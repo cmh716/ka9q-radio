@@ -155,5 +155,51 @@ check(rows7['heard']['Survey'] == survey.ACTIVE and rows7['heard']['Monitored da
 p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log2, '-u', cov, '-o', cov, cands],
                    capture_output=True, text=True)
 check(p.returncode != 0 and 'an input' in p.stderr, 'the coverage file as the output: refused')
+# Overlapping stretches count once
+cov2 = os.path.join(d, 'cov2.csv')
+with open(cov2, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-24 00:00:00', '2026-11-24 02:00:00', '440.00000', '469.00000'])
+    w.writerow(['2026-11-24 01:00:00', '2026-11-24 03:00:00', '440.00000', '469.00000'])  # overlaps the first by an hour
+    w.writerow(['2026-11-24 10:00:00', '2026-11-24 11:00:00', '450.00000', '452.00000'])  # later, a narrower span
+check(abs(survey.monitored_seconds(455e6, survey.read_coverage(cov2)) - 3 * 3600) < 1, 'overlapping stretches: 3 h, not 4')
+check(abs(survey.monitored_seconds(451e6, survey.read_coverage(cov2)) - 4 * 3600) < 1, 'and the later narrow one adds its hour')
+# Transmissions credited only where and when watched
+log3 = os.path.join(d, 'act3.csv')
+with open(log3, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs', 'known',
+                'mode_guess'])
+    w.writerow(['2026-11-24 01:30:00', '2026-11-24 01:30:05', '455.0000', '455.00000', '12.5', '5', '20', '-80', '', ''])  # watched
+    w.writerow(['2026-11-24 05:00:00', '2026-11-24 05:00:05', '455.0000', '455.00000', '12.5', '5', '20', '-80', '', ''])  # not watched then
+    w.writerow(['2026-11-24 10:30:00', '2026-11-24 10:30:05', '455.0000', '455.00000', '12.5', '5', '20', '-80', '', ''])  # outside that span
+cands3 = os.path.join(d, 'cands3.csv')
+with open(cands3, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['RX MHz', 'Name'])
+    w.writerow(['455.000000', 'a'])
+out8 = os.path.join(d, 'out8.csv')
+survey.main(['-a', log3, '-u', cov2, '-o', out8, cands3])
+r8 = next(csv.DictReader(open(out8)))
+check(r8['Transmissions'] == '1', 'only the transmission heard where and when activity watched is credited (1 of 3)')
+# A quiet run: no log rows (or no log), coverage only
+empty = os.path.join(d, 'empty.csv')
+with open(empty, 'w', newline='') as f:
+    csv.writer(f).writerow(['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs',
+                            'known', 'mode_guess'])
+out9 = os.path.join(d, 'out9.csv')
+survey.main(['-a', empty, '-u', cov2, '-o', out9, cands3])
+r9 = next(csv.DictReader(open(out9)))
+check(r9['Survey'] == 'no RF activity in 0.1 days monitored' and r9['Transmissions'] == '0', 'a quiet run: reported from the coverage')
+out10 = os.path.join(d, 'out10.csv')
+survey.main(['-a', os.path.join(d, 'no-such-log.csv'), '-u', cov2, '-o', out10, cands3])
+check(next(csv.DictReader(open(out10)))['Transmissions'] == '0', 'no log at all, with coverage: reported')
+# A hard link to an input as the output
+hard = os.path.join(d, 'hard.csv')
+os.link(cov2, hard)
+p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log3, '-u', cov2, '-o', hard, cands3],
+                   capture_output=True, text=True)
+check(p.returncode != 0 and 'an input' in p.stderr, 'a hard link to an input as the output: refused')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

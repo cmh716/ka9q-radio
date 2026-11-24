@@ -62,7 +62,27 @@ def read_coverage(path):
 
 
 def monitored_seconds(f, coverage):
-    return sum((e - s).total_seconds() for s, e, lo, hi in coverage if lo <= f <= hi)
+    """How long f was watched: the stretches covering it, overlaps merged"""
+    spans = sorted((s, e) for s, e, lo, hi in coverage if lo <= f <= hi)
+    total, cur_s, cur_e = 0.0, None, None
+    for s, e in spans:
+        if cur_e is None or s > cur_e:
+            if cur_e is not None:
+                total += (cur_e - cur_s).total_seconds()
+            cur_s, cur_e = s, e
+        elif e > cur_e:
+            cur_e = e
+    if cur_e is not None:
+        total += (cur_e - cur_s).total_seconds()
+    return total
+
+
+SLACK = datetime.timedelta(seconds=10)  # (rows are to the second; a stretch's end is its last spectrum)
+
+
+def spans_at(coverage, when, hz):
+    """The spans (lo, hi) of the stretches watching hz at when"""
+    return [(lo, hi) for s, e, lo, hi in coverage if s - SLACK <= when <= e + SLACK and lo <= hz <= hi]
 
 
 def frequency_of(row):
@@ -142,10 +162,19 @@ def survey(rows, transmissions, lo, hi, coverage=None):
     heard = collections.defaultdict(list)
     import bisect
     for hz, start, end, secs in transmissions:
+        # With coverage: only a transmission heard where and when activity
+        # was watching counts, and only for candidates inside that span
+        spans = None
+        if coverage is not None:
+            spans = spans_at(coverage, start, hz)
+            if not spans:
+                continue
         k = bisect.bisect_left(keys, hz)
         best = None
         for j in (k - 1, k):
             if 0 <= j < len(keys) and abs(keys[j] - hz) <= MATCH_HZ:
+                if spans is not None and not any(lo <= keys[j] <= hi for lo, hi in spans):
+                    continue
                 if best is None or abs(keys[j] - hz) < abs(keys[best] - hz):
                     best = j
         if best is not None:
@@ -185,8 +214,10 @@ def survey(rows, transmissions, lo, hi, coverage=None):
 
 
 def same_file(a, b):
-    """Two paths naming one file (symlinks, spellings), existing or not"""
+    """Two paths naming one file (symlinks, spellings, hard links), existing or not"""
     import os
+    if os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b):
+        return True
     def canon(p):
         if os.path.exists(p):
             return os.path.realpath(p)
@@ -203,29 +234,27 @@ def main(argv=None):
     ap.add_argument('--range', help='the coverage, MHz: lo-hi (default: the span of the log)')
     args = ap.parse_args(argv)
 
-    transmissions = read_activity(args.activity)
-    if not transmissions:
-        sys.exit(f'{args.activity}: no transmissions logged')
+    import os
+    transmissions = read_activity(args.activity) if os.path.exists(args.activity) else []
     lo = hi = None
     if args.range:
         m = re.fullmatch(r'\s*([\d.]+)\s*-\s*([\d.]+)\s*', args.range)
         if not m or float(m.group(1)) >= float(m.group(2)):
             sys.exit('--range lo-hi, in MHz')
         lo, hi = float(m.group(1)) * 1e6, float(m.group(2)) * 1e6
-    first = min(t[1] for t in transmissions)
-    last = max(t[2] for t in transmissions)
 
     with open(args.candidates, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         fields = list(reader.fieldnames or [])
         rows = list(reader)
-    import os
     cover_path = args.coverage or re.sub(r'(\.csv)?$', '-coverage.csv', args.activity, count=1)
     coverage = None
     if args.coverage or os.path.exists(cover_path):
         coverage = read_coverage(cover_path)
         if not coverage:
             sys.exit(f'{cover_path}: no coverage rows')
+    if not transmissions and coverage is None:
+        sys.exit(f'{args.activity}: no transmissions logged, and no coverage file to say it was watching')
     rows = survey(rows, transmissions, lo, hi, coverage)
     out = args.output or re.sub(r'(\.csv)?$', '-survey.csv', args.candidates, count=1)
     for source in (args.candidates, args.activity) + ((cover_path,) if coverage is not None else ()):
@@ -236,8 +265,9 @@ def main(argv=None):
         w.writeheader()
         w.writerows(rows)
     verdicts = collections.Counter(r.get('Survey', '').split(' (rare')[0] for r in rows)
-    print(f'{len(rows)} candidates; the log: {len(transmissions)} transmissions, {first:%Y-%m-%d %H:%M} to '
-          f'{last:%Y-%m-%d %H:%M} (not a record of how long activity ran)' +
+    span = (f'{min(t[1] for t in transmissions):%Y-%m-%d %H:%M} to {max(t[2] for t in transmissions):%Y-%m-%d %H:%M}'
+            if transmissions else 'none')
+    print(f'{len(rows)} candidates; the log: {len(transmissions)} transmissions, {span}' +
           (f'; range {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz' if lo is not None else '') +
           (f'; activity watched {sum((e - s).total_seconds() for s, e, _, _ in coverage) / 86400:.2f} days in all'
            if coverage is not None else '; no coverage file: silence is only what the log lacks'))
