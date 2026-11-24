@@ -45,7 +45,10 @@ for DMR, D-STAR and YSF.
    SSRC +1, +2). Not yet seen live: P25, preemption, a restart.
 5. [ ] **monitor: receiver summary**: the front end's level, A/D overloads,
    gain and the busiest channels, with recent peaks and counter deltas held
-   for a while, so a brief event stays visible after it passes.
+   for a while, so a brief event stays visible after it passes. Done
+   (monitor-summary.c, `S`); live look waiting. Its figures come only with
+   channels' status (sent while one is active): polling radiod's status
+   group would make them steady, if wanted.
 6. [x] **monitor: a wider Call field** (9a6be012: it grows with the
    terminal, 22-64 columns; calls stay, fading, after they end).
 7. [ ] **A spectrum display for the VHF/UHF tunings**, the way UberSDR
