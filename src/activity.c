@@ -414,9 +414,15 @@ static void close_tx(struct tx *t){
   if(ok){
     // A row left incomplete by a failed write: ended here, so this one
     // starts a line of its own (the rebuild skips the incomplete one)
-    if(fseek(fp,-1,SEEK_END) == 0 && fgetc(fp) != '\n')
+    // (a seek between that read and any write, as C requires)
+    bool const unended = fseek(fp,-1,SEEK_END) == 0 && fgetc(fp) != '\n';
+    if(fseek(fp,0,SEEK_END) != 0){
+      fclose(fp);
+      ok = false;
+    } else if(unended)
       fputc('\n',fp);
-    fseek(fp,0,SEEK_END);
+  }
+  if(ok){
     if(ftell(fp) == 0)
       fprintf(fp,"start,end,frequency_mhz,channel_mhz,width_khz,seconds,db_over_floor,dbfs,known,mode_guess\n");
     fprintf(fp,"%s,%s,%.4f,%.5f,%.2f,%.1f,%.1f,%.1f,%s,\"%s\"\n",when(t->start,a,sizeof a),when(t->last,b,sizeof b),
@@ -476,15 +482,14 @@ static void reload_log(void){
   if(fp == NULL)
     return;
   char line[1024];
-  int n = 0,skipped = 0;
+  int n = 0,lines = 0;
   while(fgets(line,sizeof line,fp) != NULL){
+    lines++;
     // Only a complete row: its newline, and its last field (the mode
     // guess, quoted) closed. A write that failed partway left less
     size_t const len = strlen(line);
-    if(len < 3 || line[len - 1] != '\n' || line[len - 2] != '"'){
-      skipped++;
+    if(len < 3 || line[len - 1] != '\n' || line[len - 2] != '"')
       continue;
-    }
     struct tm a = {0},b = {0};
     double f,chan,width,seconds,over,dbfs;
     char known[128] = "";
@@ -519,14 +524,19 @@ static void reload_log(void){
       known[j] = '\0';
       if(!closed || strncmp(k,"\",\"",3) != 0)
 	continue; // not a complete row
+      // the mode guess: its whole field, closed, then the line's end
+      char const *q = strchr(k + 3,'"');
+      if(q == NULL || q[1] != '\n')
+	continue;
     }
     a.tm_isdst = b.tm_isdst = -1;
     tally(chan * 1e6,seconds,(int64_t)mktime(&a) * BILLION,(int64_t)mktime(&b) * BILLION,(float)over,known);
     n++;
   }
   fclose(fp);
-  if(Verbose || skipped > 1) // (the header is one)
-    fprintf(stderr,"%s: %d transmissions already logged%s\n",Log_path,n,skipped > 1 ? ", incomplete rows skipped" : "");
+  int const skipped = lines - n - 1; // (less the header)
+  if(Verbose || skipped > 0)
+    fprintf(stderr,"%s: %d transmissions already logged%s\n",Log_path,n,skipped > 0 ? ", incomplete rows skipped" : "");
 }
 
 // --- one spectrum ---
@@ -663,6 +673,22 @@ static void on_stop(int sig){
   Stop = 1;
 }
 
+// A path as its directory's real path and its name (the file needn't exist)
+static void canonical(char const *path,char *out,size_t size){
+  char dir[4096],real[4096];
+  char const *slash = strrchr(path,'/');
+  char const *name = slash != NULL ? slash + 1 : path;
+  if(slash == NULL)
+    strlcpy(dir,".",sizeof dir);
+  else if(slash == path)
+    strlcpy(dir,"/",sizeof dir);
+  else
+    snprintf(dir,sizeof dir,"%.*s",(int)(slash - path),path);
+  if(realpath(dir,real) == NULL)
+    strlcpy(real,dir,sizeof real);
+  snprintf(out,size,"%s/%s",real,name);
+}
+
 static void usage(void){
   fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m seconds] [-v] radiod-status-group\n",App_path);
 }
@@ -689,11 +715,12 @@ int main(int argc,char *argv[]){
   }
   {
     // The log and the summary must be different files: the summary's
-    // rewrite would replace the log
-    char a[4096],b[4096];
-    char const *ra = realpath(Log_path,a) != NULL ? a : Log_path;
-    char const *rb = realpath(Summary_path,b) != NULL ? b : Summary_path;
-    if(strcmp(ra,rb) == 0 || strcmp(Log_path,Summary_path) == 0){
+    // rewrite would replace the log. Compared as their directories' real
+    // paths and their names, whether or not they exist yet
+    char a[8192],b[8192];
+    canonical(Log_path,a,sizeof a);
+    canonical(Summary_path,b,sizeof b);
+    if(strcmp(a,b) == 0){
       fprintf(stderr,"%s: the log and the summary must be different files\n",App_path);
       exit(EX_USAGE);
     }
