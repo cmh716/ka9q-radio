@@ -327,6 +327,8 @@ struct tx {
   int64_t start,last;   // ns
   float peak_over;      // dB above the floor
   float peak_dbfs;
+  int64_t matched;      // the frame a clean detection last continued it (now)
+  float level;          // its level (dBFS) when last seen clear
 };
 #define MAX_TX 512
 static struct tx Txs[MAX_TX];
@@ -662,25 +664,21 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
   }
   if(Verbose > 1 && shadowed > 0)
     fprintf(stderr,"%d of %d signals taken for a stronger one's skirt\n",shadowed,nsig);
+  // Clean detections first: each continues or begins its transmission
   for(int a = 0; a < nsig; a++){
-    if(sig[a].shadow){
-      // A shadow begins nothing, but a transmission already tracked (from
-      // frames where it stood clear) goes on through it, not split
-      for(int k = 0; k < MAX_TX; k++)
-	if(Txs[k].open && fabs(Txs[k].freq - sig[a].f) <= fmax(1.5 * rbw,Known_hz)){
-	  Txs[k].last = now;
-	  break;
-	}
+    if(sig[a].shadow)
       continue;
-    }
     double const f = sig[a].f,w = sig[a].w,width = sig[a].width;
     float const over = sig[a].over,top = sig[a].top;
-    // Continue a transmission at that frequency, or begin one
+    // Continue the nearest transmission at that frequency not already
+    // continued this frame, or begin one
     struct tx *t = NULL,*spare = NULL;
+    double nearest = fmax(1.5 * rbw,Known_hz);
     for(int k = 0; k < MAX_TX; k++){
-      if(Txs[k].open && fabs(Txs[k].freq - f) <= fmax(1.5 * rbw,Known_hz))
+      if(Txs[k].open && Txs[k].matched != now && fabs(Txs[k].freq - f) <= nearest){
+	nearest = fabs(Txs[k].freq - f);
 	t = &Txs[k];
-      else if(!Txs[k].open && spare == NULL)
+      } else if(!Txs[k].open && spare == NULL)
 	spare = &Txs[k];
     }
     if(t == NULL && spare != NULL){
@@ -692,6 +690,8 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
       t->peak_dbfs = -INFINITY;
     }
     if(t != NULL){
+      t->matched = now;
+      t->level = top;
       t->freq = (t->freq * t->wsum + f * w) / (t->wsum + w > 0 ? t->wsum + w : 1);
       if(t->wsum + w <= 0)
 	t->freq = f;
@@ -703,6 +703,29 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
 	t->peak_over = over;
       if(top > t->peak_dbfs)
 	t->peak_dbfs = top;
+    }
+  }
+  // Then shadows: one begins nothing, but keeps a transmission already
+  // tracked (from frames where it stood clear) going through it, not split,
+  // if it can only be that one: a single open transmission that no clean
+  // detection continued this frame, within a bin of its centre and 6 dB of
+  // its level when last clear. None, or more than one: nothing. (A skirt
+  // where a transmission was, as it ended, can't be told from it for
+  // certain; matching both its place and its level makes that unlikely)
+  for(int a = 0; a < nsig; a++){
+    if(!sig[a].shadow)
+      continue;
+    struct tx *only = NULL;
+    int candidates = 0;
+    for(int k = 0; k < MAX_TX; k++)
+      if(Txs[k].open && Txs[k].matched != now && fabs(Txs[k].freq - sig[a].f) <= rbw
+	 && fabsf(Txs[k].level - sig[a].top) <= 6){
+	only = &Txs[k];
+	candidates++;
+      }
+    if(candidates == 1){
+      only->last = now;
+      only->matched = now; // (one shadow each)
     }
   }
   // The floors: down at once to a quieter reading, up slowly
