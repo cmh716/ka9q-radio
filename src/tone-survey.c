@@ -62,6 +62,9 @@ static double const Rtp_gap = 0.3;
 static double const Delay = 0.5;
 #define DELAY_SAMPLES 8000  // at SAMPRATE: twice Delay, and more
 #define DELAY_CHUNKS 128
+#ifndef CALL_QUEUE
+#define CALL_QUEUE 16       // call changes announced, not yet reached
+#endif
 
 static float const PL_tones[N_TONES] = {
      67.0,  69.3,  71.9,  74.4,  77.0,  79.7,  82.5,  85.4,  88.5,  91.5,
@@ -98,7 +101,7 @@ struct stream_info {
   bool have_applied;
   uint32_t applied_ts;         // the last boundary reached: an announcement before it is stale
   char last_label[96];
-  struct call_change { uint32_t timestamp,id; char label[96]; double received; bool untimed; } changes[16];
+  struct call_change { uint32_t timestamp,id; char label[96]; double received; bool untimed; } changes[CALL_QUEUE];
   int nchanges;                // (untimed: an older radiod, no call timestamps: from the audio that came after it)
   double seen;
 };
@@ -412,6 +415,8 @@ static struct session *session(struct sockaddr_storage const *sender,uint32_t ss
   return free_one;
 }
 
+static void release(struct session *sp);
+
 // A call change reaching the audio: another call ends the transmission;
 // the same one's IDs, come late, label it
 static void call_change(struct session *sp,uint32_t id,char const *label){
@@ -462,18 +467,38 @@ static void status(uint8_t const *buffer,int length,struct sockaddr_storage cons
   strlcpy(ip->last_label,label,sizeof ip->last_label);
   bool const untimed = !chan.dv.call_timestamp_valid;
   uint32_t const ts = chan.dv.call_timestamp;
+  struct session *sp = NULL;
+  for(int i = 0; i < MAX_SESSIONS && sp == NULL; i++)
+    if(Sessions[i].inuse && Sessions[i].ssrc == ssrc && address_match(&Sessions[i].sender,sender))
+      sp = &Sessions[i];
+  // The stream quiet (or not yet heard): its clock may restart with the
+  // next transmission, so no boundary reached before counts against this
+  if(sp == NULL || ip->seen - sp->last_packet > Quiet_gap)
+    ip->have_applied = false;
   if(!untimed && ip->have_applied && (int32_t)(ts - ip->applied_ts) < 0)
     return; // older than a boundary already reached: delayed, stale
-  if(ip->nchanges == (int)(sizeof ip->changes / sizeof ip->changes[0])){
-    for(int i = 0; i < MAX_SESSIONS; i++) // full: the earliest applies now
-      if(Sessions[i].inuse && Sessions[i].ssrc == ssrc && address_match(&Sessions[i].sender,sender))
-	call_change(&Sessions[i],ip->changes[0].id,ip->changes[0].label);
-    if(!ip->changes[0].untimed){
-      ip->have_applied = true;
-      ip->applied_ts = ip->changes[0].timestamp;
+  int const max = (int)(sizeof ip->changes / sizeof ip->changes[0]);
+  if(ip->nchanges == max){
+    // Full: the earliest is made due, the audio before it judged first
+    // (sooner than it would have been), so it applies at its place
+    struct call_change const *c = &ip->changes[0];
+    while(sp != NULL && sp->nchunks > 0){
+      int const k = sp->chunk_head;
+      if(!sp->chunks[k].end && (c->untimed ? sp->chunks[k].arrived >= c->received
+				 : (int32_t)(sp->chunks[k].timestamp - c->timestamp) >= 0))
+	break;
+      release(sp); // (may apply changes before it)
     }
-    memmove(&ip->changes[0],&ip->changes[1],(size_t)(ip->nchanges - 1) * sizeof ip->changes[0]);
-    ip->nchanges--;
+    if(ip->nchanges == max){
+      if(sp != NULL)
+	call_change(sp,c->id,c->label);
+      if(!c->untimed){
+	ip->have_applied = true;
+	ip->applied_ts = c->timestamp;
+      }
+      memmove(&ip->changes[0],&ip->changes[1],(size_t)(ip->nchanges - 1) * sizeof ip->changes[0]);
+      ip->nchanges--;
+    }
   }
   // In stream order, however they came: after any at the same timestamp
   // (the same call's later IDs)
@@ -598,8 +623,23 @@ static void data(uint8_t *buffer,ssize_t size,struct sockaddr_storage const *sen
   }
   double const now = monotonic();
   if(now - sp->last_packet > Quiet_gap){
-    hold(sp,0,NULL,0,true);
-    sp->rtp_init = false; // the next transmission's numbering is its own
+    // A new transmission: its numbering, and the stream's clock, may start
+    // afresh. What's held is judged first; the call timeline restarts with
+    // the audio's: no boundary reached before counts against what's
+    // announced now, and changes announced during the last transmission
+    // and never reached are dropped (one on the old clock would otherwise
+    // wait out the fallback and land in this transmission)
+    release_due(sp,true);
+    tx_end(sp);
+    sp->rtp_init = false;
+    if(ip != NULL){
+      ip->have_applied = false;
+      int kept = 0;
+      for(int k = 0; k < ip->nchanges; k++)
+	if(ip->changes[k].untimed || ip->changes[k].received > sp->last_packet)
+	  ip->changes[kept++] = ip->changes[k];
+      ip->nchanges = kept;
+    }
   }
   sp->last_packet = now;
   enum encoding encoding = sp->pt == rtp.type ? sp->encoding : encoding_from_pt(rtp.type);
