@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Add on-air evidence from activity's log to candidate frequencies.
 
-  frequency-survey.py [-a activity.csv] [-o out.csv] [--range 422.1-469.1] candidates.csv
+  frequency-survey.py [-a activity.csv] [-u coverage.csv] [-o out.csv] [--range 422.1-469.1] candidates.csv
 
 The candidates: a RadioReference CSV download ("Frequency Output", "PL
 Output Tone", ...) or the frequency catalog's inbox.csv or master.csv
@@ -12,10 +12,13 @@ transmissions, airtime, first and last heard, busiest hours, whether they
 come at regular intervals (telemetry), and a verdict: RF activity near the
 frequency, or none in this log. It is evidence of carriers only: their
 tone and who they are stay unverified (candidates sharing a frequency
-share its evidence). Silence means only that the log holds nothing there:
-the log doesn't record when activity ran or what the receiver covered.
-With --range (the front end's coverage, which you know), candidates
-outside it are marked so and get no evidence. A service used rarely (fire,
+share its evidence). With activity's coverage file (-u; by default the
+log's name with -coverage, if it's there), each candidate gets the time
+its frequency was actually watched: silence is "no RF activity in N days
+monitored", and a frequency never watched is "not covered by activity".
+Without it, silence means only that the log holds nothing there. With
+--range (the front end's coverage, which you know), candidates outside it
+are marked so too. Either way they get no evidence. A service used rarely (fire,
 EMS, mutual aid...) is flagged, so silence isn't taken against it. Nothing
 is changed: decide in the catalog.
 
@@ -34,10 +37,32 @@ import sys
 MATCH_HZ = 5000
 RARE = re.compile(r'fire|ems\b|ambulance|rescue|mutual|interop|tac\b|tact|tactical|emergency|hospital|med\b|'
                   r'fireground|incident|evac|hazmat|swat|disaster|ares|races|civil def', re.I)
-EVIDENCE = ['Survey', 'Transmissions', 'Airtime s', 'First heard', 'Last heard', 'Busiest hours', 'Pattern', 'Rare-use']
+EVIDENCE = ['Survey', 'Monitored days', 'Transmissions', 'Airtime s', 'First heard', 'Last heard', 'Busiest hours',
+            'Pattern', 'Rare-use']
 ACTIVE = 'RF activity near frequency (tone, identity unverified)'
 SILENT = 'no RF activity in this log'
-OUTSIDE = 'outside --range' 
+OUTSIDE = 'outside --range'
+UNCOVERED = 'not covered by activity'
+
+
+def read_coverage(path):
+    """activity's coverage rows: (start, end, lo Hz, hi Hz)"""
+    out = []
+    with open(path, newline='') as f:
+        for r in csv.DictReader(f):
+            try:
+                start = datetime.datetime.strptime(r['start'], '%Y-%m-%d %H:%M:%S')
+                end = datetime.datetime.strptime(r['end'], '%Y-%m-%d %H:%M:%S')
+                lo, hi = float(r['lo_mhz']) * 1e6, float(r['hi_mhz']) * 1e6
+            except (KeyError, ValueError, TypeError):
+                continue
+            if end >= start and hi > lo:
+                out.append((start, end, lo, hi))
+    return out
+
+
+def monitored_seconds(f, coverage):
+    return sum((e - s).total_seconds() for s, e, lo, hi in coverage if lo <= f <= hi)
 
 
 def frequency_of(row):
@@ -100,10 +125,17 @@ def busiest_hours(starts):
     return ' '.join(f'{h:02d}h' for h in sorted(top))
 
 
-def survey(rows, transmissions, lo, hi):
-    """lo, hi: the coverage given (Hz), or None"""
+def survey(rows, transmissions, lo, hi, coverage=None):
+    """lo, hi: the coverage given (Hz), or None; coverage: activity's rows, or None"""
     cands = [(i, frequency_of(r)) for i, r in enumerate(rows)]
-    inside = (lambda f: True) if lo is None else (lambda f: lo <= f <= hi)
+    watched = {}
+    if coverage is not None:
+        for _, f in cands:
+            if f is not None and f not in watched:
+                watched[f] = monitored_seconds(f, coverage)
+    in_range = (lambda f: True) if lo is None else (lambda f: lo <= f <= hi)
+    covered = (lambda f: True) if coverage is None else (lambda f: watched.get(f, 0) > 0)
+    inside = lambda f: in_range(f) and covered(f)
     # Only candidates within the coverage compete for transmissions
     freqs = sorted((f, i) for i, f in cands if f is not None and inside(f))
     keys = [f for f, _ in freqs]
@@ -128,9 +160,15 @@ def survey(rows, transmissions, lo, hi):
         if f is None:
             row['Survey'] = 'no frequency'
             continue
-        if not inside(f):
+        if not in_range(f):
             row['Survey'] = OUTSIDE
             continue
+        if not covered(f):
+            row['Survey'] = UNCOVERED
+            continue
+        days = watched[f] / 86400 if coverage is not None else None
+        if days is not None:
+            row['Monitored days'] = f'{days:.2f}' 
         h = heard.get(f, [])
         row['Transmissions'] = str(len(h))
         row['Airtime s'] = f'{sum(s for _, _, s in h):.0f}'
@@ -141,7 +179,8 @@ def survey(rows, transmissions, lo, hi):
             row['Pattern'] = pattern([s for s, _, _ in h])
             row['Survey'] = ACTIVE
         else:
-            row['Survey'] = SILENT + (' (rare-use: keep by service)' if rare else '')
+            row['Survey'] = ((f'no RF activity in {days:.1f} days monitored' if days is not None else SILENT)
+                             + (' (rare-use: keep by service)' if rare else ''))
     return rows
 
 
@@ -159,6 +198,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('candidates')
     ap.add_argument('-a', '--activity', default='activity.csv', help="activity's log")
+    ap.add_argument('-u', '--coverage', help="activity's coverage file (default: the log's name with -coverage, if there)")
     ap.add_argument('-o', '--output', help='where the annotated rows go (default: <candidates>-survey.csv)')
     ap.add_argument('--range', help='the coverage, MHz: lo-hi (default: the span of the log)')
     args = ap.parse_args(argv)
@@ -179,9 +219,16 @@ def main(argv=None):
         reader = csv.DictReader(f)
         fields = list(reader.fieldnames or [])
         rows = list(reader)
-    rows = survey(rows, transmissions, lo, hi)
+    import os
+    cover_path = args.coverage or re.sub(r'(\.csv)?$', '-coverage.csv', args.activity, count=1)
+    coverage = None
+    if args.coverage or os.path.exists(cover_path):
+        coverage = read_coverage(cover_path)
+        if not coverage:
+            sys.exit(f'{cover_path}: no coverage rows')
+    rows = survey(rows, transmissions, lo, hi, coverage)
     out = args.output or re.sub(r'(\.csv)?$', '-survey.csv', args.candidates, count=1)
-    for source in (args.candidates, args.activity):
+    for source in (args.candidates, args.activity) + ((cover_path,) if coverage is not None else ()):
         if same_file(out, source):
             sys.exit(f'{out}: that is {source}, an input: give another output')
     with open(out, 'w', newline='') as f:
@@ -191,7 +238,9 @@ def main(argv=None):
     verdicts = collections.Counter(r.get('Survey', '').split(' (rare')[0] for r in rows)
     print(f'{len(rows)} candidates; the log: {len(transmissions)} transmissions, {first:%Y-%m-%d %H:%M} to '
           f'{last:%Y-%m-%d %H:%M} (not a record of how long activity ran)' +
-          (f'; coverage {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz' if lo is not None else '; no --range: nothing marked outside'))
+          (f'; range {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz' if lo is not None else '') +
+          (f'; activity watched {sum((e - s).total_seconds() for s, e, _, _ in coverage) / 86400:.2f} days in all'
+           if coverage is not None else '; no coverage file: silence is only what the log lacks'))
     for v, n in verdicts.most_common():
         print(f'  {n:5d}  {v}')
     print(f'written to {out}')

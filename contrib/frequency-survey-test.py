@@ -121,5 +121,39 @@ os.symlink(rr, link)
 p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log, '-o', link, rr],
                    capture_output=True, text=True)
 check(p.returncode != 0, 'a symlink to an input: refused')
+# With activity's coverage: the time each frequency was watched
+cov = os.path.join(d, 'cov.csv')
+with open(cov, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-24 00:00:00', '2026-11-25 00:00:00', '440.00000', '469.00000'])
+    w.writerow(['2026-11-25 06:00:00', '2026-11-26 06:00:00', '450.00000', '460.00000'])
+    w.writerow(['bad', 'row'])
+cands = os.path.join(d, 'cands.csv')
+with open(cands, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['RX MHz', 'Name', 'Service'])
+    w.writerow(['455.000000', 'quiet business', 'Business'])
+    w.writerow(['465.000000', 'quiet other', 'Business'])
+    w.writerow(['425.000000', 'never watched', 'Business'])
+    w.writerow(['453.500000', 'heard', 'Fire Dispatch'])
+log2 = os.path.join(d, 'act2.csv')
+with open(log, newline='') as src, open(log2, 'w', newline='') as dst:
+    dst.write(src.read())
+    # a transmission at 425.0: activity wasn't watching there, so none is credited
+    csv.writer(dst).writerow(['2026-11-24 08:00:00', '2026-11-24 08:00:05', '425.0000', '425.00000', '12.5', '5', '20',
+                              '-80', '', ''])
+out7 = os.path.join(d, 'out7.csv')
+survey.main(['-a', log2, '-u', cov, '-o', out7, cands])
+rows7 = {r['Name']: r for r in csv.DictReader(open(out7))}
+check(rows7['quiet business']['Survey'] == 'no RF activity in 2.0 days monitored'
+      and rows7['quiet business']['Monitored days'] == '2.00', 'silence measured in time watched: 455 MHz in both stretches, 2 days')
+check(rows7['quiet other']['Survey'] == 'no RF activity in 1.0 days monitored', '465 MHz in one of them: 1 day')
+check(rows7['never watched']['Survey'] == survey.UNCOVERED and rows7['never watched']['Transmissions'] == '',
+      'a frequency never watched: not covered, and no transmissions credited to it')
+check(rows7['heard']['Survey'] == survey.ACTIVE and rows7['heard']['Monitored days'] == '2.00', 'heard: active, with its time watched')
+p = subprocess.run([sys.executable, str(Path(__file__).with_name('frequency-survey.py')), '-a', log2, '-u', cov, '-o', cov, cands],
+                   capture_output=True, text=True)
+check(p.returncode != 0 and 'an input' in p.stderr, 'the coverage file as the output: refused')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

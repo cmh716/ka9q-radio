@@ -1,7 +1,7 @@
 // activity: find transmissions anywhere in radiod's front end coverage, on
 // frequencies configured or not, and log them.
 //
-//   activity [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m s] [-v] radiod-status-group
+//   activity [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m s] [-v] radiod-status-group
 //
 // A spectrum channel of its own in radiod covers the whole front end
 // (6.25 kHz bins), nominally four times a second, each the average of as
@@ -57,6 +57,7 @@ char const *App_path;
 
 static char const *Log_path = "activity.csv";
 static char const *Summary_path = "activity-summary.csv";
+static char const *Coverage_path = "activity-coverage.csv";
 static double Threshold = 10;      // dB above a bin's floor
 static double Min_seconds = 0.5;   // shorter: noise
 static double const Hang = 2.0;    // s without a signal: its transmission is over
@@ -546,6 +547,52 @@ static void reload_log(void){
     fprintf(stderr,"%s: %d transmissions already logged%s\n",Log_path,n,skipped > 0 ? ", incomplete rows skipped" : "");
 }
 
+// --- coverage: when activity was watching, and what ---
+// A row per stretch of continuous monitoring: start, end, and the span
+// watched. A stretch ends with a gap in spectra (Cover_gap), a change of
+// span (the front end retuned), or Cover_chunk (rows are written as they
+// close: a crash loses at most that), and when activity stops. What the log
+// can't say (how long a quiet frequency was watched) this does
+static double const Cover_gap = 5;     // s without a spectrum: an outage
+static double const Cover_chunk = 600; // s, the longest row
+static struct { bool open; int64_t start,last; double lo,hi; } Cover;
+
+static void cover_close(void){
+  if(!Cover.open)
+    return;
+  Cover.open = false;
+  char a[32],b[32];
+  FILE *fp = fopen(Coverage_path,"a");
+  bool ok = fp != NULL;
+  if(ok){
+    if(ftell(fp) == 0)
+      fprintf(fp,"start,end,lo_mhz,hi_mhz\n");
+    fprintf(fp,"%s,%s,%.5f,%.5f\n",when(Cover.start,a,sizeof a),when(Cover.last,b,sizeof b),Cover.lo * 1e-6,Cover.hi * 1e-6);
+    ok = !ferror(fp);
+    ok = fclose(fp) == 0 && ok;
+  }
+  if(!ok)
+    fprintf(stderr,"%s: can't write the coverage: %s\n",Coverage_path,strerror(errno));
+}
+// A spectrum came, covering lo-hi, at now (none: cover_close() after a gap)
+static void cover_frame(double lo,double hi,int64_t now){
+  if(Cover.open && (fabs(lo - Cover.lo) > Rbw || fabs(hi - Cover.hi) > Rbw
+		    || (double)(now - Cover.last) / BILLION > Cover_gap
+		    || (double)(now - Cover.start) / BILLION >= Cover_chunk))
+    cover_close();
+  if(!Cover.open){
+    Cover.open = true;
+    Cover.start = now;
+    Cover.lo = lo;
+    Cover.hi = hi;
+  }
+  Cover.last = now;
+}
+static void cover_idle(int64_t now){
+  if(Cover.open && (double)(now - Cover.last) / BILLION > Cover_gap)
+    cover_close(); // (its end: the last spectrum, not now)
+}
+
 // --- one spectrum ---
 static float Floor[MAX_BINS];
 static bool Floor_ready;
@@ -788,7 +835,7 @@ static double number(char const *text,char const *opt,double lo,double hi){
 }
 
 static void usage(void){
-  fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m seconds] [-S kHz] [-D dB] [-v] radiod-status-group\n",App_path);
+  fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m seconds] [-S kHz] [-D dB] [-v] radiod-status-group\n",App_path);
 }
 
 int main(int argc,char *argv[]){
@@ -796,11 +843,12 @@ int main(int argc,char *argv[]){
   int ch;
   char const *configs[32];
   int nconfigs = 0;
-  while((ch = getopt(argc,argv,"c:l:s:t:m:S:D:v")) != -1){
+  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:v")) != -1){
     switch(ch){
     case 'c': if(nconfigs < 32) configs[nconfigs++] = optarg; break;
     case 'l': Log_path = optarg; break;
     case 's': Summary_path = optarg; break;
+    case 'u': Coverage_path = optarg; break;
     case 't': Threshold = number(optarg,"-t",0.1,100); break;
     case 'm': Min_seconds = number(optarg,"-m",0,3600); break;
     case 'S': Shadow_hz = number(optarg,"-S",0,10000) * 1e3; break; // 0: the rule off
@@ -814,14 +862,15 @@ int main(int argc,char *argv[]){
     exit(EX_USAGE);
   }
   {
-    // The log and the summary must be different files: the summary's
-    // rewrite would replace the log. Compared as their directories' real
-    // paths and their names, whether or not they exist yet
-    char a[8192],b[8192];
+    // The log, the summary and the coverage must be different files (the
+    // summary's rewrite would replace the others; appends would mix).
+    // Compared by real path (or directory and name, not made yet)
+    char a[8192],b[8192],c[8192];
     canonical(Log_path,a,sizeof a);
     canonical(Summary_path,b,sizeof b);
-    if(strcmp(a,b) == 0){
-      fprintf(stderr,"%s: the log and the summary must be different files\n",App_path);
+    canonical(Coverage_path,c,sizeof c);
+    if(strcmp(a,b) == 0 || strcmp(a,c) == 0 || strcmp(b,c) == 0){
+      fprintf(stderr,"%s: the log, the summary and the coverage must be different files\n",App_path);
       exit(EX_USAGE);
     }
   }
@@ -861,6 +910,7 @@ int main(int argc,char *argv[]){
     pthread_mutex_unlock(&Lock);
     if(!known){
       expire(wall_ns());
+      cover_idle(wall_ns());
       sleep(1);
       continue;
     }
@@ -902,10 +952,14 @@ int main(int argc,char *argv[]){
     }
     pthread_mutex_unlock(&Lock);
     int64_t const now = wall_ns();
-    if(have && rbw > 0)
-      process(freq - rbw * (n / 2),rbw,n,base,step,bins_copy,now); // (radiod's one-byte bins run low to high from -n/2)
-    else
+    if(have && rbw > 0){
+      double const lo = freq - rbw * (n / 2); // (radiod's one-byte bins run low to high from -n/2)
+      process(lo,rbw,n,base,step,bins_copy,now);
+      cover_frame(lo,lo + rbw * n,now);
+    } else {
       expire(now); // no spectrum: time still passes
+      cover_idle(now);
+    }
     if(now - last_summary > 60 * (int64_t)BILLION){
       write_summary();
       last_summary = now;
@@ -920,5 +974,6 @@ int main(int argc,char *argv[]){
     if(Txs[k].open)
       close_tx(&Txs[k]);
   write_summary();
+  cover_close();
   return 0;
 }
