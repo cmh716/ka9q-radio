@@ -3,7 +3,7 @@
 activity \- log transmissions anywhere in radiod's coverage, configured or not
 .SH SYNOPSIS
 .B activity
-.RI "[\-c config ...] [\-l log.csv] [\-s summary.csv] [\-t dB] [\-m seconds] [\-v] radiod-status-group"
+.RI "[\-c config ...] [\-l log.csv] [\-s summary.csv] [\-t dB] [\-m seconds] [\-S kHz] [\-D dB] [\-v] radiod-status-group"
 .SH DESCRIPTION
 activity watches everything radiod's front end covers (a Fobos at 50 MHz:
 about 422 to 469 MHz) through a spectrum channel of its own, 6.25 kHz bins
@@ -21,7 +21,10 @@ Each bin has a noise floor of its own, falling at once to a quieter
 reading and rising over half an hour, so a strong station's skirt isn't
 taken for activity, and a carrier that never stops is logged once and then
 taken into the floor. Bins more than 10 dB above their floors, side by side,
-make a signal; a signal at the same frequency continues a transmission, and
+make a signal. A signal heard alongside one at least 20 dB stronger within
+150 kHz (\-D, \-S) is taken for that one's skirt or splatter (a
+transmitter in the house, a repeater down the road), not a transmission of
+its own. A signal at the same frequency continues a transmission, and
 2 seconds without it ends it; anything under half a second is noise.
 .P
 The log (activity.csv) has a line per transmission: its start and end,
@@ -55,6 +58,12 @@ How far above its floor a bin must be. Default 10.
 .TP
 .B "\-m seconds"
 The shortest transmission logged. Default 0.5.
+.TP
+.B "\-S kHz"
+How near a stronger signal a weaker one is taken for its skirt. Default 150.
+.TP
+.B "\-D dB"
+How much stronger (in dBFS) that one must be. Default 20.
 .TP
 .B "\-v"
 Print each transmission as it ends; twice, each spectrum's strongest bin.

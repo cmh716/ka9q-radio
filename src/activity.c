@@ -65,6 +65,8 @@ static double const Rbw = 6250;    // bins, Hz
 static double const Poll_s = 0.25;
 static double const Rise_tau = 1800; // s: a floor's rise (a carrier that never stops is taken in)
 static double const Known_hz = 5000; // a transmission this near a known frequency is on it
+static double Shadow_hz = 150e3;      // a signal this near one heard at the same time,
+static double Shadow_db = 20;         // and this much weaker, is its skirt or splatter
 
 static struct sockaddr_storage Ctl_dest;
 static char Iface[1024];
@@ -599,8 +601,10 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
 	    n,rbw,start * 1e-6,valid,most,(start + at * rbw) * 1e-6);
   }
   // Signals: runs of bins above their floors (a one-bin gap bridged)
+  static struct sig { double f,w,width; float over,top; bool shadow; } sig[MAX_BINS / 2];
+  int nsig = 0;
   int i = 0;
-  while(i < n){
+  while(i < n && nsig < MAX_BINS / 2){
     if(!(isfinite(db[i]) && db[i] - Floor[i] > Threshold)){
       i++;
       continue;
@@ -624,8 +628,28 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
       if(db[k] > top)
 	top = db[k];
     }
-    double const f = w > 0 ? wf / w : start + (lo + hi) / 2.0 * rbw;
-    double const width = (hi - lo + 1) * rbw;
+    sig[nsig++] = (struct sig){ .f = w > 0 ? wf / w : start + (lo + hi) / 2.0 * rbw, .w = w,
+				.width = (hi - lo + 1) * rbw, .over = over, .top = top };
+    i = hi + 1;
+  }
+  // Shadows: a signal heard with one Shadow_db stronger (in dBFS, not over
+  // its floor: the strong one's skirt raises the floor near it) within
+  // Shadow_hz is its splatter or skirt (a transmitter in the house, a
+  // repeater down the road), not a transmission of its own
+  int shadowed = 0;
+  for(int a = 0; a < nsig; a++){
+    for(int b = 0; b < nsig && !sig[a].shadow; b++)
+      if(b != a && sig[b].top - sig[a].top >= Shadow_db && fabs(sig[b].f - sig[a].f) <= Shadow_hz)
+	sig[a].shadow = true;
+    shadowed += sig[a].shadow;
+  }
+  if(Verbose > 1 && shadowed > 0)
+    fprintf(stderr,"%d of %d signals taken for a stronger one's skirt\n",shadowed,nsig);
+  for(int a = 0; a < nsig; a++){
+    if(sig[a].shadow)
+      continue;
+    double const f = sig[a].f,w = sig[a].w,width = sig[a].width;
+    float const over = sig[a].over,top = sig[a].top;
     // Continue a transmission at that frequency, or begin one
     struct tx *t = NULL,*spare = NULL;
     for(int k = 0; k < MAX_TX; k++){
@@ -655,7 +679,6 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
       if(top > t->peak_dbfs)
 	t->peak_dbfs = top;
     }
-    i = hi + 1;
   }
   // The floors: down at once to a quieter reading, up slowly
   for(int k = 0; k < n; k++){
@@ -702,7 +725,7 @@ static void canonical(char const *path,char *out,size_t size){
 }
 
 static void usage(void){
-  fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m seconds] [-v] radiod-status-group\n",App_path);
+  fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-t dB] [-m seconds] [-S kHz] [-D dB] [-v] radiod-status-group\n",App_path);
 }
 
 int main(int argc,char *argv[]){
@@ -710,13 +733,15 @@ int main(int argc,char *argv[]){
   int ch;
   char const *configs[32];
   int nconfigs = 0;
-  while((ch = getopt(argc,argv,"c:l:s:t:m:v")) != -1){
+  while((ch = getopt(argc,argv,"c:l:s:t:m:S:D:v")) != -1){
     switch(ch){
     case 'c': if(nconfigs < 32) configs[nconfigs++] = optarg; break;
     case 'l': Log_path = optarg; break;
     case 's': Summary_path = optarg; break;
     case 't': Threshold = strtod(optarg,NULL); break;
     case 'm': Min_seconds = strtod(optarg,NULL); break;
+    case 'S': Shadow_hz = strtod(optarg,NULL) * 1e3; break;
+    case 'D': Shadow_db = strtod(optarg,NULL); break;
     case 'v': Verbose++; break;
     default: usage(); exit(EX_USAGE);
     }
