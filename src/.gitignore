@@ -5,6 +5,7 @@ sine.c
 *.a
 *.so
 *.dSYM
+activity
 aprs
 aprsfeed
 control

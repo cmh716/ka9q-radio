@@ -1,0 +1,60 @@
+.TH "ACTIVITY" "1" "November 24, 2026" "ka9q-radio" "ka9q-radio Manual"
+.SH NAME
+activity \- log transmissions anywhere in radiod's coverage, configured or not
+.SH SYNOPSIS
+.B activity
+.RI "[\-c config ...] [\-l log.csv] [\-s summary.csv] [\-t dB] [\-m seconds] [\-v] radiod-status-group"
+.SH DESCRIPTION
+activity watches everything radiod's front end covers (a Fobos at 50 MHz:
+about 422 to 469 MHz) through a spectrum channel of its own, 6.25 kHz bins
+four times a second, each the average of as many FFTs as radiod holds
+(about 80 ms, so a DMR or NXDN burst isn't missed), and logs each
+transmission it finds, whatever its tone or mode.
+.P
+Each bin has a noise floor of its own, falling at once to a quieter
+reading and rising over half an hour, so a strong station's skirt isn't
+taken for activity, and a carrier that never stops is logged once and then
+taken into the floor. Bins more than 10 dB above their floors, side by side,
+make a signal; a signal at the same frequency continues a transmission, and
+2 seconds without it ends it; anything under half a second is noise.
+.P
+The log (activity.csv) has a line per transmission: its start and end,
+frequency (the signals' power-weighted centre) and the nearest 6.25 kHz
+channel, width, length, how far above the floor and its level in dBFS,
+the configured name if it is on a known frequency (within 5 kHz), and a
+guess at the kind of signal from its width alone. The summary
+(activity-summary.csv), rewritten every minute and at the end, gives each
+channel's transmissions, time on the air, first and last heard and name;
+at a restart it is rebuilt from the log, so it covers the whole log.
+.P
+Known frequencies are every frequency in the configuration files given
+(freq lists, and trunked systems' nxdn-channels, ltr-repeaters and control
+channels), named by their sections, and radiod's own channels, including
+the voice channels its followers are on. A transmission on none of them is
+logged with its name empty.
+.SH OPTIONS
+.TP
+.B "\-c config"
+A radiod configuration file, or a directory of them (*.conf), for the
+known frequencies and their names. May be given more than once.
+.TP
+.B "\-l file"
+The log. Default activity.csv.
+.TP
+.B "\-s file"
+The summary. Default activity-summary.csv.
+.TP
+.B "\-t dB"
+How far above its floor a bin must be. Default 10.
+.TP
+.B "\-m seconds"
+The shortest transmission logged. Default 0.5.
+.TP
+.B "\-v"
+Print each transmission as it ends; twice, each spectrum's strongest bin.
+.SH EXAMPLE
+.nf
+activity \-v \-c ~/Frequencies/uhf.d fobos-uhf.local
+.fi
+.SH SEE ALSO
+radiod(8), waterfall(1), powers(1)
