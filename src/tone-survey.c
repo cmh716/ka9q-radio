@@ -6,7 +6,9 @@
 //
 // For a survey: channels on the frequencies in question, without tone
 // squelch ("mixed": analog FM and every digital mode), sent to a group of
-// their own (frequency-survey.py --survey-config writes them). Each
+// their own: activity's on-demand audit (-w lists -a group) opens them in
+// radiod as the frequencies are used. The group is named as radiod names
+// it (the address made from the name: nothing need advertise it). Each
 // transmission (radiod sends nothing while a channel is squelched: a burst
 // of audio) is judged as it ends: the tone found in most of it (monitor's
 // detector: of the 55 tones, one with over half their energy, every
@@ -42,7 +44,7 @@
 #include "dcs.h"
 
 #define MAX_GROUPS 16
-#define MAX_SESSIONS 1024 // frequency-survey.py --survey-config writes at most 1000
+#define MAX_SESSIONS 1024
 #define MAX_INFO 1024
 #define SAMPRATE 8000
 #define N_TONES 55
@@ -746,7 +748,9 @@ int main(int argc,char *argv[]){
     for(int s = 0; s < 2; s++){
       struct sockaddr_storage sock;
       char iface[1024] = {0};
-      if(resolve_mcast(argv[i],&sock,s ? DEFAULT_STAT_PORT : DEFAULT_RTP_PORT,iface,sizeof iface,0) != 0){
+      // (named as radiod names it: activity's on-demand channels have no
+      // section in a config to advertise the name)
+      if(name_mcast(argv[i],&sock,s ? DEFAULT_STAT_PORT : DEFAULT_RTP_PORT,iface,sizeof iface) != 0){
 	fprintf(stderr,"%s: can't resolve\n",argv[i]);
 	break;
       }

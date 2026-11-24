@@ -847,6 +847,44 @@ uint32_t make_maddr(char const *arg){
     addr |= 0x00100000; // Small chance of this for a random address
   return addr;
 }
+// A group named as radiod names its own: "name[:port][,iface]". A literal
+// address as it is; a name not looked up (nothing need advertise it) but
+// made into the address radiod makes from it (make_maddr(): "data =
+// tone-survey.local" in a config, or a channel commanded to that group,
+// lands at the same address). 0, or -1 if it can't be parsed
+int name_mcast(char const *group, struct sockaddr_storage *sock, uint16_t default_port, char *iface, int iface_len){
+  if(group == NULL || *group == '\0' || sock == NULL)
+    return -1;
+  char host[PATH_MAX];
+  strlcpy(host, group, sizeof host);
+  char *ifp = strrchr(host, ',');
+  if(ifp != NULL)
+    *ifp++ = '\0';
+  if(iface != NULL && iface_len > 0)
+    strlcpy(iface, ifp != NULL ? ifp : "", iface_len);
+  uint16_t port = default_port;
+  char *pp = strrchr(host, ':');
+  if(pp != NULL && strchr(host, ':') == pp){ // (one colon: a port; IPv6 literals have more)
+    *pp++ = '\0';
+    port = (uint16_t)atoi(pp);
+  }
+  memset(sock, 0, sizeof *sock);
+  struct sockaddr_in *sin = (struct sockaddr_in *)sock;
+  struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sock;
+  if(inet_pton(AF_INET, host, &sin->sin_addr) == 1){
+    sin->sin_family = AF_INET;
+    sin->sin_port = htons(port);
+  } else if(inet_pton(AF_INET6, host, &sin6->sin6_addr) == 1){
+    sin6->sin6_family = AF_INET6;
+    sin6->sin6_port = htons(port);
+  } else {
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = htonl(make_maddr(host));
+    sin->sin_port = htons(port);
+  }
+  return 0;
+}
+
 // Returns local IPv4 address as uint32_t (network byte order) that would be used to reach dest
 // Written by ChatGPT, and surprisingly it works
 static uint32_t get_local_address_for(uint32_t dest_addr) {

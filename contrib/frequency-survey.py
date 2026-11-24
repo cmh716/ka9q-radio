@@ -324,37 +324,6 @@ def tone_check(row, results):
         row['Tone check'] = f'differs: heard {commonest}' + (f' (listed {listed})' if listed else ' (none listed)')
 
 
-def survey_config(rows, path, group, size, part):
-    """radiod sections for the candidates with RF activity: no tone squelch,
-    analog and every digital mode (mixed), for tone-survey. A batch at a
-    time (each channel costs CPU): the busiest first, size per part.
-    Returns (frequencies in this part, parts in all)"""
-    busy = {}
-    for r in rows:
-        f = frequency_of(r)
-        if r.get('Survey') == ACTIVE and f:
-            hz = round(f)
-            try:
-                n = int(r.get('Transmissions') or 0)
-            except ValueError:
-                n = 0
-            busy[hz] = max(busy.get(hz, 0), n)
-    order = sorted(busy, key=lambda hz: (-busy[hz], hz))
-    parts = max(1, -(-len(order) // size))
-    if not 1 <= part <= parts:
-        sys.exit(f'--survey-part {part}: there are {parts} parts of {size} ({len(order)} active frequencies)')
-    freqs = sorted(order[(part - 1) * size:part * size])
-    with open(path, 'w') as f:
-        f.write(f'# Written by frequency-survey.py for tone-survey: part {part} of {parts},\n'
-                f'# {len(freqs)} of {len(order)} frequencies with RF activity (busiest first), without\n'
-                f'# tone squelch. Put it in radiod\'s configuration directory while\n'
-                f'# surveying, then take it out.\n')
-        if freqs:
-            f.write(f'\n[tone-survey]\nmode = mixed\ndata = {group}\n')
-            f.write('freq = "' + ' '.join(f'{hz // 1000000}m{hz % 1000000:06d}' for hz in freqs) + '"\n')
-    return len(freqs), parts
-
-
 def same_file(a, b):
     """Two paths naming one file (symlinks, spellings, hard links), existing or not"""
     import os
@@ -375,11 +344,6 @@ def main(argv=None):
     ap.add_argument('-o', '--output', help='where the annotated rows go (default: <candidates>-survey.csv)')
     ap.add_argument('--range', help='the coverage, MHz: lo-hi (default: the span of the log)')
     ap.add_argument('--tones', help="tone-survey's results: each candidate's listed tone checked against what was heard")
-    ap.add_argument('--survey-config', help="write radiod sections for tone-survey: the candidates with RF activity")
-    ap.add_argument('--survey-group', default='tone-survey.local', help='their data group (default tone-survey.local)')
-    ap.add_argument('--survey-size', type=int, default=25,
-                    help='frequencies per part (default 25: each is a radiod channel, and costs CPU)')
-    ap.add_argument('--survey-part', type=int, default=1, help='which part, the busiest first (default 1)')
     args = ap.parse_args(argv)
 
     import os
@@ -422,10 +386,6 @@ def main(argv=None):
     out = args.output or re.sub(r'(\.csv)?$', '-survey.csv', args.candidates, count=1)
     inputs = (args.candidates, args.activity) + ((cover_path,) if coverage is not None else ()) + \
         ((args.tones,) if args.tones else ())
-    if args.survey_config:
-        for source in inputs + (out,):
-            if same_file(args.survey_config, source):
-                sys.exit(f'{args.survey_config}: that is {source}: give another file for the survey config')
     for source in inputs:
         if same_file(out, source):
             sys.exit(f'{out}: that is {source}, an input: give another output')
@@ -443,12 +403,6 @@ def main(argv=None):
     for v, n in verdicts.most_common():
         print(f'  {n:5d}  {v}')
     print(f'written to {out}')
-    if args.survey_config:
-        if args.survey_size < 1:
-            sys.exit('--survey-size: at least 1')
-        n, parts = survey_config(rows, args.survey_config, args.survey_group, args.survey_size, args.survey_part)
-        print(f'part {args.survey_part} of {parts}: {n} frequencies for tone-survey in {args.survey_config}'
-              f' (data {args.survey_group})')
 
 
 if __name__ == '__main__':

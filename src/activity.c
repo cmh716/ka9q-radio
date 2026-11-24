@@ -1,7 +1,8 @@
 // activity: find transmissions anywhere in radiod's front end coverage, on
 // frequencies configured or not, and log them.
 //
-//   activity [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m s] [-v] radiod-status-group
+//   activity [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m s]
+//            [-w watch.csv ... -a audit-group [-A max]] [-v] radiod-status-group
 //
 // A spectrum channel of its own in radiod covers the whole front end
 // (6.25 kHz bins), nominally four times a second, each the average of as
@@ -24,6 +25,18 @@
 // named by section) or radiod's channels. The summary (rewritten every
 // minute, and rebuilt from the log at a restart) gives each channel's
 // transmissions, time, first and last heard.
+//
+// The on-demand audit (-w, -a): frequencies to audit, from CSV lists (a
+// RadioReference download, the catalog's master.csv: their RX MHz /
+// Frequency Output column). A transmission heard within 5 kHz of one (the
+// nearest) gets a channel in radiod for as long as it's busy: mode
+// "mixed" (analog FM with no tone squelch, and every digital mode), sent to
+// the audit group, where tone-survey measures its tone or digital IDs.
+// The channel is asked for again every 10 s while it's heard, and lapses
+// 30 s after (radiod's lifetime): no configuration, and only as many
+// channels as are busy, at most -A (16) at once. The start of a
+// transmission (~half a second, as it's seen and the channel made) is
+// missed: CTCSS and DCS go on all through one; digital IDs are repeated.
 //
 // Copyright 2026 ka9q-radio contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -71,6 +84,19 @@ static double Shadow_db = 20;         // and this much weaker, is its skirt or s
 static double const Shadow_max = 15;  // s a transmission goes on through shadows alone
 
 static struct sockaddr_storage Ctl_dest;
+// The on-demand audit
+#define MAX_WATCH 8192
+static struct watch { double freq; int64_t asked; } Watch[MAX_WATCH]; // sorted by frequency
+static int Nwatch;
+static bool Audit;
+static struct sockaddr_storage Audit_dest;
+static int Audit_max = 16;
+// The audit's channels' SSRCs: from the frequency, 125 Hz steps (to 8 GHz)
+#define AUDIT_SSRC_BASE 0x60000000u
+#define AUDIT_SSRC_END  (AUDIT_SSRC_BASE + 0x04000000u)
+static double const Audit_life = 30;   // s a channel outlives the last time it was asked for
+static double const Audit_every = 10;  // s between asks while it's heard
+static double Audit_blocktime = 0.02;        // radiod's block, s (lifetimes count blocks)
 static char Iface[1024];
 static int Act_ctl_fd = -1, Act_status_fd = -1;
 static uint32_t My_ssrc;
@@ -272,6 +298,7 @@ static void *status_thread(void *arg){
 	pthread_cond_broadcast(&Fresh_cond);
       }
     } else if(ssrc != 0 && chan.demod_type != SPECT_DEMOD && chan.demod_type != SPECT2_DEMOD
+	      && !(ssrc >= AUDIT_SSRC_BASE && ssrc < AUDIT_SSRC_END) // (an audit's: not configured)
 	      && demod_name_from_type(chan.demod_type) != NULL){
       // A channel of radiod's, and a followed call's voice channel
       char name[64];
@@ -318,6 +345,153 @@ static int64_t wall_ns(void){
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME,&ts);
   return (int64_t)ts.tv_sec * BILLION + ts.tv_nsec;
+}
+
+// --- the on-demand audit ---
+// One CSV line's fields (quoted fields, doubled quotes): how many
+static int csv_fields(char *line,char **field,int max){
+  int n = 0;
+  char *p = line;
+  while(n < max){
+    char *out = p;
+    field[n++] = p;
+    if(*p == '"'){
+      char *in = p + 1;
+      while(*in != '\0'){
+	if(*in == '"' && in[1] == '"'){
+	  *out++ = '"';
+	  in += 2;
+	} else if(*in == '"'){
+	  in++;
+	  break;
+	} else
+	  *out++ = *in++;
+      }
+      while(*in != '\0' && *in != ',')
+	in++;
+      bool const more = *in == ',';
+      *out = '\0';
+      if(!more)
+	break;
+      p = in + 1;
+    } else {
+      char *comma = strchr(p,',');
+      if(comma == NULL){
+	p[strcspn(p,"\r\n")] = '\0';
+	break;
+      }
+      *comma = '\0';
+      p = comma + 1;
+    }
+  }
+  return n;
+}
+static int by_watch(void const *a,void const *b){
+  double const x = ((struct watch const *)a)->freq,y = ((struct watch const *)b)->freq;
+  return x < y ? -1 : x > y;
+}
+// A list of frequencies to audit: a CSV with an RX MHz, Frequency Output,
+// Frequency or RX Frequency column (MHz)
+static void read_watch(char const *path){
+  FILE *fp = fopen(path,"r");
+  if(fp == NULL){
+    fprintf(stderr,"%s: %s\n",path,strerror(errno));
+    exit(EX_NOINPUT);
+  }
+  static char line[65536];
+  char *field[256];
+  int col = -1;
+  if(fgets(line,sizeof line,fp) != NULL){
+    char *h = line;
+    if((unsigned char)h[0] == 0xef && (unsigned char)h[1] == 0xbb && (unsigned char)h[2] == 0xbf)
+      h += 3; // (a byte order mark)
+    int const n = csv_fields(h,field,256);
+    static char const *const names[] = {"RX MHz","Frequency Output","Frequency","RX Frequency"};
+    for(int k = 0; k < 4 && col < 0; k++)
+      for(int i = 0; i < n; i++)
+	if(strcmp(field[i],names[k]) == 0){
+	  col = i;
+	  break;
+	}
+  }
+  if(col < 0){
+    fprintf(stderr,"%s: no RX MHz, Frequency Output, Frequency or RX Frequency column\n",path);
+    exit(EX_DATAERR);
+  }
+  int added = 0;
+  while(fgets(line,sizeof line,fp) != NULL){
+    int const n = csv_fields(line,field,256);
+    if(col >= n)
+      continue;
+    char *end;
+    double const mhz = strtod(field[col],&end);
+    if(end == field[col] || !(mhz > 0))
+      continue;
+    double const f = mhz * 1e6;
+    bool dup = false;
+    for(int i = 0; i < Nwatch && !dup; i++)
+      dup = fabs(Watch[i].freq - f) < 100;
+    if(dup)
+      continue;
+    if(Nwatch >= MAX_WATCH){
+      fprintf(stderr,"%s: more than %d frequencies to audit: the rest left out\n",path,MAX_WATCH);
+      break;
+    }
+    Watch[Nwatch++] = (struct watch){ .freq = f };
+    added++;
+  }
+  fclose(fp);
+  qsort(Watch,(size_t)Nwatch,sizeof Watch[0],by_watch);
+  fprintf(stderr,"%s: %d frequencies to audit\n",path,added);
+}
+static void send_command(uint8_t *buffer,uint8_t *bp);
+// A transmission at f, heard now: the nearest frequency to audit within
+// Known_hz gets its channel (asked for again every Audit_every s)
+static void audit(double f,int64_t now){
+  if(!Audit || Nwatch == 0)
+    return;
+  int lo = 0,hi = Nwatch;
+  while(lo < hi){
+    int const mid = (lo + hi) / 2;
+    if(Watch[mid].freq < f)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  struct watch *w = NULL;
+  for(int k = lo - 1; k <= lo; k++)
+    if(k >= 0 && k < Nwatch && fabs(Watch[k].freq - f) <= Known_hz && (w == NULL || fabs(Watch[k].freq - f) < fabs(w->freq - f)))
+      w = &Watch[k];
+  if(w == NULL)
+    return;
+  bool const live = w->asked != 0 && (double)(now - w->asked) / BILLION < Audit_life;
+  if(live && (double)(now - w->asked) / BILLION < Audit_every)
+    return;
+  if(!live){
+    int busy = 0;
+    for(int k = 0; k < Nwatch; k++)
+      if(Watch[k].asked != 0 && (double)(now - Watch[k].asked) / BILLION < Audit_life)
+	busy++;
+    if(busy >= Audit_max){
+      if(Verbose)
+	fprintf(stderr,"audit: %.5f MHz heard, but %d channels already\n",w->freq * 1e-6,busy);
+      return;
+    }
+    if(Verbose)
+      fprintf(stderr,"audit: %.5f MHz heard: a channel\n",w->freq * 1e-6);
+  }
+  w->asked = now;
+  uint8_t buffer[256],*bp = buffer;
+  *bp++ = CMD;
+  // Its own SSRC, from the frequency (125 Hz steps), clear of radiod's
+  // (kHz) and the spectrum channels' (the top bit)
+  encode_int(&bp,OUTPUT_SSRC,AUDIT_SSRC_BASE + (uint32_t)lrint(w->freq / 125));
+  encode_int(&bp,COMMAND_TAG,(uint32_t)random());
+  encode_string(&bp,PRESET,"mixed",5);
+  encode_double(&bp,RADIO_FREQUENCY,w->freq);
+  encode_socket(&bp,OUTPUT_DATA_DEST_SOCKET,&Audit_dest);
+  encode_int(&bp,LIFETIME,(int)lrint(Audit_life / Audit_blocktime));
+  send_command(buffer,bp);
 }
 
 // --- transmissions ---
@@ -774,6 +948,7 @@ static void process(double start,double rbw,int n,float base,float step,uint8_t 
 	t->peak_over = over;
       if(top > t->peak_dbfs)
 	t->peak_dbfs = top;
+      audit(t->freq,now);
     }
   }
   // Then shadows: one begins nothing, but keeps a transmission already
@@ -862,7 +1037,8 @@ static double number(char const *text,char const *opt,double lo,double hi){
 }
 
 static void usage(void){
-  fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m seconds] [-S kHz] [-D dB] [-v] radiod-status-group\n",App_path);
+  fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m seconds] [-S kHz] [-D dB]"
+	  " [-w watch.csv ... -a audit-group [-A max]] [-v] radiod-status-group\n",App_path);
 }
 
 int main(int argc,char *argv[]){
@@ -870,7 +1046,10 @@ int main(int argc,char *argv[]){
   int ch;
   char const *configs[32];
   int nconfigs = 0;
-  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:v")) != -1){
+  char const *watches[32];
+  int nwatches = 0;
+  char const *audit_group = NULL;
+  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:w:a:A:v")) != -1){
     switch(ch){
     case 'c': if(nconfigs < 32) configs[nconfigs++] = optarg; break;
     case 'l': Log_path = optarg; break;
@@ -880,6 +1059,9 @@ int main(int argc,char *argv[]){
     case 'm': Min_seconds = number(optarg,"-m",0,3600); break;
     case 'S': Shadow_hz = number(optarg,"-S",0,10000) * 1e3; break; // 0: the rule off
     case 'D': Shadow_db = number(optarg,"-D",1,100); break;
+    case 'w': if(nwatches < 32) watches[nwatches++] = optarg; break;
+    case 'a': audit_group = optarg; break;
+    case 'A': Audit_max = (int)number(optarg,"-A",1,256); break;
     case 'v': Verbose++; break;
     default: usage(); exit(EX_USAGE);
     }
@@ -914,6 +1096,21 @@ int main(int argc,char *argv[]){
   }
   for(int i = 0; i < nconfigs; i++)
     read_config(configs[i]);
+  if((nwatches > 0) != (audit_group != NULL)){
+    fprintf(stderr,"%s: -w (what to audit) and -a (the audit's group) go together\n",App_path);
+    exit(EX_USAGE);
+  }
+  for(int i = 0; i < nwatches; i++)
+    read_watch(watches[i]);
+  if(audit_group != NULL){
+    char iface[1024] = {0};
+    if(name_mcast(audit_group,&Audit_dest,DEFAULT_RTP_PORT,iface,sizeof iface) != 0){
+      fprintf(stderr,"%s: can't resolve %s\n",App_path,audit_group);
+      exit(EX_NOHOST);
+    }
+    Audit = true;
+    fprintf(stderr,"%s: auditing %d frequencies: channels to %s, at most %d at once\n",App_path,Nwatch,audit_group,Audit_max);
+  }
   reload_log();
   {
     // The log made now, with its header, so a run that hears nothing still
@@ -957,6 +1154,7 @@ int main(int argc,char *argv[]){
     }
     double const center = Fe_center + (min_if + max_if) / 2;
     double const blocktime = Fe_blocktime > 0 ? Fe_blocktime : 0.02;
+    Audit_blocktime = blocktime;
     bool const known = Fe_samprate > 0 && max_if > min_if;
     pthread_mutex_unlock(&Lock);
     if(!known){

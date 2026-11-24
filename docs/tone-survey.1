@@ -1,0 +1,36 @@
+.TH "TONE-SURVEY" "1" "November 24, 2026" "ka9q-radio" "ka9q-radio Manual"
+.SH NAME
+tone-survey \- what tone or digital IDs each surveyed frequency actually carries
+.SH SYNOPSIS
+.B tone-survey
+.RI "[\-o results.csv] [\-v] group ..."
+.SH DESCRIPTION
+tone-survey listens to radiod channels opened without tone squelch (mode
+mixed: analog FM and every digital mode), normally those activity(1)'s
+on-demand audit opens as frequencies are used, and judges each
+transmission as it ends: the CTCSS tone found in most of it (55 tones,
+looked at every 0.24 s), else the DCS code found most, else none; or, for
+a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...), split
+where radiod says each call begins. Under half a second isn't judged; with
+no tone, code or call, under 1.5 s isn't counted.
+.P
+The results, one row per frequency: transmissions, first and last heard,
+the commonest, and everything heard with counts, rewritten every minute
+and at exit. frequency-survey.py \-\-tones checks a candidate list's listed
+tones against them.
+.P
+A group is named as radiod names it: the address made from the name, so
+nothing need advertise it.
+.SH OPTIONS
+.TP
+.BI "\-o " results.csv
+Where the results go (default tone-survey.csv).
+.TP
+.B "\-v"
+Print each transmission as it's judged.
+.SH EXAMPLE
+.nf
+tone-survey \-o ~/tone-survey.csv tone-survey.local
+.fi
+.SH SEE ALSO
+activity(1), radiod(8)

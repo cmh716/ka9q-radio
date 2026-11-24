@@ -306,8 +306,7 @@ with open(tones, 'w', newline='') as f:
     w.writerow(['424.12500', '3', '', '', '131.8 PL', '131.8 PL x2; none x1'])
     w.writerow(['425.00000', '2', '', '', 'P25 NAC 469 TG 10003', 'P25 NAC 469 TG 10003 x2'])
 out17 = os.path.join(d, 'out17.csv')
-conf = os.path.join(d, 'survey.conf')
-survey.main(['-a', log, '-o', out17, '--range', '422.1-469.1', '--tones', tones, '--survey-config', conf, rr])
+survey.main(['-a', log, '-o', out17, '--range', '422.1-469.1', '--tones', tones, rr])
 rows17 = {r['Frequency Output']: r for r in csv.DictReader(open(out17))}
 check(rows17['453.50000']['Tone check'] == 'confirmed', 'D243 listed, D243 heard: confirmed')
 check(rows17['424.12500']['Tone check'] == 'differs: heard 131.8 PL (listed 127.3 PL)'
@@ -315,9 +314,6 @@ check(rows17['424.12500']['Tone check'] == 'differs: heard 131.8 PL (listed 127.
 check(rows17['468.65625']['Tone check'] == 'no tone heard', 'nothing listed, none heard: no tone heard')
 check(rows17['425.00000']['Tone check'] == 'digital: P25 NAC 469 TG 10003', 'a digital call heard: its mode and IDs')
 check(rows17['468.65000']['Tone check'] == 'not surveyed yet', 'a frequency tone-survey has no results for: not surveyed yet')
-text = open(conf).read()
-check('mode = mixed' in text and 'data = tone-survey.local' in text and '468m656250' in text and '453m500000' in text
-      and '425m000000' not in text and '468m650000' not in text, 'the survey config: the active candidates only, mixed, its group')
 # The catalog's form of the listed tone
 cat2 = os.path.join(d, 'cat2.csv')
 with open(cat2, 'w', newline='') as f:
@@ -352,16 +348,6 @@ rows19 = {r['Name']: r for r in csv.DictReader(open(out19))}
 check(rows19['inv listed, D heard']['Tone check'] == 'differs: heard D243 (listed I243)', 'I243 listed, D243 heard: differs')
 check(rows19['inv listed, I heard']['Tone check'] == 'confirmed', 'I023 listed, I023 heard: confirmed')
 check(rows19['shared']['Tone check'] == 'heard, less often than 131.8 PL', 'a shared frequency: the listed tone heard, less often')
-# Survey parts: the busiest first, size per part
-conf2 = os.path.join(d, 'survey2.conf')
-survey.main(['-a', log, '-o', os.path.join(d, 'out20.csv'), '--range', '422.1-469.1', '--survey-config', conf2,
-             '--survey-size', '1', rr])
-busiest = max((r for r in csv.DictReader(open(os.path.join(d, 'out20.csv'))) if r['Survey'] == survey.ACTIVE),
-              key=lambda r: int(r['Transmissions']))
-hz = round(float(busiest['Frequency Output']) * 1e6)
-text2 = open(conf2).read()
-check(text2.count('m') >= 1 and f'{hz // 1000000}m{hz % 1000000:06d}' in text2 and text2.count('"') == 2
-      and len(text2.split('freq = "')[1].split()) == 1, 'part 1 of size 1: the busiest frequency alone')
 # A log begun before coverage was recorded: the earlier transmissions count,
 # watched from the log's first until the coverage starts
 log9 = os.path.join(d, 'log9.csv')

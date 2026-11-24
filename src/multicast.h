@@ -81,6 +81,7 @@ static inline uint8_t *put32(uint8_t *dp,uint32_t x){
   return dp;
 }
 uint32_t make_maddr(char const *arg);
+int name_mcast(char const *group, struct sockaddr_storage *sock, uint16_t default_port, char *iface, int iface_len);
 int setport(void *sock,int port);
 
 #endif
