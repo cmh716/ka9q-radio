@@ -30,6 +30,7 @@
 #include "morse.h"
 #include "status.h"
 #include "monitor.h"
+#include "monitor-summary.h"
 #include "database.h"
 #include "timing.h"
 #include "locator.h"
@@ -46,6 +47,10 @@ static int First_session = 0;
 static int Sessions_per_screen = 0;
 static int Current = 0;
 static bool help = false;
+static struct rx_summary Summary; // the receiver summary's history
+static bool Show_summary = true;  // 'S'
+
+
 static void show_help(void);
 
 // Color is optional: attributes and ASCII frames also work on monochrome terminals.
@@ -489,6 +494,62 @@ static void ui_last(sess_t const *sp,int64_t now,char *out,size_t size){
     snprintf(out,size,"%dd",(int)(s / 86400));
 }
 
+// The receiver summary: each front end's level, gain and overloads, the
+// last ten minutes' peak and overload count held, and the busiest channels.
+// Fed from every session (each carries its front end's status) at each
+// update; draws from row (if draw), returns the rows it took
+static int ui_summary(int row,int count,int64_t now,bool draw){
+  for(int i = 0; i < count; i++){
+    sess_t const *sp = Sess_ptr[i];
+    struct sum_reading const r = {
+      .description = sp->frontend.description,
+      .clocktime = sp->chan.clocktime,
+      .frequency = sp->frontend.frequency,
+      .samprate = sp->frontend.samprate,
+      .if_dbfs = power2dB(sp->frontend.if_power),
+      .rf_gain = sp->frontend.rf_gain,
+      .agc = sp->frontend.rf_agc,
+      .lna_gain = sp->frontend.lna_gain,
+      .mixer_gain = sp->frontend.mixer_gain,
+      .if_gain = sp->frontend.if_gain,
+      .overranges = sp->frontend.overranges,
+      .samp_since_over = sp->frontend.samp_since_over,
+    };
+    if(isfinite(r.if_dbfs))
+      summary_reading(&Summary,&r);
+    summary_activity(&Summary,(int)(sp - Sessions),sp->ssrc,now - sp->last_active < BILLION/2,now);
+  }
+  if(!draw)
+    return 0;
+  int rows = 0;
+  char line[512];
+  for(int k = 0; k < SUM_FRONTENDS && rows < 2; k++){
+    struct sum_view v;
+    if(!summary_view(&Summary,k,&v))
+      continue;
+    summary_frontend_line(&v,now,line,sizeof line);
+    bool const overloaded = v.now->overranges > 0 && v.last_over != 0
+      && v.now->clocktime - v.last_over < (int64_t)SUM_WINDOW_S * BILLION;
+    ui_text(row + rows++,2,line,A_NORMAL,overloaded ? UI_WARNING : UI_FRAME);
+  }
+  if(rows == 0)
+    ui_text(row + rows++,2,"Front end: waiting for status",A_DIM,UI_FRAME);
+  int slots[3];
+  int const n = summary_busiest(&Summary,slots,3,now);
+  int len = snprintf(line,sizeof line,"Busiest, 10 min:");
+  for(int i = 0; i < n && len < (int)sizeof line; i++){
+    sess_t const *sp = &Sessions[slots[i]];
+    int const secs = (int)lrint(summary_seconds(&Summary,slots[i],now));
+    char const *name = sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : sp->callsign;
+    len += snprintf(line + len,sizeof line - (size_t)len,"%s %.5f%s%s %d:%02d",i ? " |" : "",
+		    sp->chan.tune.freq/1e6,name[0] ? " " : "",name,secs / 60,secs % 60);
+  }
+  if(n == 0)
+    strlcat(line," no audio",sizeof line);
+  ui_text(row + rows++,2,line,A_DIM,UI_FRAME);
+  return rows;
+}
+
 static void dashboard(void){
   erase();
   if(LINES < 7 || COLS < 24){
@@ -509,7 +570,15 @@ static void dashboard(void){
     count++;
   }
   bool const details = LINES >= 18;
-  int const table_header = 4;
+  // The receiver summary, with room for it: a rule and two or three lines
+  bool const summary = Show_summary && LINES >= 22;
+  int top = 3; // the channels' rule
+  if(summary){
+    ui_rule(3," RECEIVER ");
+    top = 4 + ui_summary(4,count,now,true);
+  } else
+    ui_summary(0,count,now,false); // (its history goes on)
+  int const table_header = top + 1;
   int const table_end = details ? LINES-9 : LINES-3;
   Sessions_per_screen = max(1,table_end-table_header-1);
   Current = max(0,min(Current,count-1));
@@ -529,7 +598,7 @@ static void dashboard(void){
   snprintf(line,sizeof line,"Input: %s%s%s",Nfds > 0 ? Mcast_address_text[0] : "waiting",
            Nfds > 1 ? " (+ more)" : "",Source != NULL ? " [source filtered]" : "");
   ui_text(2,2,line,A_DIM,UI_FRAME);
-  ui_rule(3," CHANNELS ");
+  ui_rule(top," CHANNELS ");
   // Below 100 columns: no Config, SNR or Gain (the details panel has them).
   // Call takes what the terminal has beyond the other columns and some room
   // for Channel; the followed frequency only when it's wide enough
@@ -637,7 +706,7 @@ static void dashboard(void){
   }
   // Side frames avoid the terminal's last column, which can cause scrolling.
   for(int r=1;r<LINES-2;r++){
-    if(r == 3 || r == table_end) continue;
+    if(r == 3 || r == top || r == table_end) continue;
     ui_text(r,0,"|",A_NORMAL,UI_FRAME);
     ui_text(r,COLS-2,"|",A_NORMAL,UI_FRAME);
   }
@@ -1444,6 +1513,9 @@ static void process_keyboard(void){
     break;
   case 'C':
     Constant_delay = !Constant_delay;
+    break;
+  case 'S': // the receiver summary, on or off
+    Show_summary = !Show_summary;
     break;
   case 'A': // Start all new sessions muted
     Start_muted = !Start_muted;

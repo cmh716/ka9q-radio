@@ -122,6 +122,7 @@ A session does not appear in the list until it's active (audio is decoded).
 | SHIFT + ← (arrow left)  | playout buffer -1 ms |
 | SHIFT + → (arrow right) | playout buffer +1 ms |
 | v                       | toggle verbose display |
+| S                       | toggle the receiver summary |
 | q                       | toggle quiet mode |
 
 ### IDs
@@ -178,3 +179,16 @@ callsigns and the audio: they are what the stations broadcast, and D-PRS
 normally reaches the APRS network too. --location is only monitor's own point
 of reference; it is not sent anywhere. Smaller terminals use a compact table. Press `v` to
 switch between the dashboard and full diagnostics; `h` opens keyboard help.
+
+Above the channels (terminals of 22 lines or more; `S` hides or shows it) the
+receiver summary has a line for each front end: its description and LO
+frequency, IF level in dBFS with the highest of the last ten minutes and how
+long ago it was, gain (and AGC), A/D overloads since radiod started, in the
+last ten minutes, and how long since the last (in yellow while that was
+within ten minutes), and how old these figures are: they come with the
+channels' status, which radiod sends while a channel is active. Below it,
+the three channels with the most audio in the last ten minutes, and how
+much:
+
+    fobos 445.6000 MHz | IF -31.5 dBFS (peak -18.2, 3m ago) | gain 22 dB | A/D over 0 | 1s ago
+    Busiest, 10 min: 424.70000 110 2:10 | 453.50000 0:45 | 454.55000 4 0:30

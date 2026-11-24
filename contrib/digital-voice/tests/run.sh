@@ -44,11 +44,13 @@ if [ -f ../../../src/config_paths.h ]; then
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE $(pkg-config --cflags libbsd-overlay) -iquote $S -pthread \
     -Dmain=monitor_real_main -c $S/monitor.c -o out/monitor-nomain.o
   cc $FLAGS -std=gnu11 -D_GNU_SOURCE $(pkg-config --cflags libbsd-overlay) -iquote $S -pthread \
-    $S/monitor-display-test.c out/monitor-nomain.o $S/monitor-data.o $S/monitor-repeater.o $S/morse.o \
+    $S/monitor-display-test.c out/monitor-nomain.o $S/monitor-data.o $S/monitor-summary.o $S/monitor-repeater.o $S/morse.o \
     $S/database.o $S/talkgroup.o $S/locator.o $S/libdsp.a $S/libstatus.a $S/libradio.a \
     -lopus -lportaudio $(pkg-config --silence-errors --libs alsa) -lsamplerate -liniparser -lncursesw -lcsv \
     -lm -lpthread $(pkg-config --libs libbsd-overlay) -lrt -o out/monitor-display-test
   out/monitor-display-test
+  cc $FLAGS -std=gnu11 -iquote $S $S/monitor-summary-test.c $S/monitor-summary.c -lm -o out/monitor-summary-test
+  out/monitor-summary-test
   cc $FLAGS -std=gnu11 -iquote $S $S/tone-detect-test.c $S/tone-detect.c -lfftw3f -lm -o out/tone-detect-test
   out/tone-detect-test
   cc $FLAGS -std=gnu11 -iquote $S $S/dcs-test.c $S/dcs.c -lm -o out/dcs-test

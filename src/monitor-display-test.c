@@ -113,6 +113,38 @@ int main(void){
   strcpy(sp->chan.dv.call_src,"HB9ETH");
   dashboard();
   check(find_row("ALL HB9ETH JN47bi") >= 0,"with the talker: the locator beside them");
+  // The receiver summary: the front end's line and the busiest channels
+  resizeterm(30,160);
+  strcpy(sp->frontend.description,"fobos");
+  sp->frontend.frequency = 445600000;
+  sp->frontend.samprate = 50e6;
+  sp->frontend.if_power = dB2power(-31.5f);
+  sp->frontend.rf_gain = 22;
+  sp->chan.clocktime = gps_time_ns() - 2 * (int64_t)BILLION;
+  strcpy(sp->chan.dv.call_dest,"110");
+  for(int i = 0; i < 20; i++){ // two seconds of audio
+    sp->last_active = gps_time_ns();
+    sp->chan.clocktime += BILLION / 10;
+    dashboard();
+    struct timespec const tenth = { 0, 100000000 };
+    nanosleep(&tenth,NULL);
+  }
+  r = find_row("fobos 445.6000 MHz | IF -31.5 dBFS");
+  row_text(r,line,sizeof line);
+  printf("     %s\n",line);
+  check(r >= 0 && strstr(line,"gain 22 dB") != NULL && strstr(line,"A/D over 0") != NULL,"the front end's line");
+  r = find_row("Busiest, 10 min:");
+  row_text(r,line,sizeof line);
+  printf("     %s\n",line);
+  check(r >= 0 && strstr(line,"444.37500 110 0:02") != NULL,"the busiest channel, with its seconds of audio");
+  check(find_row(" RECEIVER ") >= 0 && find_row(" RECEIVER ") < find_row(" CHANNELS "),"above the channels");
+  Show_summary = false;
+  dashboard();
+  check(find_row(" RECEIVER ") < 0 && find_row("fobos 445.6000") < 0,"S hides it");
+  Show_summary = true;
+  resizeterm(20,160);
+  dashboard();
+  check(find_row(" RECEIVER ") < 0 && find_row(" CHANNELS ") >= 0,"no room (20 lines): not shown");
   endwin();
   delscreen(scr);
   puts(Failures ? "Monitor display tests FAILED" : "Monitor display tests passed");

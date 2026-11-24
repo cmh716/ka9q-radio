@@ -73,6 +73,16 @@ and D-PRS normally reaches the APRS network too. \-\-location is only
 monitor's own point of reference; it is not sent anywhere. Smaller terminals omit this panel
 and reduce the table columns. Press v to switch to the full diagnostic table
 and h for keyboard help. Existing navigation and audio controls are unchanged.
+.P
+Above the channels (terminals of 22 lines or more; S hides or shows it) the
+receiver summary has a line for each front end: its description and LO
+frequency, IF level in dBFS with the highest of the last ten minutes and how
+long ago it was, gain (and AGC), A/D overloads since radiod started, in the
+last ten minutes, and how long since the last (in yellow while that was
+within ten minutes), and how old these figures are: they come with the
+channels' status, which radiod sends while a channel is active. Below it,
+the three channels with the most audio in the last ten minutes, and how
+much.
 .SH OPTIONS
 .TP
 .B "\-I destination, \-\-input destination"
