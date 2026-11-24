@@ -219,11 +219,11 @@ static void *status_thread(void *arg){
 	pthread_mutex_unlock(&c->lock);
       }
     }
-    pthread_mutex_unlock(&Clients_lock);
-    if(ours)
-      continue;
-    if(chan.demod_type == SPECT_DEMOD || chan.demod_type == SPECT2_DEMOD){
-      // Another's spectrum channel: not one to mark, but its SSRC taken
+    bool const spectrum = chan.demod_type == SPECT_DEMOD || chan.demod_type == SPECT2_DEMOD;
+    if(!ours && spectrum){
+      // Another's spectrum channel: its SSRC taken, recorded before the
+      // clients' lock goes (in the allocator's order: the clients', then the
+      // channels'), so no viewer made meanwhile can take it
       int64_t const now = gps_time_ns();
       pthread_mutex_lock(&Chans_lock);
       int k = 0;
@@ -238,8 +238,10 @@ static void *status_thread(void *arg){
       Spectra[k].ssrc = ssrc;
       Spectra[k].seen = now;
       pthread_mutex_unlock(&Chans_lock);
-      continue;
     }
+    pthread_mutex_unlock(&Clients_lock);
+    if(ours || spectrum)
+      continue; // (others' spectrum channels aren't channels to mark)
     if(demod_name_from_type(chan.demod_type) == NULL)
       continue; // no demodulator (a channel timing out says so last): nothing to mark
     if(!(chan.tune.freq > 0))
