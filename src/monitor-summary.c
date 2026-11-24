@@ -54,10 +54,27 @@ void summary_reading(struct rx_summary *s,struct sum_reading const *r){
   f->have_prev = true;
   if(counted_up && r->samprate > 0)
     f->last_over = r->clocktime - (int64_t)((double)r->samp_since_over / r->samprate * BILLION_NS);
-  // After a gap in status, the overloads it counts may all be older than
-  // the window: if even the last of them was, none belong in it
-  if(overs > 0 && f->last_over != 0 && r->clocktime - f->last_over >= (int64_t)SUM_WINDOW_S * BILLION_NS)
+  // The overloads it counts happened by the last of them (known from the
+  // samples since it): they go in that time's bucket, to leave the window
+  // when it does, not when this status came (after a gap in status, they
+  // may all be older than the window: then none belong in it)
+  int64_t at = r->clocktime;
+  if(overs > 0 && f->last_over != 0 && f->last_over <= r->clocktime)
+    at = f->last_over;
+  if(overs > 0 && r->clocktime - at >= (int64_t)SUM_WINDOW_S * BILLION_NS)
     overs = 0;
+  if(overs > 0 && at != r->clocktime){
+    int64_t const oid = bucket_of(at);
+    int const o = (int)(oid % SUM_BUCKETS);
+    if(f->bucket[o].id != oid){ // (held an older ten seconds, gone from the window: reused)
+      f->bucket[o].id = oid;
+      f->bucket[o].peak = -INFINITY;
+      f->bucket[o].peak_time = 0;
+      f->bucket[o].overs = 0;
+    }
+    f->bucket[o].overs += overs;
+    overs = 0;
+  }
   int64_t const id = bucket_of(r->clocktime);
   int const i = (int)(id % SUM_BUCKETS);
   if(f->bucket[i].id != id){

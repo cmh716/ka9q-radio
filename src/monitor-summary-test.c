@@ -89,6 +89,16 @@ int main(void){
   check(summary_view(&Sum,2,T0 + 1801 * S,&v) && v.recent_overs == 0 && !v.recent_over && v.last_over == T0 + 600 * S,
 	"after a status gap, overloads known to be older than ten minutes: not counted recent");
 
+  // Codex: an increase whose last overload was 9 minutes before its status
+  // came: in the window now, gone about a minute later (not ten)
+  memset(Sum.fe,0,sizeof Sum.fe);
+  reading_at("late","late",T0,-30.0f,10,0);
+  reading_at("late","late",T0 + 900 * S,-30.0f,13,(uint64_t)540 * 50000000ull); // last one at 6:00
+  check(summary_view(&Sum,0,T0 + 901 * S,&v) && v.recent_overs == 3 && v.last_over == T0 + 360 * S,
+	"overloads 9 minutes old when their status came: counted while within ten minutes");
+  check(summary_view(&Sum,0,T0 + 980 * S,&v) && v.recent_overs == 0 && !v.recent_over,
+	"and gone once the last of them is ten minutes old");
+
   // Two receivers with no description, sharing a status group, from two
   // addresses (monitor keys them by both): kept apart
   memset(Sum.fe,0,sizeof Sum.fe);

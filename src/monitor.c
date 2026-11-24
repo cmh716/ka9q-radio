@@ -102,8 +102,8 @@ int Nfds;                     // Number of streams
 pthread_mutex_t Sess_mutex = PTHREAD_MUTEX_INITIALIZER;
 struct rx_summary Rx_summary = { .lock = PTHREAD_MUTEX_INITIALIZER };
 
-// An address, numerically (no name lookups on the status path)
-static void address_text(struct sockaddr_storage const *a,char *out,size_t size){
+// An address, numerically (no name lookups on the status path), with its port or not
+static void address_text(struct sockaddr_storage const *a,char *out,size_t size,bool with_port){
   char host[INET6_ADDRSTRLEN] = "";
   int port = 0;
   if(a->ss_family == AF_INET){
@@ -117,8 +117,10 @@ static void address_text(struct sockaddr_storage const *a,char *out,size_t size)
   }
   if(host[0] == '\0')
     out[0] = '\0'; // none
-  else
+  else if(with_port)
     snprintf(out,size,"%s:%d",host,port);
+  else
+    snprintf(out,size,"%s",host);
 }
 PaStream *Pa_Stream;          // Portaudio stream handle
 int inDevNum;                 // Portaudio's audio output device index
@@ -585,19 +587,16 @@ void *statproc(void *arg){
 	.overranges = sp->frontend.overranges,
 	.samp_since_over = sp->frontend.samp_since_over,
       };
-      // Which receiver: where its status comes from (each radiod its own
-      // address and port) and the status group it names (several can share one)
+      // Which receiver: the host its status comes from (not the port: a
+      // radiod's sockets, and a restarted radiod's, use others), the
+      // status group it names and its description (two on one host differ)
       char from[64],group[64] = "";
-      address_text(&sender,from,sizeof from);
-      address_text((struct sockaddr_storage const *)&sp->frontend.metadata_dest_socket,group,sizeof group);
-      snprintf(r.key,sizeof r.key,"%s %s",from,group);
+      address_text(&sender,from,sizeof from,false);
+      address_text((struct sockaddr_storage const *)&sp->frontend.metadata_dest_socket,group,sizeof group,true);
+      snprintf(r.key,sizeof r.key,"%s %s %.40s",from,group,sp->frontend.description);
       strlcpy(r.description,sp->frontend.description,sizeof r.description);
       if(isfinite(r.if_dbfs))
 	summary_reading(&Rx_summary,&r);
-      // The channel's frequency and label for the busiest list, taken here
-      // with its status (the display mustn't read them as this writes them)
-      summary_channel_label(&Rx_summary,(int)(sp - Sessions),sp->ssrc,sp->chan.tune.freq,
-			    sp->chan.dv.call_dest[0] ? sp->chan.dv.call_dest : sp->callsign);
     }
     // chan.output.power is in dBFS so no signal is -Infinity
     if(isnan(sp->chan.output.power) || !isfinite(sp->chan.output.power))
@@ -655,6 +654,12 @@ void *statproc(void *arg){
       } else if(sp->talkgroup_ended == 0)
 	sp->talkgroup_ended = gps_time_ns();
     }
+    // The channel's frequency and label for the busiest list, as this status
+    // and the lookups above make them (the display mustn't read them as this
+    // thread writes them): its name (repeater, or the call's talkgroup's), else
+    // the call's destination
+    summary_channel_label(&Rx_summary,(int)(sp - Sessions),sp->ssrc,sp->chan.tune.freq,
+			  sp->callsign[0] ? sp->callsign : sp->chan.dv.call_dest);
     // The call: held after it ends, for the dashboard, which draws under
     // Sess_mutex: its fields change together
     pthread_mutex_lock(&Sess_mutex);
