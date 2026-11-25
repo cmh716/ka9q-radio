@@ -563,5 +563,20 @@ check(all8['448.00000']['skip'] == '', 'the threshold from the time monitored, n
 check(all8['441.00000']['skip'] == '', 'at an old centre half the time: not taken for the DC spur')
 check(all8['447.10000']['skip'] == 'data or telemetry' and all8['447.30000']['skip'] == '',
       "a group's representative chosen among those not ruled out")
+# A wide signal's centre estimate on the next channel now and then: heard
+# apart, at its level, far less often: one signal
+log17 = os.path.join(d, 'log17.csv')
+with open(log17, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(110):
+        t = 30 + 31 * k + (k * k * 13) % 29
+        mhz = 446.60625 if k % 10 == 9 else 446.6     # off centre, now and then
+        stamp = f'2026-11-25 1{t // 3600}:{(t // 60) % 60:02d}:{t % 60:02d}Z'
+        w.writerow([stamp, stamp, f'{mhz:.4f}', f'{mhz:.5f}', '12.5', 4, 25, -80, '', ''])
+unk8 = os.path.join(d, 'unknowns8.csv')
+survey.main(['-a', log17, '--unknowns', unk8, sites])
+all9 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk8[:-4] + '-all.csv'))}
+check(all9['446.60625']['skip'].startswith('beside 446.60000, at its level'), "a wide signal's off-centre readings: one signal")
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

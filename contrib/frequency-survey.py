@@ -17,7 +17,8 @@ left out (heard under 30 times a day, the receiver's centre frequency
 (from activity's coverage file: its DC spur), splatter, 433.92 MHz
 devices, the input of a known output, data or telemetry, one event with a
 listed frequency or a stronger unknown, beside a busier one within
-12.5 kHz). Hints: regular intervals,
+12.5 kHz and one signal with it: heard while it was on, or at its level,
+within its width and a fifth as often or less). Hints: regular intervals,
 short bursts (data, telemetry), the band (433.92 MHz devices, 70 cm
 amateur, GMRS/FRS), a repeater input 5 MHz above a listed or configured
 output, splatter (mostly heard while a configured channel within 100 kHz
@@ -446,13 +447,26 @@ def triage(rows):
             if top is not r:
                 why = f"one event with {top['frequency_mhz']} (stronger)"
         if not why:
-            # Beside a busier one kept, and heard while it was on (mostly):
-            # one signal, read off its centre
+            # Beside a busier one kept, and one signal with it, read off its
+            # centre: heard while it was on (mostly); or, heard apart, at its
+            # level (3 dB), a fifth as often or less, and within its width
+            # (a wide signal's centre estimate wanders a channel or two)
             f = float(r['frequency_mhz'])
-            busier = next((k for k in kept if abs(float(k['frequency_mhz']) - f) <= 0.0125
-                           and overlap(r['_spans'], k['_spans']) >= 0.5), None)
-            if busier is not None:
-                why = f"beside {busier['frequency_mhz']}, heard while it was on (one signal, read off its centre?)"
+            for k in kept:
+                sep = abs(float(k['frequency_mhz']) - f) * 1e3  # kHz
+                if sep > 12.5:
+                    continue
+                if overlap(r['_spans'], k['_spans']) >= 0.5:
+                    why = f"beside {k['frequency_mhz']}, heard while it was on (one signal, read off its centre?)"
+                    break
+                try:
+                    width = float(k['width_khz'] or 0)
+                except ValueError:
+                    width = 0
+                if (abs(float(k['db_over_floor']) - float(r['db_over_floor'])) <= 3
+                        and k['transmissions'] >= 5 * r['transmissions'] and width >= 2 * sep):
+                    why = f"beside {k['frequency_mhz']}, at its level and within its width, far less often (its signal off centre?)"
+                    break
         r['skip'] = why
         if not why:
             kept.append(r)
