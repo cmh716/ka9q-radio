@@ -28,7 +28,8 @@
 //
 // The on-demand audit (-w, -a): frequencies to audit, from CSV lists (a
 // RadioReference download, the catalog's master.csv: their RX MHz /
-// Frequency Output column). A transmission heard within 5 kHz of one (the
+// Frequency Output column; a trunked system's site download, each site's
+// Frequencies). A transmission heard within 5 kHz of one (the
 // nearest) gets a channel in radiod for as long as it's busy: mode
 // "mixed" (analog FM with no tone squelch, and every digital mode), sent to
 // the audit group, where tone-survey measures its tone or digital IDs.
@@ -422,44 +423,50 @@ static void read_watch(char const *path){
   static char line[65536];
   char *field[256];
   int col = -1;
+  bool sites = false;
   if(fgets(line,sizeof line,fp) != NULL){
     char *h = line;
     if((unsigned char)h[0] == 0xef && (unsigned char)h[1] == 0xbb && (unsigned char)h[2] == 0xbf)
       h += 3; // (a byte order mark)
     int const n = csv_fields(h,field,256);
-    static char const *const names[] = {"RX MHz","Frequency Output","Frequency","RX Frequency"};
-    for(int k = 0; k < 4 && col < 0; k++)
+    static char const *const names[] = {"RX MHz","Frequency Output","Frequency","RX Frequency","Frequencies"};
+    for(int k = 0; k < 5 && col < 0; k++)
       for(int i = 0; i < n; i++)
 	if(strcmp(field[i],names[k]) == 0){
 	  col = i;
+	  sites = k == 4; // a trunked system's site download: its frequencies in this column and those after
 	  break;
 	}
   }
   if(col < 0){
-    fprintf(stderr,"%s: no RX MHz, Frequency Output, Frequency or RX Frequency column\n",path);
+    fprintf(stderr,"%s: no RX MHz, Frequency Output, Frequency, RX Frequency or Frequencies column\n",path);
     exit(EX_DATAERR);
   }
   int added = 0;
-  while(fgets(line,sizeof line,fp) != NULL){
+  bool full = false;
+  while(!full && fgets(line,sizeof line,fp) != NULL){
     int const n = csv_fields(line,field,256);
-    if(col >= n)
-      continue;
-    char *end;
-    double const mhz = strtod(field[col],&end);
-    if(end == field[col] || !(mhz > 0))
-      continue;
-    double const f = mhz * 1e6;
-    bool dup = false;
-    for(int i = 0; i < Nwatch && !dup; i++)
-      dup = fabs(Watch[i].freq - f) < 100;
-    if(dup)
-      continue;
-    if(Nwatch >= MAX_WATCH){
-      fprintf(stderr,"%s: more than %d frequencies to audit: the rest left out\n",path,MAX_WATCH);
-      break;
+    // One frequency a row; a site download's row, each of its site's
+    // ("452.0125c": a control channel, the letter ignored)
+    for(int c = col; c < (sites ? n : (col < n ? col + 1 : col)); c++){
+      char *end;
+      double const mhz = strtod(field[c],&end);
+      if(end == field[c] || !(mhz > 0))
+	continue;
+      double const f = mhz * 1e6;
+      bool dup = false;
+      for(int i = 0; i < Nwatch && !dup; i++)
+	dup = fabs(Watch[i].freq - f) < 100;
+      if(dup)
+	continue;
+      if(Nwatch >= MAX_WATCH){
+	fprintf(stderr,"%s: more than %d frequencies to audit: the rest left out\n",path,MAX_WATCH);
+	full = true;
+	break;
+      }
+      Watch[Nwatch++] = (struct watch){ .freq = f };
+      added++;
     }
-    Watch[Nwatch++] = (struct watch){ .freq = f };
-    added++;
   }
   fclose(fp);
   qsort(Watch,(size_t)Nwatch,sizeof Watch[0],by_watch);

@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Add on-air evidence from activity's log to candidate frequencies.
 
-  frequency-survey.py [-a activity.csv] [-u coverage.csv] [-o out.csv] [--range 422.1-469.1] candidates.csv
+  frequency-survey.py [-a activity.csv] [-u coverage.csv] [-o out.csv] [--range 422.1-469.1] [--tones results.csv] candidates.csv
+  frequency-survey.py [-a activity.csv] --unknowns out.csv list.csv ...
 
 The candidates: a RadioReference CSV download ("Frequency Output", "PL
-Output Tone", ...) or the frequency catalog's inbox.csv or master.csv
-("RX MHz", "RX Squelch Value", ...). The output is the same rows, with
+Output Tone", ...), a trunked system's site download (each site's
+frequencies: a row each), or the frequency catalog's inbox.csv or
+master.csv ("RX MHz", "RX Squelch Value", ...).
+
+With --unknowns OUT.csv and every list you have: instead, the log's
+channels heard 3 or more times that none of them has (nor a radiod channel,
+activity's known column), busiest first, with hints: regular intervals,
+short bursts (data, telemetry), the band (433.92 MHz devices, 70 cm
+amateur, GMRS/FRS), a repeater input 5 MHz above a listed or configured
+output. Each is something to look up (RadioReference's FCC
+search) or a list to download. The output is the same rows, with
 evidence added from activity's log (activity sees every carrier in its
 front end's coverage, whatever its tone, with no radiod configuration):
 transmissions, airtime, first and last heard, busiest hours, whether they
@@ -139,6 +149,175 @@ def rare_use(row):
     text = ' '.join(row.get(k) or '' for k in ('Service', 'Group', 'Tag', 'Agency/Category', 'Description',
                                                  'Alpha Tag', 'Name'))
     return bool(RARE.search(text))
+
+
+SITE_USE = {'c': 'control', 'a': 'alternate control'}
+
+
+def read_candidates(path):
+    """A list's fields and rows. A RadioReference trunked system's site
+    download ("Site Dec, ..., Frequencies" with each site's frequencies in
+    the columns after it, "452.0125c" a control channel) becomes a row per
+    frequency: the site's fields, its Frequency, and Channel use"""
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f, restkey='_more')
+        fields = list(reader.fieldnames or [])
+        rows = list(reader)
+    if 'Frequencies' not in fields:
+        return fields, rows
+    site = [k for k in fields if k != 'Frequencies']
+    out = []
+    for r in rows:
+        for text in [r.get('Frequencies') or ''] + list(r.get('_more') or []):
+            m = re.fullmatch(r'\s*(\d+(?:\.\d+)?)([a-z]?)\s*', text or '')
+            if not m:
+                continue
+            row = {k: r.get(k, '') for k in site}
+            row['Frequency'] = f'{float(m.group(1)):.6f}'
+            row['Channel use'] = SITE_USE.get(m.group(2), m.group(2))
+            out.append(row)
+    return site + ['Frequency', 'Channel use'], out
+
+
+def name_of(row):
+    for k in ('Alpha Tag', 'Name', 'Description'):
+        if (row.get(k) or '').strip():
+            return row[k].strip()
+    return ''
+
+
+GMRS_FRS = [462.5500 + 0.025 * k for k in range(8)] + [462.5625 + 0.025 * k for k in range(7)] + \
+    [467.5625 + 0.025 * k for k in range(7)] + [467.5500 + 0.025 * k for k in range(8)]
+
+
+def band_hint(hz):
+    """What a frequency's band says of it (UHF, the US; 421-430 MHz is land
+    mobile near Buffalo, Detroit and Cleveland), or ''"""
+    mhz = hz / 1e6
+    if abs(mhz - 433.92) <= 0.25:
+        return 'near 433.92: unlicensed devices (sensors, remotes) or 70 cm amateur'
+    if 420 <= mhz < 450 and not 421 <= mhz <= 430:
+        return '70 cm amateur band'
+    if any(abs(mhz - g) < 0.001 for g in GMRS_FRS):
+        return 'GMRS/FRS'
+    return ''
+
+
+def input_output(hz):
+    """A repeater input's output, 5 MHz below (UHF pairs: outputs 421-425,
+    450-455 and 460-465 MHz, inputs 5 MHz above), or None"""
+    mhz = hz / 1e6
+    if 426 <= mhz <= 430 or 455 <= mhz < 460 or 465 <= mhz <= 470:
+        return hz - 5000000
+    return None
+
+
+def unknowns(paths, activity_path):
+    """The log's channels no list has (within MATCH_HZ) and no radiod
+    channel was on (its known column): per 6.25 kHz channel, busiest first"""
+    listed = {}
+    for path in paths:
+        _, rows = read_candidates(path)
+        for r in rows:
+            f = frequency_of(r)
+            if f is not None:
+                listed.setdefault(round(f), name_of(r) or path)
+    keys = sorted(listed)
+    import bisect
+
+    def near(hz, within=MATCH_HZ):
+        k = bisect.bisect_left(keys, hz)
+        best = None
+        for j in (k - 1, k):
+            if 0 <= j < len(keys) and abs(keys[j] - hz) <= within and (best is None or abs(keys[j] - hz) < abs(best - hz)):
+                best = keys[j]
+        return best
+    chans = collections.defaultdict(list)
+    configured = set()
+    names = {}
+    levels = collections.defaultdict(list)  # configured channels' transmissions: (start, end, dBFS)
+    with open(activity_path, newline='') as f:
+        for r in csv.DictReader(f):
+            try:
+                ch = round(float(r['channel_mhz']) * 1e6)
+                start = parse_time(r['start'])
+                secs = float(r['seconds'])
+                over = float(r['db_over_floor'])
+                dbfs = float(r['dbfs'])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if (r.get('known') or '').strip():
+                configured.add(ch)
+                names.setdefault(ch, r['known'].strip())
+                levels[ch].append((start, start + datetime.timedelta(seconds=secs), dbfs))
+                continue
+            chans[ch].append((start, secs, over, dbfs, r.get('width_khz') or '', r.get('mode_guess') or ''))
+    conf = sorted(configured)
+    out = []
+    for ch, tx in chans.items():
+        if ch in configured or near(ch) is not None or len(tx) < 3:
+            continue
+        starts = [t[0] for t in tx]
+        airtime = sum(t[1] for t in tx)
+        avg = airtime / len(tx)
+        hints = []
+        p = pattern(starts)
+        if p:
+            hints.append(p)
+        if avg < 1.0:
+            hints.append('short bursts: data or telemetry')
+        b = band_hint(ch)
+        if b:
+            hints.append(b)
+        # Mostly heard while a configured channel within 100 kHz was on, 15 dB
+        # or more stronger (a transmitter nearby, the house's own): its
+        # splatter, maybe
+        k = bisect.bisect_left(conf, ch)
+        side = [c for c in conf[max(0, k - 4):k + 4] if abs(c - ch) <= 100000]
+        if side:
+            spans = sorted(x for c in side for x in levels[c])
+            starts_c = [x[0] for x in spans]
+            longest = max((x[1] - x[0] for x in spans), default=datetime.timedelta(0))
+            beside = collections.Counter()
+            for t in tx:
+                t_end = t[0] + datetime.timedelta(seconds=t[1])
+                j = bisect.bisect_right(starts_c, t_end)
+                i = bisect.bisect_left(starts_c, t[0] - longest)
+                for x in spans[i:j]:
+                    if x[1] >= t[0] and x[2] - t[3] >= 15:
+                        beside[min(side, key=lambda c: abs(c - ch))] += 1
+                        break
+            n = sum(beside.values())
+            if n >= len(tx) / 2:
+                c = beside.most_common(1)[0][0]
+                hints.append(f'{100 * n // len(tx)}% heard while {c / 1e6:.5f} ({names[c]}) was on, '
+                             f'15+ dB stronger, {abs(c - ch) / 1e3:.0f} kHz away: its splatter?')
+        # A repeater's input (mobiles), 5 MHz above its output
+        hz = input_output(ch)
+        if hz is not None:
+            k = near(hz, 3125)
+            if k is not None:
+                hints.append(f'input of {k / 1e6:.5f} ({listed[k]})')
+            elif any(abs(c - hz) <= 3125 for c in configured):
+                hints.append(f'input of {hz / 1e6:.5f} (configured)')
+            elif any(abs(c - hz) <= 3125 and len(chans[c]) >= 3 for c in chans):
+                hints.append(f'maybe input of {hz / 1e6:.5f} (also heard, unlisted)')
+        out.append({
+            'frequency_mhz': f'{ch / 1e6:.5f}',
+            'transmissions': len(tx),
+            'airtime_s': f'{airtime:.0f}',
+            'average_s': f'{avg:.1f}',
+            'first': min(starts).strftime('%Y-%m-%d %H:%M %Z'),
+            'last': max(starts).strftime('%Y-%m-%d %H:%M %Z'),
+            'busiest_hours': busiest_hours(starts),
+            'db_over_floor': f'{statistics.median(t[2] for t in tx):.0f}',
+            'dbfs': f'{statistics.median(t[3] for t in tx):.0f}',
+            'width_khz': collections.Counter(t[4] for t in tx).most_common(1)[0][0],
+            'mode_guess': collections.Counter(t[5] for t in tx).most_common(1)[0][0],
+            'hint': '; '.join(hints),
+        })
+    out.sort(key=lambda r: -r['transmissions'])
+    return out
 
 
 def read_activity(path):
@@ -339,13 +518,33 @@ def same_file(a, b):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('candidates')
+    ap.add_argument('candidates', nargs='+', help='a list of candidates (with --unknowns, every list you have)')
     ap.add_argument('-a', '--activity', default='activity.csv', help="activity's log")
     ap.add_argument('-u', '--coverage', help="activity's coverage file (default: the log's name with -coverage, if there)")
     ap.add_argument('-o', '--output', help='where the annotated rows go (default: <candidates>-survey.csv)')
     ap.add_argument('--range', help='the coverage, MHz: lo-hi (default: the span of the log)')
     ap.add_argument('--tones', help="tone-survey's results: each candidate's listed tone checked against what was heard")
+    ap.add_argument('--unknowns', metavar='OUT.csv',
+                    help="instead: the log's busiest channels that none of the lists (or radiod's channels) has")
     args = ap.parse_args(argv)
+    if args.unknowns:
+        for source in args.candidates + [args.activity]:
+            if same_file(args.unknowns, source):
+                sys.exit(f'{args.unknowns}: that is {source}, an input: give another output')
+        found = unknowns(args.candidates, args.activity)
+        with open(args.unknowns, 'w', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=list(found[0]) if found else ['frequency_mhz'])
+            w.writeheader()
+            w.writerows(found)
+        print(f'{len(found)} channels heard 3 or more times that no list has; the busiest:')
+        for r in found[:15]:
+            print(f"  {r['frequency_mhz']}  {r['transmissions']:6d} x {r['average_s']:>5} s  "
+                  f"+{r['db_over_floor']} dB  {r['busiest_hours']}  {r['hint']}")
+        print(f'written to {args.unknowns}')
+        return
+    if len(args.candidates) != 1:
+        sys.exit('one list at a time (several only with --unknowns)')
+    args.candidates = args.candidates[0]
 
     import os
     transmissions = read_activity(args.activity) if os.path.exists(args.activity) else []
@@ -356,10 +555,7 @@ def main(argv=None):
             sys.exit('--range lo-hi, in MHz')
         lo, hi = float(m.group(1)) * 1e6, float(m.group(2)) * 1e6
 
-    with open(args.candidates, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        fields = list(reader.fieldnames or [])
-        rows = list(reader)
+    fields, rows = read_candidates(args.candidates)
     cover_path = args.coverage or re.sub(r'(\.csv)?$', '-coverage.csv', args.activity, count=1)
     coverage = None
     if args.coverage or os.path.exists(cover_path):

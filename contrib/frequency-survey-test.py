@@ -378,5 +378,44 @@ check(rows21['a']['Transmissions'] == '2' and rows21['b']['Transmissions'] == '1
       'transmissions before the coverage file began counted')
 check(abs(float(rows21['quiet']['Monitored days']) - (9 * 3600 - 1 + 3600) / 86400) < 0.01,
       'watched: from the first transmission to the coverage, and the coverage')
+# A trunked system's site download: a row per frequency
+sites = os.path.join(d, 'trs_sites.csv')
+with open(sites, 'w', newline='') as f:
+    f.write('Site Dec,Site Hex,Description,County Name,Lat,Lon,Range,Frequencies\n')
+    f.write('001,1,"North","Niagara",43.1,-78.9,15,450.012500c,450.025000\n')
+    f.write('002,2,"South","Erie",42.8,-78.7,15,460.100000a\n')
+log10 = os.path.join(d, 'log10.csv')
+cols = ['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs', 'known', 'mode_guess']
+def tx(w, t, mhz, secs=2, dbfs=-90, known=''):
+    e = t + int(-(-secs // 1))
+    w.writerow([f'2026-11-25 10:{t // 60:02d}:{t % 60:02d}Z', f'2026-11-25 10:{e // 60:02d}:{e % 60:02d}Z',
+                f'{mhz:.4f}', f'{mhz:.5f}', '12.5', secs, '20', dbfs, known, ''])
+with open(log10, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for t in range(0, 10, 2):
+        tx(w, t, 450.0125)                          # listed (a site's)
+    for t in range(0, 50, 2):
+        tx(w, t, 463.2, secs=0.5)                   # unknown: short bursts
+    for t in range(0, 6, 2):
+        tx(w, t, 430.675)                           # unknown: 70 cm
+        tx(w, t + 100, 455.0125)                    # unknown: the input of 450.0125
+        tx(w, t + 200, 433.9, secs=3, dbfs=-40, known='HotSpot')  # configured, strong
+        tx(w, t + 200, 433.95, secs=1, dbfs=-80)    # beside it, while it's on: splatter
+out22 = os.path.join(d, 'out22.csv')
+survey.main(['-a', log10, '-o', out22, sites])
+rows22 = list(csv.DictReader(open(out22)))
+check(len(rows22) == 3 and rows22[0]['Frequency'] == '450.012500' and rows22[0]['Channel use'] == 'control'
+      and rows22[2]['Channel use'] == 'alternate control' and rows22[0]['Description'] == 'North'
+      and rows22[0]['Survey'] == survey.ACTIVE, "a site download: a row per frequency, its site's fields, its use")
+unk = os.path.join(d, 'unknowns.csv')
+survey.main(['-a', log10, '--unknowns', unk, sites, rr])
+u = {r['frequency_mhz']: r for r in csv.DictReader(open(unk))}
+check('450.01250' not in u and '433.90000' not in u, 'listed and configured channels are not unknown')
+check(u['463.20000']['transmissions'] == '25' and 'short bursts' in u['463.20000']['hint'], 'short bursts flagged')
+check('70 cm amateur' in u['430.67500']['hint'], '70 cm band flagged')
+check('input of 450.01250 (North)' in u['455.01250']['hint'], 'a repeater input, 5 MHz above a listed output')
+check('splatter' in u['433.95000']['hint'] and 'HotSpot' in u['433.95000']['hint'], 'heard while a stronger configured channel was on: splatter')
+check('input of' not in u['463.20000']['hint'], 'an output band frequency is no input')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
