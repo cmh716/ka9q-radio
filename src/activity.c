@@ -568,6 +568,7 @@ static void audit_read_results(void){
     return; // (not written yet)
   char line[4096];
   int done = 0;
+  int64_t const now = wall_ns();
   while(fgets(line,sizeof line,fp) != NULL){
     char *end;
     double const mhz = strtod(line,&end);
@@ -587,7 +588,8 @@ static void audit_read_results(void){
       if(n >= Audit_enough && !Watch[k].done){
 	Watch[k].done = true;
 	done++;
-	if(Watch[k].asked != 0){
+	if(Watch[k].asked != 0 && (double)(now - Watch[k].asked) / BILLION < Audit_life){
+	  // (a lease lapsed already: no command, which would make the channel anew)
 	  audit_close(&Watch[k]); // its channel goes now, for others
 	  if(Verbose)
 	    fprintf(stderr,"audit: %.5f MHz: enough results, its channel given to others\n",Watch[k].freq * 1e-6);
