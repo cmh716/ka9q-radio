@@ -386,10 +386,10 @@ with open(sites, 'w', newline='') as f:
     f.write('002,2,"South","Erie",42.8,-78.7,15,460.100000a\n')
 log10 = os.path.join(d, 'log10.csv')
 cols = ['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs', 'known', 'mode_guess']
-def tx(w, t, mhz, secs=2, dbfs=-90, known=''):
+def tx(w, t, mhz, secs=2, dbfs=-90, known='', over=20, day=25):
     e = t + int(-(-secs // 1))
-    w.writerow([f'2026-11-25 10:{t // 60:02d}:{t % 60:02d}Z', f'2026-11-25 10:{e // 60:02d}:{e % 60:02d}Z',
-                f'{mhz:.4f}', f'{mhz:.5f}', '12.5', secs, '20', dbfs, known, ''])
+    w.writerow([f'2026-11-{day} 10:{t // 60:02d}:{t % 60:02d}Z', f'2026-11-{day} 10:{e // 60:02d}:{e % 60:02d}Z',
+                f'{mhz:.4f}', f'{mhz:.5f}', '12.5', secs, over, dbfs, known, ''])
 with open(log10, 'w', newline='') as f:
     w = csv.writer(f)
     w.writerow(cols)
@@ -489,7 +489,8 @@ with open(log14, 'w', newline='') as f:
     for k in range(40):
         t = 1200 + 13 * k + (k * k * 7) % 11     # (not regular: that would be telemetry)
         tx(w, t, 441.1, secs=5)                    # voice-like, busy: ranked first
-        tx(w, t + 6, 441.1125, secs=2)             # 12.5 kHz beside it: one signal
+        tx(w, t + 6, 441.1125, secs=2)             # 12.5 kHz beside it, but heard apart: its own
+        tx(w, t + 1, 441.09375, secs=2)            # 6.25 kHz beside, heard while it's on: one signal
         if k < 20:
             tx(w, t + 3, 442.2, secs=3)            # ranked second
         tx(w, t + 1, 443.3, secs=0.5)              # bursts: data
@@ -499,9 +500,10 @@ unk5 = os.path.join(d, 'unknowns5.csv')
 survey.main(['-a', log14, '--unknowns', unk5, sites])
 short5 = list(csv.DictReader(open(unk5)))
 all5 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk5[:-4] + '-all.csv'))}
-check([r['frequency_mhz'] for r in short5] == ['441.10000', '442.20000'], 'the shortlist: worth looking up, by airtime')
-check(all5['441.11250']['skip'].startswith('beside 441.10000') and all5['443.30000']['skip'] == 'data or telemetry'
-      and all5['444.40000']['skip'].startswith('heard under'), 'the rest, each with its reason')
+check([r['frequency_mhz'] for r in short5] == ['441.10000', '441.11250', '442.20000'], 'the shortlist: worth looking up, by airtime')
+check(all5['441.09375']['skip'].startswith('beside 441.10000') and all5['441.11250']['skip'] == ''
+      and all5['443.30000']['skip'] == 'data or telemetry' and all5['444.40000']['skip'].startswith('heard under'),
+      'the rest, each with its reason; a neighbour heard apart is its own')
 # The receiver's centre (from the coverage file), and one event with a listed frequency
 with open(log14[:-4] + '-coverage.csv', 'w', newline='') as f:
     w = csv.writer(f)
@@ -522,5 +524,44 @@ unk6 = os.path.join(d, 'unknowns6.csv')
 survey.main(['-a', log15, '--unknowns', unk6, sites])
 all7 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk6[:-4] + '-all.csv'))}
 check(all7['447.70000']['skip'] == 'one event with 450.01250 (North)', 'one event with a listed frequency: left out')
+# The outputs mustn't be an input (the coverage too) or each other
+try:
+    survey.main(['-a', log14, '--unknowns', log14[:-4] + '-coverage.csv', sites])
+    check(False, 'the coverage file refused as an output')
+except SystemExit as e:
+    check('an input' in str(e), 'the coverage file refused as an output')
+try:
+    survey.main(['-a', log14, '--unknowns', os.path.join(d, 'x-all'), sites])   # its -all.csv: x-all-all.csv; fine
+    survey.main(['-a', log14, '--unknowns', os.path.join(d, 'y.csv'), '-u', os.path.join(d, 'y-all.csv'), sites])
+    check(False, 'an output that is the coverage (given with -u) refused')
+except SystemExit as e:
+    check('an input' in str(e), 'an output that is the coverage (given with -u) refused')
+# Monitored time per frequency (two hours a week apart: not 30 a day for 7 days);
+# the centre as tuned when heard; a group's representative among those not ruled out
+log16 = os.path.join(d, 'log16.csv')
+with open(log16, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for day in (18, 25):
+        for k in range(15):
+            t = 30 + 37 * k + (k * k * 13) % 29                  # (irregular: not telemetry)
+            tx(w, t, 448.0, secs=4, day=day)                     # 30 in two hours a week apart
+            tx(w, t + 2, 441.0, secs=4, day=day)                 # the first stretch's centre, heard in both
+    for k in range(12):
+        t = 30 + 37 * k + (k * k * 7) % 11
+        tx(w, t, 447.1, secs=0.5, over=40, day=25)              # strongest of a group, but data
+        tx(w, t, 447.3, secs=4, over=10, day=25)                # the group's only eligible member
+with open(log16[:-4] + '-coverage.csv', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-18 10:00:00Z', '2026-11-18 11:00:00Z', '440.00000', '442.00000'])   # centre 441.0
+    w.writerow(['2026-11-25 10:00:00Z', '2026-11-25 11:00:00Z', '440.00000', '458.00000'])   # centre 449.0
+unk7 = os.path.join(d, 'unknowns7.csv')
+survey.main(['-a', log16, '--unknowns', unk7, sites])
+all8 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk7[:-4] + '-all.csv'))}
+check(all8['448.00000']['skip'] == '', 'the threshold from the time monitored, not the span of the log')
+check(all8['441.00000']['skip'] == '', 'at an old centre half the time: not taken for the DC spur')
+check(all8['447.10000']['skip'] == 'data or telemetry' and all8['447.30000']['skip'] == '',
+      "a group's representative chosen among those not ruled out")
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

@@ -225,7 +225,10 @@ def input_output(hz):
     return None
 
 
-def unknowns(paths, activity_path, centres=()):
+def unknowns(paths, activity_path, coverage=None, tuned=()):
+    """coverage: activity's stretches (each frequency's monitored time);
+    tuned: the stretches it recorded itself (start, end, centre Hz): the
+    receiver's centre while each was heard"""
     """The log's channels no list has (within MATCH_HZ) and no radiod
     channel was on (its known column): per 6.25 kHz channel, busiest first"""
     listed = {}
@@ -271,6 +274,8 @@ def unknowns(paths, activity_path, centres=()):
     conf = sorted(configured)
     out = []
     first_heard = last_heard = None
+    tuned = sorted(tuned)
+    tuned_starts = [t[0] for t in tuned]
     for ch, tx in chans.items():
         if ch in configured or near(ch) is not None or len(tx) < 3:
             continue
@@ -278,8 +283,15 @@ def unknowns(paths, activity_path, centres=()):
         airtime = sum(t[1] for t in tx)
         avg = airtime / len(tx)
         hints = []
+        # At the receiver's centre (its DC spur), as it was tuned when heard:
+        # most of its transmissions within 12.5 kHz of the centre then
+        at_centre = 0
+        for t in tx:
+            k = bisect.bisect_right(tuned_starts, t[0]) - 1
+            if k >= 0 and tuned[k][0] <= t[0] <= tuned[k][1] and abs(ch - tuned[k][2]) <= 12500:
+                at_centre += 1
         flags = {'data': False, 'input': False, 'splatter': False, 'devices': False, 'event': None,
-                 'centre': any(abs(ch - c) <= 12500 for c in centres), 'known_peer': None}
+                 'centre': at_centre > len(tx) / 2, 'known_peer': None}
         p = pattern(starts)
         if p:
             hints.append(p)
@@ -367,23 +379,44 @@ def unknowns(paths, activity_path, centres=()):
             'hint': '; '.join(hints),
             '_flags': flags,
             '_airtime': airtime,
+            '_spans': sorted((t[0], t[0] + datetime.timedelta(seconds=t[1])) for t in tx),
+            '_hz': ch,
         })
         first_heard = min(first_heard, min(starts)) if first_heard else min(starts)
         last_heard = max(last_heard, max(starts)) if last_heard else max(starts)
     out.sort(key=lambda r: -r['transmissions'])
-    days = (last_heard - first_heard).total_seconds() / 86400 if out else 0
-    triage(out, days)
+    # Each one's monitored time: from the coverage, else the log's span
+    span = (last_heard - first_heard).total_seconds() if out else 0
+    for r in out:
+        r['_monitored'] = monitored_seconds(r['_hz'], coverage) if coverage is not None else span
+    triage(out)
     return out
 
 
-def triage(rows, days):
+def overlap(a, b):
+    """The share of transmissions a (sorted (start, end) spans) overlapping one of b"""
+    import bisect
+    if not a:
+        return 0
+    starts = [x[0] for x in b]
+    longest = max((x[1] - x[0] for x in b), default=datetime.timedelta(0))
+    n = 0
+    for s0, e0 in a:
+        i = bisect.bisect_left(starts, s0 - longest)
+        j = bisect.bisect_right(starts, e0)
+        if any(x[1] >= s0 for x in b[i:j]):
+            n += 1
+    return n / len(a)
+
+
+def triage(rows):
     """Which unknowns are worth looking up, and why the rest aren't: a
     'skip' reason for each, and a rank (by airtime) for the others"""
-    least = max(10, round(30 * days))  # 30 a day
     by_freq = {r['frequency_mhz']: r for r in rows}
-    kept = []
-    for r in sorted(rows, key=lambda r: -r['_airtime']):
+    # What rules a frequency out by itself
+    for r in rows:
         fl = r['_flags']
+        least = max(10, round(30 * r['_monitored'] / 86400))  # 30 a day it was watched
         why = ''
         if r['transmissions'] < least:
             why = f'heard under {least} times'
@@ -399,17 +432,27 @@ def triage(rows, days):
             why = 'data or telemetry'
         elif fl['known_peer']:
             why = f"one event with {fl['known_peer']}"
-        elif fl['event']:
-            # One event on several frequencies: only its strongest looked up
+        r['skip'] = why
+    kept = []
+    for r in sorted(rows, key=lambda r: -r['_airtime']):
+        why = r['skip']
+        fl = r['_flags']
+        if not why and fl['event']:
+            # One event on several frequencies: only its strongest looked up,
+            # of those not ruled out already
             members = [by_freq[f'{c / 1e6:.5f}'] for c in fl['event'] if f'{c / 1e6:.5f}' in by_freq] + [r]
+            members = [m for m in members if not m['skip'] or m is r]
             top = max(members, key=lambda m: (float(m['db_over_floor']), m['frequency_mhz']))
             if top is not r:
                 why = f"one event with {top['frequency_mhz']} (stronger)"
         if not why:
+            # Beside a busier one kept, and heard while it was on (mostly):
+            # one signal, read off its centre
             f = float(r['frequency_mhz'])
-            busier = next((k for k in kept if abs(float(k['frequency_mhz']) - f) <= 0.0125), None)
+            busier = next((k for k in kept if abs(float(k['frequency_mhz']) - f) <= 0.0125
+                           and overlap(r['_spans'], k['_spans']) >= 0.5), None)
             if busier is not None:
-                why = f"beside {busier['frequency_mhz']} (busier: one signal, read off its centre?)"
+                why = f"beside {busier['frequency_mhz']}, heard while it was on (one signal, read off its centre?)"
         r['skip'] = why
         if not why:
             kept.append(r)
@@ -628,19 +671,34 @@ def main(argv=None):
     ap.add_argument('--shortlist', type=int, default=40, help='how many to rank in OUT.csv (default 40)')
     args = ap.parse_args(argv)
     if args.unknowns:
-        for source in args.candidates + [args.activity]:
-            if same_file(args.unknowns, source):
-                sys.exit(f'{args.unknowns}: that is {source}, an input: give another output')
         everything = re.sub(r'(\.csv)?$', '-all.csv', args.unknowns, count=1)
-        for source in args.candidates + [args.activity]:
-            if same_file(everything, source):
-                sys.exit(f'{everything}: that is {source}, an input: give another output')
-        # The receiver's centre (a DC spur there): the middle of each
-        # stretch activity watched, from its coverage file
         import os
         cover_path = args.coverage or re.sub(r'(\.csv)?$', '-coverage.csv', args.activity, count=1)
-        centres = {round((lo + hi) / 2) for _, _, lo, hi in read_coverage(cover_path)} if os.path.exists(cover_path) else set()
-        found = unknowns(args.candidates, args.activity, centres)
+        have_cover = bool(args.coverage) or os.path.exists(cover_path)
+        inputs = args.candidates + [args.activity] + ([cover_path] if have_cover else [])
+        if same_file(args.unknowns, everything):
+            sys.exit(f'{args.unknowns} and {everything}: the same file: give another output')
+        for out_path in (args.unknowns, everything):
+            for source in inputs:
+                if same_file(out_path, source):
+                    sys.exit(f'{out_path}: that is {source}, an input: give another output')
+        # The coverage (each frequency's monitored time; the log before it
+        # began counted as watched, as for a survey), and the stretches
+        # activity recorded (the receiver's centre while each was heard)
+        coverage, tuned = None, []
+        if have_cover:
+            coverage = read_coverage(cover_path)
+            tuned = [(s0, e0, round((lo0 + hi0) / 2)) for s0, e0, lo0, hi0 in coverage]
+            transmissions = read_activity(args.activity)
+            if coverage and transmissions:
+                began = min(s0 for s0, _, _, _ in coverage)
+                before = [(hz, st) for hz, st, _, _ in transmissions if st < began - SLACK]
+                if before:
+                    coverage.append((min(t for _, t in before), began - datetime.timedelta(seconds=1),
+                                     min(hz for hz, _ in before), max(hz for hz, _ in before)))
+            if not coverage:
+                coverage = None
+        found = unknowns(args.candidates, args.activity, coverage, tuned)
         fields = ['rank', 'frequency_mhz', 'transmissions', 'airtime_s', 'average_s', 'first', 'last', 'busiest_hours',
                   'db_over_floor', 'dbfs', 'width_khz', 'mode_guess', 'hint', 'skip']
         short = sorted((r for r in found if r['rank'] != '' and r['rank'] <= args.shortlist), key=lambda r: r['rank'])
