@@ -469,6 +469,16 @@ static void send_command(uint8_t *buffer,uint8_t *bp);
 static uint32_t audit_ssrc(double f){
   return AUDIT_SSRC_BASE + (uint32_t)lrint(f / 125);
 }
+// A channel the audit holds, closed at once (a lifetime of one block)
+static void audit_close(struct watch *w){
+  uint8_t buffer[64],*bp = buffer;
+  *bp++ = CMD;
+  encode_int(&bp,OUTPUT_SSRC,audit_ssrc(w->freq));
+  encode_int(&bp,COMMAND_TAG,(uint32_t)random());
+  encode_int(&bp,LIFETIME,1);
+  send_command(buffer,bp);
+  w->asked = 0;
+}
 // Channels the audit holds now
 static int audit_busy(int64_t now){
   int busy = 0;
@@ -481,7 +491,7 @@ static int audit_busy(int64_t now){
 static int audit_refused(int64_t now,double secs){
   int n = 0;
   for(int k = 0; k < Nwatch; k++)
-    if(Watch[k].refused != 0 && (double)(now - Watch[k].refused) / BILLION < secs && now >= Watch[k].rest_until)
+    if(Watch[k].refused != 0 && !Watch[k].done && (double)(now - Watch[k].refused) / BILLION < secs && now >= Watch[k].rest_until)
       n++;
   return n;
 }
@@ -507,35 +517,15 @@ static void audit(double f,int64_t now){
       w = &Watch[k];
   if(w == NULL)
     return;
-  if(w->done){
-    if(w->asked != 0){
-      // Enough of it now: its channel goes at once, for others
-      uint8_t buffer[64],*bp = buffer;
-      *bp++ = CMD;
-      encode_int(&bp,OUTPUT_SSRC,audit_ssrc(w->freq));
-      encode_int(&bp,COMMAND_TAG,(uint32_t)random());
-      encode_int(&bp,LIFETIME,1);
-      send_command(buffer,bp);
-      w->asked = 0;
-      if(Verbose)
-	fprintf(stderr,"audit: %.5f MHz: enough results, its channel given to others\n",w->freq * 1e-6);
-    }
-    return;
-  }
+  if(w->done)
+    return; // (its channel closed as it was found done)
   if(now < w->rest_until)
     return; // its turn was had: others first
   bool const live = w->asked != 0 && (double)(now - w->asked) / BILLION < Audit_life;
   if(live && (double)(now - w->opened) / BILLION >= Audit_turn){
     if(audit_waiting(now)){
-      // Its turn is over, and others are waiting: its channel goes now
-      // (a lifetime of one block), and it rests
-      uint8_t buffer[64],*bp = buffer;
-      *bp++ = CMD;
-      encode_int(&bp,OUTPUT_SSRC,audit_ssrc(w->freq));
-      encode_int(&bp,COMMAND_TAG,(uint32_t)random());
-      encode_int(&bp,LIFETIME,1);
-      send_command(buffer,bp);
-      w->asked = 0;
+      // Its turn is over, and others are waiting: its channel goes now, and it rests
+      audit_close(w);
       w->rest_until = now + (int64_t)(Audit_rest * BILLION);
       if(Verbose)
 	fprintf(stderr,"audit: %.5f MHz: its turn over, its channel given to others\n",w->freq * 1e-6);
@@ -597,6 +587,11 @@ static void audit_read_results(void){
       if(n >= Audit_enough && !Watch[k].done){
 	Watch[k].done = true;
 	done++;
+	if(Watch[k].asked != 0){
+	  audit_close(&Watch[k]); // its channel goes now, for others
+	  if(Verbose)
+	    fprintf(stderr,"audit: %.5f MHz: enough results, its channel given to others\n",Watch[k].freq * 1e-6);
+	}
       }
   }
   fclose(fp);
