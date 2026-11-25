@@ -410,7 +410,7 @@ check(len(rows22) == 3 and rows22[0]['Frequency'] == '450.012500' and rows22[0][
       and rows22[0]['Survey'] == survey.ACTIVE, "a site download: a row per frequency, its site's fields, its use")
 unk = os.path.join(d, 'unknowns.csv')
 survey.main(['-a', log10, '--unknowns', unk, sites, rr])
-u = {r['frequency_mhz']: r for r in csv.DictReader(open(unk))}
+u = {r['frequency_mhz']: r for r in csv.DictReader(open(unk[:-4] + '-all.csv'))}
 check('450.01250' not in u and '433.90000' not in u, 'listed and configured channels are not unknown')
 check(u['463.20000']['transmissions'] == '25' and 'short bursts' in u['463.20000']['hint'], 'short bursts flagged')
 check('70 cm amateur' in u['430.67500']['hint'], '70 cm band flagged')
@@ -434,7 +434,7 @@ with open(log11, 'w', newline='') as f:
     tx(w, 470, 446.1, secs=2)                                      # (one alone)
 unk2 = os.path.join(d, 'unknowns2.csv')
 survey.main(['-a', log11, '--unknowns', unk2, sites])
-u2 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk2))}
+u2 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk2[:-4] + '-all.csv'))}
 check('440.08000 (Strong)' in u2['440.00000']['hint'] and '100% heard' in u2['440.00000']['hint'],
       'splatter named after the channel that was on and stronger, 80 kHz away past five nearer ones')
 check('447.20000' in u2['446.10000']['hint'] and '449.30000' in u2['446.10000']['hint'] and 'one event' in u2['446.10000']['hint'],
@@ -460,7 +460,7 @@ with open(log12, 'w', newline='') as f:
             tx(w, t, 446.5)
 unk3 = os.path.join(d, 'unknowns3.csv')
 survey.main(['-a', log12, '--unknowns', unk3, sites])
-u3 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk3))}
+u3 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk3[:-4] + '-all.csv'))}
 h = u3['445.10000']['hint']
 check('80%' in h and 'together 60%' in h and 'one event' not in h, 'two 80% pairs, 60% together: each given, not one event')
 check('one event' in u3['446.50000']['hint'] and '100%' in u3['446.50000']['hint'], 'several starts in a second count once')
@@ -479,7 +479,48 @@ with open(log13, 'w', newline='') as f:
             tx(w, t, 448.6)                            # a fifth: 8 of 10, all five together 7
 unk4 = os.path.join(d, 'unknowns4.csv')
 survey.main(['-a', log13, '--unknowns', unk4, sites])
-h = {r['frequency_mhz']: r for r in csv.DictReader(open(unk4))}['448.10000']['hint']
+h = {r['frequency_mhz']: r for r in csv.DictReader(open(unk4[:-4] + '-all.csv'))}['448.10000']['hint']
 check('and 1 more' in h and 'together 70%' in h and 'one event' not in h, 'the joint figure counts the peer not shown')
+# The shortlist: worth looking up, ranked by airtime; the rest with a reason
+log14 = os.path.join(d, 'log14.csv')
+with open(log14, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(40):
+        t = 1200 + 13 * k + (k * k * 7) % 11     # (not regular: that would be telemetry)
+        tx(w, t, 441.1, secs=5)                    # voice-like, busy: ranked first
+        tx(w, t + 6, 441.1125, secs=2)             # 12.5 kHz beside it: one signal
+        if k < 20:
+            tx(w, t + 3, 442.2, secs=3)            # ranked second
+        tx(w, t + 1, 443.3, secs=0.5)              # bursts: data
+    for k in range(4):
+        tx(w, 2000 + 5 * k, 444.4, secs=3)         # too seldom
+unk5 = os.path.join(d, 'unknowns5.csv')
+survey.main(['-a', log14, '--unknowns', unk5, sites])
+short5 = list(csv.DictReader(open(unk5)))
+all5 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk5[:-4] + '-all.csv'))}
+check([r['frequency_mhz'] for r in short5] == ['441.10000', '442.20000'], 'the shortlist: worth looking up, by airtime')
+check(all5['441.11250']['skip'].startswith('beside 441.10000') and all5['443.30000']['skip'] == 'data or telemetry'
+      and all5['444.40000']['skip'].startswith('heard under'), 'the rest, each with its reason')
+# The receiver's centre (from the coverage file), and one event with a listed frequency
+with open(log14[:-4] + '-coverage.csv', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-25 10:00:00Z', '2026-11-25 11:00:00Z', '440.10000', '442.10000'])   # centre 441.1
+survey.main(['-a', log14, '--unknowns', unk5, sites])
+all6 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk5[:-4] + '-all.csv'))}
+check(all6['441.10000']['skip'].startswith("the receiver's centre"), "the receiver's centre frequency left out")
+log15 = os.path.join(d, 'log15.csv')
+with open(log15, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(20):
+        t = 1200 + 13 * k + (k * k * 7) % 11
+        tx(w, t, 447.7, secs=5)
+        tx(w, t, 450.0125, secs=5)                 # listed (North), always with it
+unk6 = os.path.join(d, 'unknowns6.csv')
+survey.main(['-a', log15, '--unknowns', unk6, sites])
+all7 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk6[:-4] + '-all.csv'))}
+check(all7['447.70000']['skip'] == 'one event with 450.01250 (North)', 'one event with a listed frequency: left out')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

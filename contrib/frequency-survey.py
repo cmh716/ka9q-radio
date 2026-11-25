@@ -11,7 +11,13 @@ master.csv ("RX MHz", "RX Squelch Value", ...).
 
 With --unknowns OUT.csv and every list you have: instead, the log's
 channels heard 3 or more times that none of them has (nor a radiod channel,
-activity's known column), busiest first, with hints: regular intervals,
+activity's known column). OUT.csv: the ones worth looking up, ranked by
+airtime (--shortlist, 40); OUT-all.csv: every one, with why the rest were
+left out (heard under 30 times a day, the receiver's centre frequency
+(from activity's coverage file: its DC spur), splatter, 433.92 MHz
+devices, the input of a known output, data or telemetry, one event with a
+listed frequency or a stronger unknown, beside a busier one within
+12.5 kHz). Hints: regular intervals,
 short bursts (data, telemetry), the band (433.92 MHz devices, 70 cm
 amateur, GMRS/FRS), a repeater input 5 MHz above a listed or configured
 output, splatter (mostly heard while a configured channel within 100 kHz
@@ -219,7 +225,7 @@ def input_output(hz):
     return None
 
 
-def unknowns(paths, activity_path):
+def unknowns(paths, activity_path, centres=()):
     """The log's channels no list has (within MATCH_HZ) and no radiod
     channel was on (its known column): per 6.25 kHz channel, busiest first"""
     listed = {}
@@ -264,6 +270,7 @@ def unknowns(paths, activity_path):
             chans[ch].append((start, secs, over, dbfs, r.get('width_khz') or '', r.get('mode_guess') or ''))
     conf = sorted(configured)
     out = []
+    first_heard = last_heard = None
     for ch, tx in chans.items():
         if ch in configured or near(ch) is not None or len(tx) < 3:
             continue
@@ -271,14 +278,19 @@ def unknowns(paths, activity_path):
         airtime = sum(t[1] for t in tx)
         avg = airtime / len(tx)
         hints = []
+        flags = {'data': False, 'input': False, 'splatter': False, 'devices': False, 'event': None,
+                 'centre': any(abs(ch - c) <= 12500 for c in centres), 'known_peer': None}
         p = pattern(starts)
         if p:
             hints.append(p)
+            flags['data'] = True
         if avg < 1.0:
             hints.append('short bursts: data or telemetry')
+            flags['data'] = True
         b = band_hint(ch)
         if b:
             hints.append(b)
+            flags['devices'] = b.startswith('near 433.92')
         # Mostly heard while a configured channel within 100 kHz was on, 15 dB
         # or more stronger (a transmitter nearby, the house's own): its
         # splatter, maybe
@@ -298,6 +310,7 @@ def unknowns(paths, activity_path):
             if beside:
                 c, n = beside.most_common(1)[0]
                 if n >= len(tx) / 2:
+                    flags['splatter'] = True
                     hints.append(f'{100 * n // len(tx)}% heard while {c / 1e6:.5f} ({names[c]}) was on, '
                                  f'15+ dB stronger, {abs(c - ch) / 1e3:.0f} kHz away: its splatter?')
         # Starting in the same second as other channels, nearly every time:
@@ -320,6 +333,8 @@ def unknowns(paths, activity_path):
                 # not shown too), as often
                 joint = sum(1 for s0 in seconds if all(c in by_second[s0] for c in group))
                 if joint >= 0.8 * len(seconds):
+                    flags['event'] = set(group)
+                    flags['known_peer'] = next((label(c) for c in group if c in listed or c in names), None)
                     hints.append(f'starts in the same second as {peers}; all together {100 * joint // len(seconds)}%: '
                                  'one event; one of them may be a station, the rest its spurious or receiver '
                                  'products (or a linked pair)')
@@ -331,8 +346,10 @@ def unknowns(paths, activity_path):
             k = near(hz, 3125)
             if k is not None:
                 hints.append(f'input of {k / 1e6:.5f} ({listed[k]})')
+                flags['input'] = True
             elif any(abs(c - hz) <= 3125 for c in configured):
                 hints.append(f'input of {hz / 1e6:.5f} (configured)')
+                flags['input'] = True
             elif any(abs(c - hz) <= 3125 and len(chans[c]) >= 3 for c in chans):
                 hints.append(f'maybe input of {hz / 1e6:.5f} (also heard, unlisted)')
         out.append({
@@ -348,9 +365,57 @@ def unknowns(paths, activity_path):
             'width_khz': collections.Counter(t[4] for t in tx).most_common(1)[0][0],
             'mode_guess': collections.Counter(t[5] for t in tx).most_common(1)[0][0],
             'hint': '; '.join(hints),
+            '_flags': flags,
+            '_airtime': airtime,
         })
+        first_heard = min(first_heard, min(starts)) if first_heard else min(starts)
+        last_heard = max(last_heard, max(starts)) if last_heard else max(starts)
     out.sort(key=lambda r: -r['transmissions'])
+    days = (last_heard - first_heard).total_seconds() / 86400 if out else 0
+    triage(out, days)
     return out
+
+
+def triage(rows, days):
+    """Which unknowns are worth looking up, and why the rest aren't: a
+    'skip' reason for each, and a rank (by airtime) for the others"""
+    least = max(10, round(30 * days))  # 30 a day
+    by_freq = {r['frequency_mhz']: r for r in rows}
+    kept = []
+    for r in sorted(rows, key=lambda r: -r['_airtime']):
+        fl = r['_flags']
+        why = ''
+        if r['transmissions'] < least:
+            why = f'heard under {least} times'
+        elif fl['centre']:
+            why = "the receiver's centre frequency (its DC spur)"
+        elif fl['splatter']:
+            why = 'splatter'
+        elif fl['devices']:
+            why = '433.92 MHz devices'
+        elif fl['input']:
+            why = 'input of a known output'
+        elif fl['data']:
+            why = 'data or telemetry'
+        elif fl['known_peer']:
+            why = f"one event with {fl['known_peer']}"
+        elif fl['event']:
+            # One event on several frequencies: only its strongest looked up
+            members = [by_freq[f'{c / 1e6:.5f}'] for c in fl['event'] if f'{c / 1e6:.5f}' in by_freq] + [r]
+            top = max(members, key=lambda m: (float(m['db_over_floor']), m['frequency_mhz']))
+            if top is not r:
+                why = f"one event with {top['frequency_mhz']} (stronger)"
+        if not why:
+            f = float(r['frequency_mhz'])
+            busier = next((k for k in kept if abs(float(k['frequency_mhz']) - f) <= 0.0125), None)
+            if busier is not None:
+                why = f"beside {busier['frequency_mhz']} (busier: one signal, read off its centre?)"
+        r['skip'] = why
+        if not why:
+            kept.append(r)
+            r['rank'] = len(kept)
+        else:
+            r['rank'] = ''
 
 
 def read_activity(path):
@@ -558,22 +623,46 @@ def main(argv=None):
     ap.add_argument('--range', help='the coverage, MHz: lo-hi (default: the span of the log)')
     ap.add_argument('--tones', help="tone-survey's results: each candidate's listed tone checked against what was heard")
     ap.add_argument('--unknowns', metavar='OUT.csv',
-                    help="instead: the log's busiest channels that none of the lists (or radiod's channels) has")
+                    help="instead: the log's channels that none of the lists (or radiod's channels) has: "
+                         "OUT.csv the ones worth looking up, ranked; OUT-all.csv every one, with why the rest aren't")
+    ap.add_argument('--shortlist', type=int, default=40, help='how many to rank in OUT.csv (default 40)')
     args = ap.parse_args(argv)
     if args.unknowns:
         for source in args.candidates + [args.activity]:
             if same_file(args.unknowns, source):
                 sys.exit(f'{args.unknowns}: that is {source}, an input: give another output')
-        found = unknowns(args.candidates, args.activity)
+        everything = re.sub(r'(\.csv)?$', '-all.csv', args.unknowns, count=1)
+        for source in args.candidates + [args.activity]:
+            if same_file(everything, source):
+                sys.exit(f'{everything}: that is {source}, an input: give another output')
+        # The receiver's centre (a DC spur there): the middle of each
+        # stretch activity watched, from its coverage file
+        import os
+        cover_path = args.coverage or re.sub(r'(\.csv)?$', '-coverage.csv', args.activity, count=1)
+        centres = {round((lo + hi) / 2) for _, _, lo, hi in read_coverage(cover_path)} if os.path.exists(cover_path) else set()
+        found = unknowns(args.candidates, args.activity, centres)
+        fields = ['rank', 'frequency_mhz', 'transmissions', 'airtime_s', 'average_s', 'first', 'last', 'busiest_hours',
+                  'db_over_floor', 'dbfs', 'width_khz', 'mode_guess', 'hint', 'skip']
+        short = sorted((r for r in found if r['rank'] != '' and r['rank'] <= args.shortlist), key=lambda r: r['rank'])
         with open(args.unknowns, 'w', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=list(found[0]) if found else ['frequency_mhz'])
+            w = csv.DictWriter(f, fieldnames=fields[:-1], extrasaction='ignore')
+            w.writeheader()
+            w.writerows(short)
+        with open(everything, 'w', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
             w.writeheader()
             w.writerows(found)
-        print(f'{len(found)} channels heard 3 or more times that no list has; the busiest:')
-        for r in found[:15]:
-            print(f"  {r['frequency_mhz']}  {r['transmissions']:6d} x {r['average_s']:>5} s  "
+        worth = sum(1 for r in found if r['rank'] != '')
+        skipped = collections.Counter(re.sub(r' \(.*| [0-9]{3}\.[0-9]+.*', '', r['skip']).strip() for r in found if r['skip'])
+        print(f'{len(found)} channels heard 3 or more times that no list has; {worth} worth looking up '
+              f'(the {len(short)} with the most airtime in {args.unknowns}); the rest:')
+        for why, n in skipped.most_common():
+            print(f'  {n:5d}  {why}')
+        print('the first:')
+        for r in short[:15]:
+            print(f"  {r['rank']:3d}  {r['frequency_mhz']}  {r['transmissions']:6d} x {r['average_s']:>5} s  "
                   f"+{r['db_over_floor']} dB  {r['busiest_hours']}  {r['hint']}")
-        print(f'written to {args.unknowns}')
+        print(f'every one, with why it was left out: {everything}')
         return
     if len(args.candidates) != 1:
         sys.exit('one list at a time (several only with --unknowns)')
