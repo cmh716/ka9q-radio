@@ -310,12 +310,14 @@ def unknowns(paths, activity_path):
             together = collections.Counter()
             for s0 in seconds:
                 together.update(by_second[s0] - {ch})
-            group = [c for c, n in together.most_common() if n >= 0.8 * len(seconds)][:4]
+            group = [c for c, n in together.most_common() if n >= 0.8 * len(seconds)]
             if group:
                 def label(c):
                     return f'{c / 1e6:.5f}' + (f' ({listed[c]})' if c in listed else f' ({names[c]})' if c in names else '')
-                peers = ', '.join(f'{label(c)} {100 * together[c] // len(seconds)}%' for c in group)
-                # One event only if they start together, all of them, as often
+                peers = ', '.join(f'{label(c)} {100 * together[c] // len(seconds)}%' for c in group[:4]) \
+                    + (f' and {len(group) - 4} more' if len(group) > 4 else '')
+                # One event only if they start together, all of them (those
+                # not shown too), as often
                 joint = sum(1 for s0 in seconds if all(c in by_second[s0] for c in group))
                 if joint >= 0.8 * len(seconds):
                     hints.append(f'starts in the same second as {peers}; all together {100 * joint // len(seconds)}%: '

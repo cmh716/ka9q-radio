@@ -464,5 +464,22 @@ u3 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk3))}
 h = u3['445.10000']['hint']
 check('80%' in h and 'together 60%' in h and 'one event' not in h, 'two 80% pairs, 60% together: each given, not one event')
 check('one event' in u3['446.50000']['hint'] and '100%' in u3['446.50000']['hint'], 'several starts in a second count once')
+# The joint figure over every peer, not only the four shown
+log13 = os.path.join(d, 'log13.csv')
+with open(log13, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(10):
+        t = 1000 + 10 * k
+        tx(w, t, 448.1)
+        if k != 9:
+            for mhz in (448.2, 448.3, 448.4, 448.5):   # four peers: the same 9 of 10
+                tx(w, t, mhz)
+        if k not in (0, 1):
+            tx(w, t, 448.6)                            # a fifth: 8 of 10, all five together 7
+unk4 = os.path.join(d, 'unknowns4.csv')
+survey.main(['-a', log13, '--unknowns', unk4, sites])
+h = {r['frequency_mhz']: r for r in csv.DictReader(open(unk4))}['448.10000']['hint']
+check('and 1 more' in h and 'together 70%' in h and 'one event' not in h, 'the joint figure counts the peer not shown')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
