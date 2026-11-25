@@ -16,8 +16,9 @@ short bursts (data, telemetry), the band (433.92 MHz devices, 70 cm
 amateur, GMRS/FRS), a repeater input 5 MHz above a listed or configured
 output, splatter (mostly heard while a configured channel within 100 kHz
 was on, 15 dB or more stronger: that channel named), and one event on
-several frequencies (starting in the same second as others 80% of the
-time: spurious emissions, or products of strong signals in the receiver).
+several frequencies (starting in the same second as others in 80% of its
+seconds, all of them together: spurious emissions, or products of strong
+signals in the receiver).
 Each is something to look up (RadioReference's FCC search) or a list to
 download.
 
@@ -303,18 +304,25 @@ def unknowns(paths, activity_path):
         # one event on several frequencies (a transmitter's spurious
         # emissions, or products of strong signals in the receiver), not
         # stations of their own
-        if len(tx) >= 10:
+        # (seconds both ways: several starts in one logged second count once)
+        seconds = set(starts)
+        if len(seconds) >= 10:
             together = collections.Counter()
-            for s0 in set(starts):
+            for s0 in seconds:
                 together.update(by_second[s0] - {ch})
-            group = [c for c, n in together.most_common() if n >= 0.8 * len(tx)]
+            group = [c for c, n in together.most_common() if n >= 0.8 * len(seconds)][:4]
             if group:
-                named = [f'{c / 1e6:.5f}' + (f' ({listed[c]})' if c in listed else f' ({names[c]})' if c in names else '')
-                         for c in group[:4]]
-                hints.append(f'starts in the same second as {", ".join(named)}'
-                             + (f' and {len(group) - 4} more' if len(group) > 4 else '')
-                             + f' ({100 * together[group[0]] // len(tx)}%): one event; one of them may be a station, '
-                             'the rest its spurious or receiver products (or a linked pair)')
+                def label(c):
+                    return f'{c / 1e6:.5f}' + (f' ({listed[c]})' if c in listed else f' ({names[c]})' if c in names else '')
+                peers = ', '.join(f'{label(c)} {100 * together[c] // len(seconds)}%' for c in group)
+                # One event only if they start together, all of them, as often
+                joint = sum(1 for s0 in seconds if all(c in by_second[s0] for c in group))
+                if joint >= 0.8 * len(seconds):
+                    hints.append(f'starts in the same second as {peers}; all together {100 * joint // len(seconds)}%: '
+                                 'one event; one of them may be a station, the rest its spurious or receiver '
+                                 'products (or a linked pair)')
+                else:
+                    hints.append(f'starts in the same second as {peers} (each; together {100 * joint // len(seconds)}%)')
         # A repeater's input (mobiles), 5 MHz above its output
         hz = input_output(ch)
         if hz is not None:

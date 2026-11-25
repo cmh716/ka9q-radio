@@ -437,8 +437,32 @@ survey.main(['-a', log11, '--unknowns', unk2, sites])
 u2 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk2))}
 check('440.08000 (Strong)' in u2['440.00000']['hint'] and '100% heard' in u2['440.00000']['hint'],
       'splatter named after the channel that was on and stronger, 80 kHz away past five nearer ones')
-check('same second as 447.20000, 449.30000' in u2['446.10000']['hint'] or 'same second as 449.30000, 447.20000' in u2['446.10000']['hint'],
+check('447.20000' in u2['446.10000']['hint'] and '449.30000' in u2['446.10000']['hint'] and 'one event' in u2['446.10000']['hint'],
       'one event on several frequencies: grouped')
 check('same second' not in u2['440.00000']['hint'], 'too few transmissions: not grouped')
+# Pairwise coincidences aren't one event; several starts in a second count once
+log12 = os.path.join(d, 'log12.csv')
+with open(log12, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(10):
+        t = 600 + 10 * k
+        tx(w, t, 445.1)
+        if k not in (0, 1):
+            tx(w, t, 445.2)                 # B: 8 of 10
+        if k not in (8, 9):
+            tx(w, t, 445.3)                 # C: another 8 of 10: together 6
+    for k in range(10):                     # D: 14 starts in 10 seconds, E with each second
+        t = 800 + 10 * k
+        tx(w, t, 446.5)
+        tx(w, t, 446.6)
+        if k < 4:
+            tx(w, t, 446.5)
+unk3 = os.path.join(d, 'unknowns3.csv')
+survey.main(['-a', log12, '--unknowns', unk3, sites])
+u3 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk3))}
+h = u3['445.10000']['hint']
+check('80%' in h and 'together 60%' in h and 'one event' not in h, 'two 80% pairs, 60% together: each given, not one event')
+check('one event' in u3['446.50000']['hint'] and '100%' in u3['446.50000']['hint'], 'several starts in a second count once')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
