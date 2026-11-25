@@ -14,8 +14,14 @@ channels heard 3 or more times that none of them has (nor a radiod channel,
 activity's known column), busiest first, with hints: regular intervals,
 short bursts (data, telemetry), the band (433.92 MHz devices, 70 cm
 amateur, GMRS/FRS), a repeater input 5 MHz above a listed or configured
-output. Each is something to look up (RadioReference's FCC
-search) or a list to download. The output is the same rows, with
+output, splatter (mostly heard while a configured channel within 100 kHz
+was on, 15 dB or more stronger: that channel named), and one event on
+several frequencies (starting in the same second as others 80% of the
+time: spurious emissions, or products of strong signals in the receiver).
+Each is something to look up (RadioReference's FCC search) or a list to
+download.
+
+Otherwise, the output is the candidates' rows, with
 evidence added from activity's log (activity sees every carrier in its
 front end's coverage, whatever its tone, with no radiod configuration):
 transmissions, airtime, first and last heard, busiest hours, whether they
@@ -235,7 +241,8 @@ def unknowns(paths, activity_path):
     chans = collections.defaultdict(list)
     configured = set()
     names = {}
-    levels = collections.defaultdict(list)  # configured channels' transmissions: (start, end, dBFS)
+    levels = collections.defaultdict(list)  # configured channels' transmissions: (start, end, dBFS, channel)
+    by_second = collections.defaultdict(set)  # every channel starting a transmission in each second
     with open(activity_path, newline='') as f:
         for r in csv.DictReader(f):
             try:
@@ -249,8 +256,10 @@ def unknowns(paths, activity_path):
             if (r.get('known') or '').strip():
                 configured.add(ch)
                 names.setdefault(ch, r['known'].strip())
-                levels[ch].append((start, start + datetime.timedelta(seconds=secs), dbfs))
+                levels[ch].append((start, start + datetime.timedelta(seconds=secs), dbfs, ch))
+                by_second[start].add(ch)
                 continue
+            by_second[start].add(ch)
             chans[ch].append((start, secs, over, dbfs, r.get('width_khz') or '', r.get('mode_guess') or ''))
     conf = sorted(configured)
     out = []
@@ -272,26 +281,40 @@ def unknowns(paths, activity_path):
         # Mostly heard while a configured channel within 100 kHz was on, 15 dB
         # or more stronger (a transmitter nearby, the house's own): its
         # splatter, maybe
-        k = bisect.bisect_left(conf, ch)
-        side = [c for c in conf[max(0, k - 4):k + 4] if abs(c - ch) <= 100000]
+        side = conf[bisect.bisect_left(conf, ch - 100000):bisect.bisect_right(conf, ch + 100000)]
         if side:
             spans = sorted(x for c in side for x in levels[c])
             starts_c = [x[0] for x in spans]
             longest = max((x[1] - x[0] for x in spans), default=datetime.timedelta(0))
-            beside = collections.Counter()
+            beside = collections.Counter()  # by the channel that was on, and stronger
             for t in tx:
                 t_end = t[0] + datetime.timedelta(seconds=t[1])
                 j = bisect.bisect_right(starts_c, t_end)
                 i = bisect.bisect_left(starts_c, t[0] - longest)
-                for x in spans[i:j]:
-                    if x[1] >= t[0] and x[2] - t[3] >= 15:
-                        beside[min(side, key=lambda c: abs(c - ch))] += 1
-                        break
-            n = sum(beside.values())
-            if n >= len(tx) / 2:
-                c = beside.most_common(1)[0][0]
-                hints.append(f'{100 * n // len(tx)}% heard while {c / 1e6:.5f} ({names[c]}) was on, '
-                             f'15+ dB stronger, {abs(c - ch) / 1e3:.0f} kHz away: its splatter?')
+                sources = {x[3] for x in spans[i:j] if x[1] >= t[0] and x[2] - t[3] >= 15}
+                for c in sources:  # (each credited: one transmission can sit beside two)
+                    beside[c] += 1
+            if beside:
+                c, n = beside.most_common(1)[0]
+                if n >= len(tx) / 2:
+                    hints.append(f'{100 * n // len(tx)}% heard while {c / 1e6:.5f} ({names[c]}) was on, '
+                                 f'15+ dB stronger, {abs(c - ch) / 1e3:.0f} kHz away: its splatter?')
+        # Starting in the same second as other channels, nearly every time:
+        # one event on several frequencies (a transmitter's spurious
+        # emissions, or products of strong signals in the receiver), not
+        # stations of their own
+        if len(tx) >= 10:
+            together = collections.Counter()
+            for s0 in set(starts):
+                together.update(by_second[s0] - {ch})
+            group = [c for c, n in together.most_common() if n >= 0.8 * len(tx)]
+            if group:
+                named = [f'{c / 1e6:.5f}' + (f' ({listed[c]})' if c in listed else f' ({names[c]})' if c in names else '')
+                         for c in group[:4]]
+                hints.append(f'starts in the same second as {", ".join(named)}'
+                             + (f' and {len(group) - 4} more' if len(group) > 4 else '')
+                             + f' ({100 * together[group[0]] // len(tx)}%): one event; one of them may be a station, '
+                             'the rest its spurious or receiver products (or a linked pair)')
         # A repeater's input (mobiles), 5 MHz above its output
         hz = input_output(ch)
         if hz is not None:

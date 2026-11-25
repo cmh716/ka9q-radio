@@ -417,5 +417,28 @@ check('70 cm amateur' in u['430.67500']['hint'], '70 cm band flagged')
 check('input of 450.01250 (North)' in u['455.01250']['hint'], 'a repeater input, 5 MHz above a listed output')
 check('splatter' in u['433.95000']['hint'] and 'HotSpot' in u['433.95000']['hint'], 'heard while a stronger configured channel was on: splatter')
 check('input of' not in u['463.20000']['hint'], 'an output band frequency is no input')
+# Splatter credited to the channel that was on (not the nearest); one
+# beyond the four nearest still found; one event on several frequencies
+log11 = os.path.join(d, 'log11.csv')
+with open(log11, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k, mhz in enumerate([440.00625, 440.0125, 440.01875, 440.025, 440.03125]):
+        tx(w, 300 + k, mhz, secs=1, dbfs=-90, known=f'idle{k}')   # five near ones, idle when it matters
+    for t in range(0, 6, 2):
+        tx(w, t, 440.08, secs=3, dbfs=-40, known='Strong')         # 80 kHz away, on
+        tx(w, t, 440.0, secs=1, dbfs=-80)                          # the unknown
+    for t in range(400, 460, 4):                                   # three channels, always together
+        for mhz in (446.1, 447.2, 449.3):
+            tx(w, t, mhz, secs=2)
+    tx(w, 470, 446.1, secs=2)                                      # (one alone)
+unk2 = os.path.join(d, 'unknowns2.csv')
+survey.main(['-a', log11, '--unknowns', unk2, sites])
+u2 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk2))}
+check('440.08000 (Strong)' in u2['440.00000']['hint'] and '100% heard' in u2['440.00000']['hint'],
+      'splatter named after the channel that was on and stronger, 80 kHz away past five nearer ones')
+check('same second as 447.20000, 449.30000' in u2['446.10000']['hint'] or 'same second as 449.30000, 447.20000' in u2['446.10000']['hint'],
+      'one event on several frequencies: grouped')
+check('same second' not in u2['440.00000']['hint'], 'too few transmissions: not grouped')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
