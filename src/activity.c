@@ -2,7 +2,7 @@
 // frequencies configured or not, and log them.
 //
 //   activity [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m s]
-//            [-w watch.csv ... -a audit-group [-A max]] [-v] radiod-status-group
+//            [-w watch.csv ... -a audit-group [-A max] [-r results.csv [-N n]]] [-v] radiod-status-group
 //
 // A spectrum channel of its own in radiod covers the whole front end
 // (6.25 kHz bins), nominally four times a second, each the average of as
@@ -39,6 +39,9 @@
 // channels as are busy, at most -A (16) at once. The start of a
 // transmission (~half a second, as it's seen and the channel made) is
 // missed: CTCSS and DCS go on all through one; digital IDs are repeated.
+// With -r (tone-survey's results, read every minute), a frequency with -N
+// (10) transmissions judged is done: its channel goes, for those that
+// still need one (the busiest would otherwise keep the channels).
 //
 // Copyright 2026 ka9q-radio contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -94,9 +97,12 @@ static struct watch {
   int64_t opened;       // ns, when its turn began
   int64_t refused;      // ns, last heard while every channel was taken
   int64_t rest_until;   // ns, its turn over: others first until then
+  bool done;            // tone-survey has enough of it (-r): not audited
 } Watch[MAX_WATCH];     // sorted by frequency
 static int Nwatch;
 static bool Audit;
+static char const *Audit_results;      // tone-survey's results (-r): frequencies with enough aren't audited
+static int Audit_enough = 10;          // (-N) transmissions judged
 static struct sockaddr_storage Audit_dest;
 static int Audit_max = 16;
 // The audit's channels' SSRCs: from the frequency, 125 Hz steps (to 8 GHz)
@@ -501,6 +507,21 @@ static void audit(double f,int64_t now){
       w = &Watch[k];
   if(w == NULL)
     return;
+  if(w->done){
+    if(w->asked != 0){
+      // Enough of it now: its channel goes at once, for others
+      uint8_t buffer[64],*bp = buffer;
+      *bp++ = CMD;
+      encode_int(&bp,OUTPUT_SSRC,audit_ssrc(w->freq));
+      encode_int(&bp,COMMAND_TAG,(uint32_t)random());
+      encode_int(&bp,LIFETIME,1);
+      send_command(buffer,bp);
+      w->asked = 0;
+      if(Verbose)
+	fprintf(stderr,"audit: %.5f MHz: enough results, its channel given to others\n",w->freq * 1e-6);
+    }
+    return;
+  }
   if(now < w->rest_until)
     return; // its turn was had: others first
   bool const live = w->asked != 0 && (double)(now - w->asked) / BILLION < Audit_life;
@@ -545,6 +566,46 @@ static void audit(double f,int64_t now){
   encode_socket(&bp,OUTPUT_DATA_DEST_SOCKET,&Audit_dest);
   encode_int(&bp,LIFETIME,(int)lrint(Audit_life / Audit_blocktime));
   send_command(buffer,bp);
+}
+
+// tone-survey's results (frequency_mhz, transmissions, ...): a frequency
+// to audit with Audit_enough or more judged is done. Read every minute
+static void audit_read_results(void){
+  if(Audit_results == NULL)
+    return;
+  FILE *fp = fopen(Audit_results,"r");
+  if(fp == NULL)
+    return; // (not written yet)
+  char line[4096];
+  int done = 0;
+  while(fgets(line,sizeof line,fp) != NULL){
+    char *end;
+    double const mhz = strtod(line,&end);
+    if(end == line || *end != ',' || !(mhz > 0))
+      continue; // (the header)
+    long const n = strtol(end + 1,NULL,10);
+    double const f = mhz * 1e6;
+    int lo = 0,hi = Nwatch;
+    while(lo < hi){
+      int const mid = (lo + hi) / 2;
+      if(Watch[mid].freq < f - 100)
+	lo = mid + 1;
+      else
+	hi = mid;
+    }
+    for(int k = lo; k < Nwatch && Watch[k].freq <= f + 100; k++)
+      if(n >= Audit_enough && !Watch[k].done){
+	Watch[k].done = true;
+	done++;
+      }
+  }
+  fclose(fp);
+  if(Verbose && done > 0){
+    int all = 0;
+    for(int k = 0; k < Nwatch; k++)
+      all += Watch[k].done;
+    fprintf(stderr,"audit: %d more frequencies have %d results; %d of %d done\n",done,Audit_enough,all,Nwatch);
+  }
 }
 
 // --- transmissions ---
@@ -1091,7 +1152,7 @@ static double number(char const *text,char const *opt,double lo,double hi){
 
 static void usage(void){
   fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m seconds] [-S kHz] [-D dB]"
-	  " [-w watch.csv ... -a audit-group [-A max]] [-v] radiod-status-group\n",App_path);
+	  " [-w watch.csv ... -a audit-group [-A max] [-r results.csv [-N enough]]] [-v] radiod-status-group\n",App_path);
 }
 
 int main(int argc,char *argv[]){
@@ -1102,7 +1163,7 @@ int main(int argc,char *argv[]){
   char const *watches[32];
   int nwatches = 0;
   char const *audit_group = NULL;
-  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:w:a:A:v")) != -1){
+  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:w:a:A:r:N:v")) != -1){
     switch(ch){
     case 'c': if(nconfigs < 32) configs[nconfigs++] = optarg; break;
     case 'l': Log_path = optarg; break;
@@ -1115,6 +1176,8 @@ int main(int argc,char *argv[]){
     case 'w': if(nwatches < 32) watches[nwatches++] = optarg; break;
     case 'a': audit_group = optarg; break;
     case 'A': Audit_max = (int)number(optarg,"-A",1,256); break;
+    case 'r': Audit_results = optarg; break;
+    case 'N': Audit_enough = (int)number(optarg,"-N",1,1000000); break;
     case 'v': Verbose++; break;
     default: usage(); exit(EX_USAGE);
     }
@@ -1263,6 +1326,7 @@ int main(int argc,char *argv[]){
       cover_idle(now);
     }
     if(now - last_summary > 60 * (int64_t)BILLION){
+      audit_read_results();
       if(Audit && Verbose){
 	int const waiting = audit_refused(now,60);
 	fprintf(stderr,"audit: %d of %d channels in use%s",audit_busy(now),Audit_max,waiting ? "" : "\n");

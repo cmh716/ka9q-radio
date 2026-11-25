@@ -305,7 +305,8 @@ def tone_check(row, results):
             found = v
             break
     if found is None:
-        row['Tone check'] = 'not surveyed yet'
+        # (only a frequency with activity is audited: the rest wait for none)
+        row['Tone check'] = 'not surveyed yet' if row.get('Survey') == ACTIVE else ''
         return
     commonest, heard = found
     row['Heard'] = heard

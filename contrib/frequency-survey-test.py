@@ -313,7 +313,10 @@ check(rows17['424.12500']['Tone check'] == 'differs: heard 131.8 PL (listed 127.
       and rows17['424.12500']['Heard'] == '131.8 PL x2; none x1', '127.3 listed, 131.8 heard: differs, with what was heard')
 check(rows17['468.65625']['Tone check'] == 'no tone heard', 'nothing listed, none heard: no tone heard')
 check(rows17['425.00000']['Tone check'] == 'digital: P25 NAC 469 TG 10003', 'a digital call heard: its mode and IDs')
-check(rows17['468.65000']['Tone check'] == 'not surveyed yet', 'a frequency tone-survey has no results for: not surveyed yet')
+check(rows17['468.65000']['Tone check'] == ('not surveyed yet' if rows17['468.65000']['Survey'] == survey.ACTIVE else ''),
+      'no results: not surveyed yet if active, else nothing')
+check(all(r['Tone check'] == '' for r in rows17.values() if r['Survey'] != survey.ACTIVE and r['Heard'] == ''),
+      'a frequency with no activity: no tone check')
 # The catalog's form of the listed tone
 cat2 = os.path.join(d, 'cat2.csv')
 with open(cat2, 'w', newline='') as f:
