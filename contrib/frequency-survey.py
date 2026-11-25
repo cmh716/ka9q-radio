@@ -659,6 +659,39 @@ def tone_check(row, results):
         row['Tone check'] = f'differs: heard {commonest}' + (f' (listed {listed})' if listed else ' (none listed)')
 
 
+def write_csv(path, fields, rows):
+    """Written to a new file beside it, then renamed over it: a reader
+    (a Mac over Samba, caching by time and size) sees a new file, never a
+    stale or half written one"""
+    import os
+    import tempfile
+    path = os.path.realpath(path)  # (a symlink's target replaced, not the link)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.' + os.path.basename(path) + '.')
+    try:
+        with os.fdopen(fd, 'w', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+            w.writeheader()
+            w.writerows(rows)
+        try:
+            os.chmod(tmp, os.stat(path).st_mode & 0o7777)  # (an existing file's permissions kept)
+        except FileNotFoundError:
+            os.chmod(tmp, 0o666 & ~_umask())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _umask():
+    import os
+    m = os.umask(0)
+    os.umask(m)
+    return m
+
+
 def same_file(a, b):
     """Two paths naming one file (symlinks, spellings, hard links), existing or not"""
     import os
@@ -716,14 +749,8 @@ def main(argv=None):
         fields = ['rank', 'frequency_mhz', 'transmissions', 'airtime_s', 'average_s', 'first', 'last', 'busiest_hours',
                   'db_over_floor', 'dbfs', 'width_khz', 'mode_guess', 'hint', 'skip']
         short = sorted((r for r in found if r['rank'] != '' and r['rank'] <= args.shortlist), key=lambda r: r['rank'])
-        with open(args.unknowns, 'w', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=fields[:-1], extrasaction='ignore')
-            w.writeheader()
-            w.writerows(short)
-        with open(everything, 'w', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
-            w.writeheader()
-            w.writerows(found)
+        write_csv(args.unknowns, fields[:-1], short)
+        write_csv(everything, fields, found)
         worth = sum(1 for r in found if r['rank'] != '')
         skipped = collections.Counter(re.sub(r' \(.*| [0-9]{3}\.[0-9]+.*', '', r['skip']).strip() for r in found if r['skip'])
         print(f'{len(found)} channels heard 3 or more times that no list has; {worth} worth looking up '
@@ -780,10 +807,7 @@ def main(argv=None):
     for source in inputs:
         if same_file(out, source):
             sys.exit(f'{out}: that is {source}, an input: give another output')
-    with open(out, 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=fields + [e for e in EVIDENCE if e not in fields], extrasaction='ignore')
-        w.writeheader()
-        w.writerows(rows)
+    write_csv(out, fields + [e for e in EVIDENCE if e not in fields], rows)
     verdicts = collections.Counter(r.get('Survey', '').split(' (rare')[0] for r in rows)
     span = (f'{min(t[1] for t in transmissions):%Y-%m-%d %H:%M} to {max(t[2] for t in transmissions):%Y-%m-%d %H:%M}'
             if transmissions else 'none')
