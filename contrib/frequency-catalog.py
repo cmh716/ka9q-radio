@@ -64,7 +64,7 @@ def atomic_text(path, text):
             os.unlink(tmp)
 
 
-def write_csv(path, fields, rows):
+def csv_text(path, fields, rows):
     import io
     out = io.StringIO(newline='')
     rows = list(rows)
@@ -73,7 +73,39 @@ def write_csv(path, fields, rows):
     w = csv.DictWriter(out, fieldnames=fields, extrasaction='ignore')
     w.writeheader()
     w.writerows(rows)
-    atomic_text(path, out.getvalue())
+    return out.getvalue()
+
+
+def write_csv(path, fields, rows):
+    atomic_text(path, csv_text(path, fields, rows))
+
+
+def write_together(files):
+    """Several files, {path: text}, replaced together: every one written to a
+    temporary file beside it first, and only when all are written, each
+    renamed over its file. A failure writing leaves every file as it was"""
+    staged = []
+    try:
+        for path, text in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
+            staged.append((tmp, path))
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='') as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+        # (each destination a file, or none yet, before any is replaced: a
+        # rename over a folder would fail halfway)
+        for tmp, path in staged:
+            if os.path.exists(path) and not os.path.isfile(path):
+                raise OSError(f'{path}: not a file')
+        for tmp, path in staged:
+            os.replace(tmp, path)
+        staged = []
+    finally:
+        for tmp, _ in staged:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
 
 def mhz(value, optional=False):
@@ -438,8 +470,8 @@ def correct(args):
     rows = read_csv(args.corrections, ['ID', 'Action', 'Field', 'From', 'To'])
     changed, removed = plan_corrections(w, master, ignored, rows)
     backup = snapshot(w)
-    write_csv(w / 'master.csv', FIELDS, master.values())
-    write_csv(w / 'ignored.csv', FIELDS, ignored.values())
+    write_together({w / 'master.csv': csv_text(w / 'master.csv', FIELDS, master.values()),
+                    w / 'ignored.csv': csv_text(w / 'ignored.csv', FIELDS, ignored.values())})
     print(f'Changed {len(changed - removed)}; removed {len(removed)} (to ignored.csv); master {len(master)}. Backup: {backup}')
 
 

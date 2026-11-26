@@ -169,5 +169,16 @@ c = d / 'c.conf'
 c.write_text('[a]\nmode = npm\nfreq = "450m0 451m0"\nfreq0 = "452m0"\nfreq9 = "453m0"\n')
 check(freqs.sections(c) == {('a', '450m0'), ('a', '451m0'), ('a', '452m0'), ('a', '453m0')}, 'freq0..freq9 read')
 
+# Files replaced together: a failure writing leaves all as they were
+a_ = d / 'one.txt'; b_ = d / 'sub'
+a_.write_text('old a')
+b_.mkdir(exist_ok=True)
+(b_ / 'two.txt').mkdir(exist_ok=True)   # (a folder where the file should go: its rename fails)
+try:
+    catalog.write_together({a_: 'new a', b_ / 'two.txt': 'new b'})
+    check(False, 'a failing batch write raises')
+except OSError:
+    pass
+check(a_.read_text() == 'old a' and not [p for p in d.glob('.one.txt*')], 'a failing batch write: the first file as it was, no temporary left')
 print('freqs tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

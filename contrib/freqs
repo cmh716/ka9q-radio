@@ -396,10 +396,13 @@ def apply(s):
     changed, removed = len(changed_ids - removed_ids), len(removed_ids)
     if changed or removed or added:
         backup = catalog.snapshot(s['catalog'])
-        catalog.write_csv(s['catalog'] / 'master.csv', catalog.FIELDS, master.values())
-        catalog.write_csv(s['catalog'] / 'ignored.csv', catalog.FIELDS, ignored.values())
-        catalog.write_csv(s['catalog'] / 'inbox.csv', catalog.INBOX, inbox.values())
-        catalog.save_state(s['catalog'], cstate)
+        w = s['catalog']
+        # (all four replaced together: a failure writing leaves the catalog as it was)
+        catalog.write_together({
+            w / 'master.csv': catalog.csv_text(w / 'master.csv', catalog.FIELDS, master.values()),
+            w / 'ignored.csv': catalog.csv_text(w / 'ignored.csv', catalog.FIELDS, ignored.values()),
+            w / 'inbox.csv': catalog.csv_text(w / 'inbox.csv', catalog.INBOX, inbox.values()),
+            w / 'import-state.json': json.dumps(cstate, indent=2, sort_keys=True) + '\n'})
         print(f'(the catalog as it was: {backup})')
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
     for r in rejected:
@@ -441,8 +444,8 @@ def config(s, write):
         catalog.export(argparse.Namespace(workspace=s['catalog'], profile=s['profile'], output=export))
         command = [sys.executable, str(HERE / 'rr2radiod.py'), '--base', str(s['base']), '-o', str(new_conf),
                    '-n', str(new_names)]
-        if s['base'].is_dir() and s['config'].resolve().parent == s['base'].resolve():
-            command += ['--replaces', s['config'].name]  # (the file this stands in for, left out of the base)
+        if s['base'].is_dir() and s['config'].exists() and s['config'].resolve().parent == s['base'].resolve():
+            command += ['--replaces', s['config'].name]  # (the file this stands in for, left out of the base; none yet: a new one)
         r = subprocess.run(command + [str(export)], capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit(r.stderr.strip() or 'rr2radiod failed')
