@@ -43,7 +43,10 @@
 // missed: CTCSS and DCS go on all through one; digital IDs are repeated.
 // With -r (tone-survey's results, read every minute), a frequency with -N
 // (10) transmissions judged is done: its channel goes, for those that
-// still need one (the busiest would otherwise keep the channels).
+// still need one (the busiest would otherwise keep the channels). With -U
+// n, a channel in no list heard n times in a day (a second or more, 50 kHz
+// wide at most, not the receiver's centre or 433.92 MHz) is audited too,
+// with spare channels: a listed one needing a channel takes one of theirs.
 //
 // Copyright 2026 ka9q-radio contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -100,11 +103,18 @@ static struct watch {
   int64_t refused;      // ns, last heard while every channel was taken
   int64_t rest_until;   // ns, its turn over: others first until then
   bool done;            // tone-survey has enough of it (-r): not audited
+  bool unlisted;        // in no list: busy enough to be audited too (-U), after the listed
 } Watch[MAX_WATCH];     // sorted by frequency
 static int Nwatch;
 static bool Audit;
 static char const *Audit_results;      // tone-survey's results (-r): frequencies with enough aren't audited
 static int Audit_enough = 10;          // (-N) transmissions judged
+// Unlisted channels (-U): heard this often in a day, audited too. Counted
+// on the 6.25 kHz raster, transmissions that look real only
+static int Unlisted_min;               // 0: off
+#define MAX_UNLISTED 4096
+static struct { double chan; int n; int64_t since; bool promoted; } Unlisted[MAX_UNLISTED];
+static int Nunlisted;
 static struct sockaddr_storage Audit_dest;
 static int Audit_max = 16;
 // The audit's channels' SSRCs: from the frequency, 125 Hz steps (to 8 GHz)
@@ -510,11 +520,8 @@ static int audit_refused(int64_t now,double secs){
 static bool audit_waiting(int64_t now){
   return audit_refused(now,10) > 0;
 }
-// A transmission at f, heard now: the nearest frequency to audit within
-// Known_hz gets its channel (asked for again every Audit_every s)
-static void audit(double f,int64_t now){
-  if(!Audit || Nwatch == 0)
-    return;
+// The frequency to audit nearest f, within Known_hz, or NULL
+static struct watch *watch_near(double f){
   int lo = 0,hi = Nwatch;
   while(lo < hi){
     int const mid = (lo + hi) / 2;
@@ -527,6 +534,46 @@ static void audit(double f,int64_t now){
   for(int k = lo - 1; k <= lo; k++)
     if(k >= 0 && k < Nwatch && fabs(Watch[k].freq - f) <= Known_hz && (w == NULL || fabs(Watch[k].freq - f) < fabs(w->freq - f)))
       w = &Watch[k];
+  return w;
+}
+
+// A transmission ended at chan, in no list (-U): counted, and once heard
+// Unlisted_min times in a day, its channel is audited too. Only what looks
+// real counts: a second or more, no wider than 50 kHz, not the receiver's
+// centre (its DC spur), not the 433.92 MHz devices' band
+static void unlisted_heard(double chan,double seconds,double width,int64_t now){
+  if(!Audit || Unlisted_min <= 0 || seconds < 1.0 || width > 50e3)
+    return;
+  if(fabs(chan - Fe_center) <= 12500 || fabs(chan - 433.92e6) <= 250e3 || watch_near(chan) != NULL)
+    return;
+  int k;
+  for(k = 0; k < Nunlisted; k++)
+    if(fabs(Unlisted[k].chan - chan) < 1)
+      break;
+  if(k == Nunlisted){
+    if(Nunlisted >= MAX_UNLISTED)
+      return;
+    Unlisted[Nunlisted++] = (typeof(Unlisted[0])){ .chan = chan, .since = now };
+  }
+  if((double)(now - Unlisted[k].since) / BILLION > 86400){
+    Unlisted[k].n = 0;  // a new day's count
+    Unlisted[k].since = now;
+  }
+  if(++Unlisted[k].n < Unlisted_min || Unlisted[k].promoted || Nwatch >= MAX_WATCH)
+    return;
+  Unlisted[k].promoted = true;
+  Watch[Nwatch++] = (struct watch){ .freq = chan, .unlisted = true };
+  qsort(Watch,(size_t)Nwatch,sizeof Watch[0],by_watch);
+  if(Verbose)
+    fprintf(stderr,"audit: %.5f MHz, in no list, heard %d times today: audited too\n",chan * 1e-6,Unlisted[k].n);
+}
+
+// A transmission at f, heard now: the nearest frequency to audit within
+// Known_hz gets its channel (asked for again every Audit_every s)
+static void audit(double f,int64_t now){
+  if(!Audit || Nwatch == 0)
+    return;
+  struct watch *w = watch_near(f);
   if(w == NULL)
     return;
   if(w->done)
@@ -549,8 +596,20 @@ static void audit(double f,int64_t now){
     return;
   if(!live){
     if(audit_busy(now) >= Audit_max){
-      w->refused = now; // (counted in the minute's line)
-      return;
+      // A listed one comes before the unlisted: one of theirs given up for it
+      struct watch *u = NULL;
+      if(!w->unlisted)
+	for(int k = 0; k < Nwatch; k++)
+	  if(Watch[k].unlisted && Watch[k].asked != 0 && (double)(now - Watch[k].asked) / BILLION < Audit_life
+	     && (u == NULL || Watch[k].opened < u->opened))
+	    u = &Watch[k];
+      if(u == NULL){
+	w->refused = now; // (counted in the minute's line)
+	return;
+      }
+      audit_close(u);
+      if(Verbose)
+	fprintf(stderr,"audit: %.5f MHz (in no list) gives its channel to %.5f MHz\n",u->freq * 1e-6,w->freq * 1e-6);
     }
     w->opened = now;
     if(Verbose)
@@ -765,6 +824,7 @@ static void close_tx(struct tx *t){
     printf("%s  %.4f MHz  %4.1f s  +%.0f dB  %s\n",when(t->start,a,sizeof a),t->freq * 1e-6,seconds,t->peak_over,
 	   known != NULL ? known : "UNKNOWN");
   tally(chan,seconds,t->start,t->last,t->peak_over,known);
+  unlisted_heard(chan,seconds,t->width,t->last);
 }
 
 static int by_chan(void const *a,void const *b){
@@ -1161,7 +1221,7 @@ static double number(char const *text,char const *opt,double lo,double hi){
 
 static void usage(void){
   fprintf(stderr,"Usage: %s [-c config ...] [-l log.csv] [-s summary.csv] [-u coverage.csv] [-t dB] [-m seconds] [-S kHz] [-D dB]"
-	  " [-w watch.csv ... -a audit-group [-A max] [-r results.csv [-N enough]]] [-v] radiod-status-group\n",App_path);
+	  " [-w watch.csv ... -a audit-group [-A max] [-r results.csv [-N enough]] [-U per-day]] [-v] radiod-status-group\n",App_path);
 }
 
 int main(int argc,char *argv[]){
@@ -1172,7 +1232,7 @@ int main(int argc,char *argv[]){
   char const *watches[32];
   int nwatches = 0;
   char const *audit_group = NULL;
-  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:w:a:A:r:N:v")) != -1){
+  while((ch = getopt(argc,argv,"c:l:s:u:t:m:S:D:w:a:A:r:N:U:v")) != -1){
     switch(ch){
     case 'c': if(nconfigs < 32) configs[nconfigs++] = optarg; break;
     case 'l': Log_path = optarg; break;
@@ -1187,6 +1247,7 @@ int main(int argc,char *argv[]){
     case 'A': Audit_max = (int)number(optarg,"-A",1,256); break;
     case 'r': Audit_results = optarg; break;
     case 'N': Audit_enough = (int)number(optarg,"-N",1,1000000); break;
+    case 'U': Unlisted_min = (int)number(optarg,"-U",1,1000000); break;
     case 'v': Verbose++; break;
     default: usage(); exit(EX_USAGE);
     }

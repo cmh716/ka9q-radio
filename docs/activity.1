@@ -3,7 +3,7 @@
 activity \- log transmissions anywhere in radiod's coverage, configured or not
 .SH SYNOPSIS
 .B activity
-.RI "[\-c config ...] [\-l log.csv] [\-s summary.csv] [\-u coverage.csv] [\-t dB] [\-m seconds] [\-S kHz] [\-D dB] [\-w watch.csv ... \-a audit-group [\-A max] [\-r results.csv [\-N n]]] [\-v] radiod-status-group"
+.RI "[\-c config ...] [\-l log.csv] [\-s summary.csv] [\-u coverage.csv] [\-t dB] [\-m seconds] [\-S kHz] [\-D dB] [\-w watch.csv ... \-a audit-group [\-A max] [\-r results.csv [\-N n]] [\-U per-day]] [\-v] radiod-status-group"
 .SH DESCRIPTION
 activity watches everything radiod's front end covers (a Fobos at 50 MHz:
 about 422 to 469 MHz) through a spectrum channel of its own, 6.25 kHz bins
@@ -117,6 +117,12 @@ busiest would otherwise hold them).
 .TP
 .BI "\-N " n
 Transmissions judged that are enough (default 10).
+.TP
+.BI "\-U " per-day
+Also audit a channel in no list once it has been heard this often in a day
+(on the 6.25 kHz raster, counting transmissions of a second or more, no wider
+than 50 kHz, away from the receiver's centre and 433.92 MHz). It uses spare
+audit channels only: a listed frequency needing a channel takes one of theirs.
 .TP
 .B "\-v"
 Print each transmission as it ends; twice, each spectrum's strongest bin.

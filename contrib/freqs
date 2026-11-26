@@ -13,7 +13,9 @@ the time. review turns it into proposals, one a row:
   Change   a catalog channel heard with another tone, or digital
   Remove   a catalog channel silent for days (not fire, EMS or other rare-use)
   Add      a downloaded listing (~/Frequencies/downloads) heard on the air, its
-           tone or mode confirmed, at a frequency the catalog doesn't have yet
+           tone or mode confirmed, at a frequency the catalog doesn't have yet;
+           or (with activity -U) a busy frequency in no list, its tone or mode
+           measured, under a placeholder name (Unknown 462.03125, Service Unknown)
 
 Type Approve or Reject in the Decision column, save, close the sheet, and
 run apply. Blank rows wait. A rejected proposal doesn't come back (unless
@@ -261,6 +263,44 @@ def choose(group):
     return None
 
 
+def unlisted_rows(s, found, results):
+    """Busy frequencies in no list, their tone or mode measured (activity -U
+    audited them): Add rows with a placeholder name, Service Unknown. found:
+    the unknowns report's rows, triaged (only those worth looking up)"""
+    out = []
+    for u in found:
+        if u['rank'] == '':
+            continue  # (left out: splatter, data, a product of another, too seldom...)
+        hz = round(float(u['frequency_mhz']) * 1e6)
+        heard = None
+        for k, v in results.items():
+            if abs(k - hz) <= 1000:
+                heard = v
+                break
+        if heard is None:
+            continue  # (not measured yet)
+        mhz = hz / 1e6
+        row = dict.fromkeys(catalog.FIELDS, '')
+        row.update({'ID': f'unlisted-{round(hz / 125)}', 'Name': f'Unknown {mhz:.5f}', 'RX MHz': f'{mhz:.6f}',
+                    'RX Mode': 'FM' if 'wide' in (u.get('mode_guess') or '') else 'FMN',
+                    'Service': 'Unknown', 'Group': 'unknown', 'Profiles': 'uhf', 'Receive Only': 'yes',
+                    'Operation': 'Unknown', 'Source': 'freqs: heard, in no list',
+                    'Description': f"heard {u['transmissions']} times, busiest {u['busiest_hours']}; first {u['first']}"})
+        row = catalog.upgrade(row)
+        judged = dict(row, Heard=heard[1])
+        verdict = add_verdict(judged)
+        if verdict is None:
+            continue
+        proposal, changes, why = verdict
+        row.update(changes)
+        proposal = proposal.replace('Add', 'Add (in no list)', 1).replace(' (listed none)', '').replace(' (listed FMN)', '').replace(' (listed FM)', '')
+        out.append({'Frequency': f'{mhz:.4f}', 'Name': row['Name'], 'Proposal': proposal,
+                    'Why': f"{why}; heard {u['transmissions']} times, {u['average_s']} s each, busiest {u['busiest_hours']}",
+                    'List': '(none)', 'Key': key_of('add', row['ID'], {k: row[k] for k in sorted(row)}),
+                    'Payload': json.dumps({'kind': 'add', 'row': row, 'source': row})})
+    return out
+
+
 def add_verdict(r):
     """A downloaded listing's case for adding: (proposal, field changes, why), or None"""
     kinds = survey.heard_kinds(r.get('Heard'))
@@ -323,7 +363,9 @@ def review(s, quiet=False):
     logged, transmissions, coverage = survey.evidence(str(s['activity']))
     results = survey.read_tones(str(s['tones'])) if s['tones'].exists() else {}
     days = days_watched(coverage, logged)
-    proposals = change_rows(s, transmissions, coverage, results) + add_rows(s, transmissions, coverage, results)
+    found = unknown_list(s, coverage)
+    proposals = (change_rows(s, transmissions, coverage, results) + add_rows(s, transmissions, coverage, results)
+                 + unlisted_rows(s, found, results))
     for p in proposals:
         if not p['Name']:
             p['Name'] = json.loads(p['Payload']).get('row', {}).get('Name', '')
@@ -348,19 +390,25 @@ def review(s, quiet=False):
         print(f'{days:.1f} days of evidence. {len(rows)} to decide in {sheet}: '
               f"{kinds['change']} to change, {kinds['remove']} to remove, {kinds['add']} to add.")
         print('Type Approve or Reject in the Decision column, save and close it, then: freqs apply')
-        unknown_summary(s, coverage)
+        unknown_summary(found, {r['Frequency'] for r in rows if r['List'] == '(none)'})
     return rows
 
 
-def unknown_summary(s, coverage):
-    """The busiest frequencies no list has: to look up, or a list to download"""
+def unknown_list(s, coverage):
+    """The unknowns report's rows: busy frequencies no list has, triaged"""
     lists = [str(s['catalog'] / 'master.csv')]
     for folder in (s['downloads'], s['sites']):
         if folder.is_dir():
             lists += sorted(str(p) for p in folder.glob('*.csv') if p.is_file())
     tuned = [(a, b, round((lo + hi) / 2)) for a, b, lo, hi in (coverage or [])]
-    found = survey.unknowns(lists, str(s['activity']), coverage, tuned)
-    worth = sorted((r for r in found if r['rank'] != ''), key=lambda r: r['rank'])
+    return survey.unknowns(lists, str(s['activity']), coverage, tuned)
+
+
+def unknown_summary(found, proposed):
+    """The busiest frequencies no list has (those not proposed already): to
+    look up, or a list to download"""
+    worth = sorted((r for r in found if r['rank'] != '' and f"{float(r['frequency_mhz']):.4f}" not in proposed),
+                   key=lambda r: r['rank'])
     if not worth:
         return
     print(f'{len(worth)} busy frequencies match no list. The busiest (look them up, or download their system\'s list):')

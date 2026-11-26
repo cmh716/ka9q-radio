@@ -13,7 +13,7 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/local/bin/activity -c %h/Frequencies/uhf.d -l %h/activity.csv -s %h/activity-summary.csv \
   -w %h/Frequencies/catalog/master.csv -w %h/Frequencies/downloads -w %h/Frequencies/downloads/sites \
-  -a tone-survey.local -r %h/tone-survey.csv fobos-uhf.local
+  -a tone-survey.local -r %h/tone-survey.csv -U 30 fobos-uhf.local
 Restart=always
 RestartSec=10
 

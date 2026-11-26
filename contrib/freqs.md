@@ -29,6 +29,10 @@ cd ~/ka9q-radio/contrib
      other rare-use channels are never proposed for removal.
    - **Add**: a downloaded listing heard on the air, with its tone or mode
      confirmed, at a frequency the catalog doesn't have.
+   - **Add (in no list)**: a busy frequency that no list has, with its tone or
+     mode measured, under a placeholder name such as `Unknown 462.03125` and
+     Service Unknown (its own `unknown` group in radiod). Rename it in
+     `master.csv` once you know what it is.
 
 3. Type **Approve** or **Reject** in the Decision column. Leave a row blank to
    decide later. Save, and close the sheet.
@@ -38,7 +42,10 @@ cd ~/ka9q-radio/contrib
    rebuilt radiod config would add and drop, then `freqs config --write` and
    restart radiod. The old config is backed up first.
 
-`freqs review` also lists the busiest frequencies that match no list. Look them
+activity measures busy frequencies that match no list too (`-U 30`: heard 30
+times in a day), using spare audit channels, after everything listed. Once
+measured, they're proposed as Add (in no list). `freqs review` also lists the
+busiest frequencies that match no list and aren't measured yet. Look them
 up (RadioReference's FCC search), or download the list of the system they
 belong to: once it's in `downloads/`, they can be proposed as additions.
 

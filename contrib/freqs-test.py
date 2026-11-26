@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import csv
+import datetime
 import importlib.util
 import io
 import os
@@ -73,6 +74,10 @@ with open(log, 'w', newline='') as f:
     for mhz in (453.475, 460.1, 461.2, 424.3):
         stamp = '2026-11-25 10:00:00Z'
         w.writerow([stamp, stamp, f'{mhz:.4f}', f'{mhz:.5f}', '12.5', 3, 20, -90, '', ''])
+    for k in range(100):  # in no list, busy (40 a day), irregular: audited by activity -U
+        t = 3600 * 24 + 1700 * k + (k * k * 97) % 1500
+        stamp = (datetime.datetime(2026, 11, 24, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=t)).strftime('%Y-%m-%d %H:%M:%SZ')
+        w.writerow([stamp, stamp, '455.5000', '455.50000', '12.5', 4, 20, -90, '', 'narrow'])
 with open(d / 'activity-coverage.csv', 'w', newline='') as f:
     w = csv.writer(f)
     w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
@@ -85,6 +90,7 @@ with open(tones, 'w', newline='') as f:
     w.writerow(['460.10000', '30', '', '', '151.4 PL', '151.4 PL x30'])
     w.writerow(['461.20000', '40', '', '', 'DMR TG 5', 'DMR TG 5 x40'])
     w.writerow(['424.30000', '40', '', '', 'P25 TG 1', 'P25 TG 1 x40'])
+    w.writerow(['455.50000', '30', '', '', '127.3 PL', '127.3 PL x30'])
 conf = d / 'freqs.conf'
 conf.write_text(f'[freqs]\ncatalog = {cat}\ndownloads = {downloads}\nsites = {downloads / "sites"}\n'
                 f'activity = {log}\ntones = {tones}\nbase = {d}\nconfig = {d / "conv.conf"}\nnames = {d / "names.csv"}\n')
@@ -97,12 +103,14 @@ check(by.get('Silent', {}).get('Proposal') == 'Remove', 'a silent one: remove')
 check(by.get('Twn Hwy', {}).get('Proposal') == 'Add (151.4 PL, as listed)', 'a download heard with its tone: add')
 check(by.get('Twn PD', {}).get('Proposal') == 'Add as DMR (listed FMN)', 'a download heard digital: add as that')
 check('Quiet' not in by and 'Trunk' not in by, 'neither the unheard nor a trunked system\'s channel proposed')
+check(by.get('Unknown 455.50000', {}).get('Proposal') == 'Add (in no list) with 127.3 PL',
+      'a busy frequency in no list, measured: added under a placeholder')
 
 # Approve the change and the tone add; reject the DMR add; leave the removal
 sheet = cat / 'review.csv'
 marked = []
 for r in catalog.read_csv(sheet):
-    r['Decision'] = {'Wrong tone': 'Approve', 'Twn Hwy': 'approve', 'Twn PD': 'Reject'}.get(r['Name'], '')
+    r['Decision'] = {'Wrong tone': 'Approve', 'Twn Hwy': 'approve', 'Twn PD': 'Reject', 'Unknown 455.50000': 'Approve'}.get(r['Name'], '')
     marked.append(r)
 catalog.write_csv(sheet, freqs.COLUMNS, marked)
 quiet(freqs.apply, s)
@@ -110,6 +118,8 @@ master = {r['Name']: r for r in catalog.read_csv(cat / 'master.csv')}
 check((master['Wrong tone']['RX Squelch Type'], master['Wrong tone']['RX Squelch Value']) == ('CTCSS', '127.3'), 'the change applied')
 check('Twn Hwy' in master and master['Twn Hwy']['RX Squelch Value'] == '151.4', 'the add applied')
 check('Twn PD' not in master and 'Silent' in master, 'the rejected not added; the undecided left')
+check(master.get('Unknown 455.50000', {}).get('Service') == 'Unknown' and master['Unknown 455.50000']['RX Squelch Value'] == '127.3',
+      'the unlisted one in the catalog: Service Unknown, its tone')
 left = {r['Name']: r for r in catalog.read_csv(sheet)}
 check(set(left) == {'Silent'}, 'the sheet afterwards: only the undecided; the rejected not proposed again')
 
