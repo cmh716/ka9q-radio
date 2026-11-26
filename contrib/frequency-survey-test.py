@@ -578,5 +578,23 @@ unk8 = os.path.join(d, 'unknowns8.csv')
 survey.main(['-a', log17, '--unknowns', unk8, sites])
 all9 = {r['frequency_mhz']: r for r in csv.DictReader(open(unk8[:-4] + '-all.csv'))}
 check(all9['446.60625']['skip'].startswith('beside 446.60000, at its level'), "a wide signal's off-centre readings: one signal")
+# A RepeaterBook export ("Output Freq") is read
+rb = os.path.join(d, 'rb.csv')
+with open(rb, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['Output Freq', 'Input Freq', 'Offset', 'Uplink Tone', 'Downlink Tone', 'Call', 'Location'])
+    w.writerow(['441.10000', '446.10000', '+5', '127.3', '127.3', 'N0CALL', 'Somewhere'])
+survey.main(['-a', log14, '--unknowns', os.path.join(d, 'unknowns9.csv'), rb])
+all10 = {r['frequency_mhz'] for r in csv.DictReader(open(os.path.join(d, 'unknowns9-all.csv')))}
+check('441.10000' not in all10, "a RepeaterBook export's Output Freq counts as listed")
+# A folder of lists: every .csv in it
+folder = os.path.join(d, 'lists')
+os.makedirs(folder, exist_ok=True)
+import shutil
+shutil.copy(rb, os.path.join(folder, 'rb.csv'))
+shutil.copy(sites, os.path.join(folder, 'trs_sites.csv'))
+survey.main(['-a', log14, '--unknowns', os.path.join(d, 'unknowns10.csv'), folder])
+all11 = {r['frequency_mhz'] for r in csv.DictReader(open(os.path.join(d, 'unknowns10-all.csv')))}
+check('441.10000' not in all11, 'a folder: its lists read')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

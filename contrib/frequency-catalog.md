@@ -136,9 +136,9 @@ that would reintroduce unwanted channels. Move personal corrections from the old
 that old file automatically. The initial setup does not replace any receiver files.
 
 To check candidates on the air before adding them to a listening profile,
-let activity(1) audit them (`-w list.csv -a tone-survey.local`) while
-tone-survey(1) records what each carries, then add the results to the list
-with `frequency-survey.py -a activity.csv --tones tone-survey.csv list.csv`.
+see [Checking frequency lists on the air](frequency-survey.md): activity(1)
+audits them as they're used, tone-survey(1) records what each carries, and
+frequency-survey.py reports on each list and on busy frequencies no list has.
 
 ## Current limits
 

@@ -26,7 +26,8 @@
 // minute, and rebuilt from the log at a restart) gives each channel's
 // transmissions, time, first and last heard.
 //
-// The on-demand audit (-w, -a): frequencies to audit, from CSV lists (a
+// The on-demand audit (-w, -a): frequencies to audit, from CSV lists (-w a
+// file, or a folder: every .csv in it) (a
 // RadioReference download, the catalog's master.csv: their RX MHz /
 // Frequency Output column; a trunked system's site download, each site's
 // Frequencies). A transmission heard within 5 kHz of one (the
@@ -429,17 +430,17 @@ static void read_watch(char const *path){
     if((unsigned char)h[0] == 0xef && (unsigned char)h[1] == 0xbb && (unsigned char)h[2] == 0xbf)
       h += 3; // (a byte order mark)
     int const n = csv_fields(h,field,256);
-    static char const *const names[] = {"RX MHz","Frequency Output","Frequency","RX Frequency","Frequencies"};
-    for(int k = 0; k < 5 && col < 0; k++)
+    static char const *const names[] = {"RX MHz","Frequency Output","Frequency","RX Frequency","Output Freq","Frequencies"};
+    for(int k = 0; k < 6 && col < 0; k++)
       for(int i = 0; i < n; i++)
 	if(strcmp(field[i],names[k]) == 0){
 	  col = i;
-	  sites = k == 4; // a trunked system's site download: its frequencies in this column and those after
+	  sites = k == 5; // a trunked system's site download: its frequencies in this column and those after
 	  break;
 	}
   }
   if(col < 0){
-    fprintf(stderr,"%s: no RX MHz, Frequency Output, Frequency, RX Frequency or Frequencies column\n",path);
+    fprintf(stderr,"%s: no RX MHz, Frequency Output, Frequency, RX Frequency, Output Freq or Frequencies column\n",path);
     exit(EX_DATAERR);
   }
   int added = 0;
@@ -471,6 +472,10 @@ static void read_watch(char const *path){
   fclose(fp);
   qsort(Watch,(size_t)Nwatch,sizeof Watch[0],by_watch);
   fprintf(stderr,"%s: %d frequencies to audit\n",path,added);
+}
+static int csv_only(struct dirent const *d){
+  size_t const len = strlen(d->d_name);
+  return d->d_name[0] != '.' && len > 4 && strcasecmp(d->d_name + len - 4,".csv") == 0;
 }
 static void send_command(uint8_t *buffer,uint8_t *bp);
 static uint32_t audit_ssrc(double f){
@@ -1220,8 +1225,26 @@ int main(int argc,char *argv[]){
     fprintf(stderr,"%s: -w (what to audit) and -a (the audit's group) go together\n",App_path);
     exit(EX_USAGE);
   }
-  for(int i = 0; i < nwatches; i++)
-    read_watch(watches[i]);
+  for(int i = 0; i < nwatches; i++){
+    // A folder: every .csv in it
+    struct stat st;
+    if(stat(watches[i],&st) == 0 && S_ISDIR(st.st_mode)){
+      struct dirent **list;
+      int const n = scandir(watches[i],&list,csv_only,alphasort);
+      if(n < 0){
+	fprintf(stderr,"%s: %s\n",watches[i],strerror(errno));
+	exit(EX_NOINPUT);
+      }
+      for(int k = 0; k < n; k++){
+	char path[4096];
+	snprintf(path,sizeof path,"%s/%s",watches[i],list[k]->d_name);
+	read_watch(path);
+	free(list[k]);
+      }
+      free(list);
+    } else
+      read_watch(watches[i]);
+  }
   if(audit_group != NULL){
     char iface[1024] = {0};
     if(name_mcast(audit_group,&Audit_dest,DEFAULT_RTP_PORT,iface,sizeof iface) != 0){

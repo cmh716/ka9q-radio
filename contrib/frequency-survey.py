@@ -148,7 +148,7 @@ def eligible_at(coverage, when, hz):
 
 def frequency_of(row):
     """A candidate's receive frequency in Hz, or None"""
-    for key in ('RX MHz', 'Frequency Output', 'Frequency', 'RX Frequency'):
+    for key in ('RX MHz', 'Frequency Output', 'Frequency', 'RX Frequency', 'Output Freq'):  # (the last: RepeaterBook)
         value = (row.get(key) or '').strip()
         if value:
             try:
@@ -706,7 +706,8 @@ def same_file(a, b):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('candidates', nargs='+', help='a list of candidates (with --unknowns, every list you have)')
+    ap.add_argument('candidates', nargs='+',
+                    help='a list of candidates (with --unknowns, every list you have: files, or folders of them)')
     ap.add_argument('-a', '--activity', default='activity.csv', help="activity's log")
     ap.add_argument('-u', '--coverage', help="activity's coverage file (default: the log's name with -coverage, if there)")
     ap.add_argument('-o', '--output', help='where the annotated rows go (default: <candidates>-survey.csv)')
@@ -717,6 +718,16 @@ def main(argv=None):
                          "OUT.csv the ones worth looking up, ranked; OUT-all.csv every one, with why the rest aren't")
     ap.add_argument('--shortlist', type=int, default=40, help='how many to rank in OUT.csv (default 40)')
     args = ap.parse_args(argv)
+    # A folder: every .csv in it (with --unknowns)
+    import os
+    expanded = []
+    for c in args.candidates:
+        if os.path.isdir(c):
+            expanded += sorted(os.path.join(c, n) for n in os.listdir(c)
+                               if n.lower().endswith('.csv') and not n.startswith('.'))
+        else:
+            expanded.append(c)
+    args.candidates = expanded
     if args.unknowns:
         everything = re.sub(r'(\.csv)?$', '-all.csv', args.unknowns, count=1)
         import os
