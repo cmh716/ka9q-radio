@@ -418,6 +418,18 @@ def apply(args):
     print(f'Kept {kept}; ignored {rejected}; pending {len(pending)}; master {len(master)}. Backup: {backup}')
 
 
+FINGERPRINT_FIELDS = ('Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity',
+                      'Service', 'Group')
+
+
+def fingerprint(row):
+    """A listing as frequency-survey.py saw it (the same there): a removal
+    applies only to the listing it was proposed for"""
+    import hashlib
+    text = '\x1f'.join((row.get(k) or '').strip() for k in FINGERPRINT_FIELDS)
+    return 'row:' + hashlib.sha1(text.encode()).hexdigest()[:12]
+
+
 def correct(args):
     """Apply a corrections CSV (frequency-survey.py --corrections): its
     change rows (ID, Field, From, To) and remove rows (ID); listen, wait and
@@ -437,6 +449,11 @@ def correct(args):
             problems.append(f'line {n}: {key}: not in Master (removed already?)')
             continue
         if action == 'remove':
+            # The listing as it was surveyed (From): changed since, not removed
+            if r['From'] != fingerprint(master[key]):
+                problems.append(f'line {n}: {key}: changed since it was surveyed (or no fingerprint): '
+                                'survey again, or remove it by hand')
+                continue
             removed.add(key)
             continue
         field = r['Field']

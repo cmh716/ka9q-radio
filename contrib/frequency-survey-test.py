@@ -672,5 +672,58 @@ check('t3' not in by, '--skip: GMRS left alone')
 check([a for a, *_ in by['t4']] == ['listen'], 'listed DCS, heard no tone: listen first')
 check([a for a, *_ in by['t5']] == ['wait'], 'too few: wait')
 check(('change', 'CTCSS Notch Hz', '100.0', '107.2') in by['t6'], 'the notch follows the tone')
+# Shared tone, a weak NAC, "other", a removal's fingerprint
+cat5 = os.path.join(d, 'cat5.csv')
+with open(cat5, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['ID', 'Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity', 'CTCSS Notch Hz', 'Service', 'Group', 'P25 NAC'])
+    w.writerow(['s1', 'Shared', '453.475000', 'FMN', 'CTCSS', '100.0', '', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['s2', 'P25 weak NAC', '452.700000', 'FMN', 'Carrier', '', '', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['s3', 'Other', '460.537500', 'FMN', 'Carrier', '', '', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['s4', 'Gone', '444.000000', 'FM', 'Carrier', '', '', '', 'Ham', 'ham', ''])
+tones5 = os.path.join(d, 'tones5.csv')
+with open(tones5, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['frequency_mhz', 'transmissions', 'first', 'last', 'commonest', 'heard'])
+    w.writerow(['453.47500', '100', '', '', '127.3 PL', '127.3 PL x60; 100.0 PL x40'])
+    w.writerow(['452.70000', '12', '', '', 'P25 TG 1', 'P25 TG 1 x11; P25 NAC 293 (no voice) x1'])
+    w.writerow(['460.53750', '40', '', '', 'other', 'other x40'])
+with open(os.path.join(d, 'log20-coverage.csv'), 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['start', 'end', 'lo_mhz', 'hi_mhz'])
+    w.writerow(['2026-11-22 10:00:00Z', '2026-11-25 11:00:00Z', '440.00000', '470.00000'])
+log20 = os.path.join(d, 'log20.csv')
+with open(log20, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k, mhz in enumerate((453.475, 452.7, 460.5375)):
+        tx(w, 10 * k, mhz)
+fixes2 = os.path.join(d, 'fixes2.csv')
+survey.main(['-a', log20, '--tones', tones5, '-o', os.path.join(d, 'out26.csv'), '--corrections', fixes2, cat5])
+by2 = collections.defaultdict(list)
+for r in csv.DictReader(open(fixes2)):
+    by2[r['ID']].append((r['Action'], r['Field'], r['From'], r['To']))
+check([a for a, *_ in by2['s1']] == ['listen'], 'the listed tone heard too: listen, not change')
+check(('change', 'RX Mode', 'FMN', 'P25') in by2['s2'] and not any(f == 'P25 NAC' for _, f, _, _ in by2['s2']),
+      'one NAC among P25: the mode, not the NAC')
+check('s3' not in by2, '"other": no tone proposed')
+check(by2['s4'] and by2['s4'][0][0] == 'remove' and by2['s4'][0][2].startswith('row:'), 'a removal with its fingerprint')
+# A log of broadband events only still says the receiver watched; --max-width checked
+log21 = os.path.join(d, 'log21.csv')
+with open(log21, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(3):
+        stamp = f'2026-11-25 10:0{k}:00Z'
+        w.writerow([stamp, stamp, '450.0125', '450.01250', '1562.50', 3, 55, -40, '', ''])
+out27 = os.path.join(d, 'out27.csv')
+survey.main(['-a', log21, '--range', '440-460', '-o', out27, sites])
+check(list(csv.DictReader(open(out27)))[0]['Transmissions'] == '0', 'broadband events only: a report, no transmissions')
+for bad in ('nan', '-5', 'inf'):
+    try:
+        survey.main(['-a', log21, '--max-width', bad, '-o', out27, sites])
+        check(False, f'--max-width {bad} refused')
+    except SystemExit as e:
+        check('--max-width' in str(e), f'--max-width {bad} refused')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

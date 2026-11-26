@@ -323,13 +323,30 @@ class CatalogTest(unittest.TestCase):
             {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Squelch Type', 'From': a['RX Squelch Type'], 'To': 'CTCSS'},
             {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Squelch Value', 'From': a['RX Squelch Value'], 'To': '141.3'},
             {'ID': a['ID'], 'Action': 'listen', 'Field': '', 'From': '', 'To': ''},
-            {'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': '', 'To': ''}])
+            {'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': catalog.fingerprint(b), 'To': ''}])
         self.call(catalog.correct, corrections=sheet)
         after = {r['Name']: r for r in self.read('master.csv')}
         self.assertEqual((after['GMRS 15']['RX Squelch Type'], after['GMRS 15']['RX Squelch Value']), ('CTCSS', '141.3'))
         self.assertNotIn('GMRS 16', after)
         self.assertIn(b['ID'], {r['ID'] for r in self.read('ignored.csv')})
         # The same sheet again: its From values are stale now, and nothing is written
+        before = (self.w / 'master.csv').read_text()
+        with self.assertRaises(ValueError):
+            self.call(catalog.correct, corrections=sheet)
+        self.assertEqual((self.w / 'master.csv').read_text(), before)
+
+    def test_removal_refused_if_the_listing_changed(self):
+        master = self.keep_both()
+        b = master['GMRS 16']
+        sheet = self.root / 'corrections.csv'
+        old = catalog.fingerprint(b)
+        rows = self.read('master.csv')
+        for r in rows:
+            if r['ID'] == b['ID']:
+                r['Name'] = 'Renamed since'
+        catalog.write_csv(self.w / 'master.csv', catalog.FIELDS, rows)
+        catalog.write_csv(sheet, ['ID', 'Action', 'Field', 'From', 'To'],
+                          [{'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': old, 'To': ''}])
         before = (self.w / 'master.csv').read_text()
         with self.assertRaises(ValueError):
             self.call(catalog.correct, corrections=sheet)

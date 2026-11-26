@@ -57,6 +57,7 @@ import argparse
 import collections
 import csv
 import datetime
+import math
 import re
 import statistics
 import sys
@@ -492,8 +493,10 @@ def too_wide(r):
         return False
 
 
-def read_activity(path):
-    """The log's transmissions: (frequency Hz, start, seconds), and the times it covers"""
+def read_activity(path, wide=False):
+    """The log's transmissions: (frequency Hz, start, end, seconds). wide:
+    every row, each with whether it's a broadband event (evidence the
+    receiver was watching, though not of any frequency): (..., wide)"""
     out = []
     with open(path, newline='') as f:
         for r in csv.DictReader(f):
@@ -504,9 +507,11 @@ def read_activity(path):
                 secs = float(r['seconds'])
             except (KeyError, ValueError, TypeError):
                 continue  # an incomplete row (activity skips them too)
-            if too_wide(r):
-                continue
-            out.append((hz, start, end, secs))
+            broad = too_wide(r)
+            if wide:
+                out.append((hz, start, end, secs, broad))
+            elif not broad:
+                out.append((hz, start, end, secs))
     return out
 
 
@@ -642,6 +647,19 @@ SHARE = 0.6    # of those heard, the share that must agree
 DIGITAL_MODES = {'P25': 'P25', 'DMR': 'DMR', 'NXDN': 'NXDN', 'YSF': 'YSF', 'DSTAR': 'D-STAR', 'M17': None}
 
 
+FINGERPRINT_FIELDS = ('Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity',
+                      'Service', 'Group')
+
+
+def fingerprint(row):
+    """A listing as it was surveyed (frequency-catalog.py correct checks a
+    removal against it: an old sheet mustn't remove a listing since changed).
+    The same in both scripts"""
+    import hashlib
+    text = '\x1f'.join((row.get(k) or '').strip() for k in FINGERPRINT_FIELDS)
+    return 'row:' + hashlib.sha1(text.encode()).hexdigest()[:12]
+
+
 def heard_kinds(heard):
     """tone-survey's 'heard' text: [(what, count)]"""
     out = []
@@ -668,7 +686,7 @@ def corrections(rows, skip=None):
         survey = r.get('Survey', '')
         if survey.startswith('no RF activity') and r.get('Rare-use') != 'yes':
             days = float(r.get('Monitored days') or 0)
-            add('remove' if days >= 2 else 'wait', '', '', '', f'{survey} (not rare-use)')
+            add('remove' if days >= 2 else 'wait', '', fingerprint(r), '', f'{survey} (not rare-use)')
             continue
         if survey != ACTIVE:
             continue
@@ -688,7 +706,8 @@ def corrections(rows, skip=None):
                 m = re.match(r'P25 NAC ([0-9A-F]{3})', what)
                 if m:
                     nacs[m.group(1)] += n
-        analog = [(w, n) for w, n in kinds if w.split()[0] not in DIGITAL_MODES]
+        # (tone-survey's "other": kinds past its sixteenth, nothing to go by)
+        analog = [(w, n) for w, n in kinds if w.split()[0] not in DIGITAL_MODES and w != 'other']
         if digital:
             word, n = digital.most_common(1)[0]
             new = DIGITAL_MODES[word]
@@ -704,7 +723,10 @@ def corrections(rows, skip=None):
                     if r.get('CTCSS Notch Hz'):
                         add('change', 'CTCSS Notch Hz', r['CTCSS Notch Hz'], '', 'no notch for digital')
                     if new == 'P25' and nacs and not r.get('P25 NAC'):
-                        add('change', 'P25 NAC', '', nacs.most_common(1)[0][0], 'the NAC heard')
+                        # (the NAC on evidence of its own: else left blank)
+                        nac, k = nacs.most_common(1)[0]
+                        if k >= ENOUGH and k >= SHARE * n:
+                            add('change', 'P25 NAC', '', nac, f'NAC {nac} x{k} of {n} P25')
                     continue
                 if n >= 3 and n >= SHARE * total:
                     add('wait', '', '', '', f'digital {word} x{n} of {total}: {heard}')
@@ -722,6 +744,12 @@ def corrections(rows, skip=None):
             if listed and listed != 'none':
                 add('listen' if n >= ENOUGH else 'wait', '', '', '',
                     f'listed {listed}, heard no tone x{n} of {total}: shared, or untoned paging? {heard}')
+            continue
+        if not re.fullmatch(r'\d+\.\d PL|[DI][0-7]{3}', what):
+            continue  # (not a tone: nothing to change it to)
+        if listed and listed != 'none' and any(w == listed for w, _ in kinds):
+            # The listed tone heard too: a shared frequency, both users maybe
+            add('listen', '', '', '', f'listed {listed}, heard {what} x{n} and the listed one too: shared? {heard}')
             continue
         if n < ENOUGH or n < SHARE * atotal:
             add('wait', '', '', '', f'listed {listed or "none"}, heard {what} x{n} of {total}: {heard}')
@@ -851,6 +879,8 @@ def main(argv=None):
     ap.add_argument('--max-width', type=float, default=50,
                     help='kHz: logged signals wider are broadband events, not transmissions (default 50)')
     args = ap.parse_args(argv)
+    if not (math.isfinite(args.max_width) and args.max_width > 0):
+        sys.exit('--max-width: a positive number of kHz')
     globals()['MAX_WIDTH_KHZ'] = args.max_width  # (too_wide()'s, for this run)
     # A folder: every .csv in it (with --unknowns)
     import os
@@ -882,10 +912,10 @@ def main(argv=None):
         if have_cover:
             coverage = read_coverage(cover_path)
             tuned = [(s0, e0, round((lo0 + hi0) / 2)) for s0, e0, lo0, hi0 in coverage]
-            transmissions = read_activity(args.activity)
-            if coverage and transmissions:
+            logged = read_activity(args.activity, wide=True)
+            if coverage and logged:
                 began = min(s0 for s0, _, _, _ in coverage)
-                before = [(hz, st) for hz, st, _, _ in transmissions if st < began - SLACK]
+                before = [(t[0], t[1]) for t in logged if t[1] < began - SLACK]
                 if before:
                     coverage.append((min(t for _, t in before), began - datetime.timedelta(seconds=1),
                                      min(hz for hz, _ in before), max(hz for hz, _ in before)))
@@ -914,7 +944,10 @@ def main(argv=None):
     args.candidates = args.candidates[0]
 
     import os
-    transmissions = read_activity(args.activity) if os.path.exists(args.activity) else []
+    # Every row, the broadband events too, says the receiver was watching;
+    # only the narrower ones are transmissions on a frequency
+    logged = read_activity(args.activity, wide=True) if os.path.exists(args.activity) else []
+    transmissions = [t[:4] for t in logged if not t[4]]
     lo = hi = None
     if args.range:
         m = re.fullmatch(r'\s*([\d.]+)\s*-\s*([\d.]+)\s*', args.range)
@@ -929,7 +962,7 @@ def main(argv=None):
         coverage = read_coverage(cover_path)
         if not coverage:
             sys.exit(f'{cover_path}: no coverage rows')
-    if not transmissions and coverage is None:
+    if not logged and coverage is None:
         sys.exit(f'{args.activity}: no transmissions logged, and no coverage file to say it was watching')
     if coverage is not None:
         # The log from before coverage was recorded (an older activity):
@@ -937,7 +970,7 @@ def main(argv=None):
         # coverage starts, across --range or the log's span, as with no
         # coverage file at all
         began = min(s for s, _, _, _ in coverage)
-        before = [(hz, start) for hz, start, _, _ in transmissions if start < began - SLACK]
+        before = [(t[0], t[1]) for t in logged if t[1] < began - SLACK]
         if before:
             blo = lo if lo is not None else min(hz for hz, _ in before)
             bhi = hi if hi is not None else max(hz for hz, _ in before)
@@ -969,8 +1002,8 @@ def main(argv=None):
         print(f"corrections: {changed} channels to change, {actions['remove']} to remove, "
               f"{actions['listen']} to listen to first, {actions['wait']} waiting for more; in {args.corrections}")
     verdicts = collections.Counter(r.get('Survey', '').split(' (rare')[0] for r in rows)
-    span = (f'{min(t[1] for t in transmissions):%Y-%m-%d %H:%M} to {max(t[2] for t in transmissions):%Y-%m-%d %H:%M}'
-            if transmissions else 'none')
+    span = (f'{min(t[1] for t in logged):%Y-%m-%d %H:%M} to {max(t[2] for t in logged):%Y-%m-%d %H:%M}'
+            if logged else 'none')
     print(f'{len(rows)} candidates; the log: {len(transmissions)} transmissions, {span}' +
           (f'; range {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz' if lo is not None else '') +
           (f'; activity watched {merged_seconds((s, e) for s, e, _, _ in coverage) / 86400:.2f} days in all'
