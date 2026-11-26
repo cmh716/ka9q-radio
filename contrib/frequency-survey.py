@@ -601,12 +601,14 @@ def listed_tone(row):
         if kind in ('NONE', 'CSQ', 'CARRIER'):
             return 'none'
         return f'{kind} {value}'.strip()
-    text = (row.get('PL Output Tone') or row.get('Source RX Tone') or '').strip()
+    # RadioReference's, the catalog's source, RepeaterBook's (the tone the
+    # repeater sends: what's heard)
+    text = (row.get('PL Output Tone') or row.get('Source RX Tone') or row.get('Downlink Tone') or '').strip()
     if not text:
         return ''
-    m = re.fullmatch(r'([\d.]+)\s*PL', text, re.I)
+    m = re.fullmatch(r'(\d+\.\d+)\s*(PL)?|(\d+)\s*PL', text, re.I)  # "127.3 PL", "127.3" (RepeaterBook)
     if m:
-        return f'{float(m.group(1)):.1f} PL'
+        return f'{float(m.group(1) or m.group(3)):.1f} PL'
     m = re.fullmatch(r'([DI])?(\d{3})\s*(N|I|DPL|DCS)?', text, re.I)
     if m:
         inverted = (m.group(1) or '').upper() == 'I' or (m.group(3) or '').upper() == 'I'
@@ -724,7 +726,8 @@ def main(argv=None):
     for c in args.candidates:
         if os.path.isdir(c):
             expanded += sorted(os.path.join(c, n) for n in os.listdir(c)
-                               if n.lower().endswith('.csv') and not n.startswith('.'))
+                               if n.lower().endswith('.csv') and not n.startswith('.')
+                               and os.path.isfile(os.path.join(c, n)))  # (a regular file: not a folder, a pipe)
         else:
             expanded.append(c)
     args.candidates = expanded

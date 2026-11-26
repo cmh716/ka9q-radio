@@ -596,5 +596,25 @@ shutil.copy(sites, os.path.join(folder, 'trs_sites.csv'))
 survey.main(['-a', log14, '--unknowns', os.path.join(d, 'unknowns10.csv'), folder])
 all11 = {r['frequency_mhz'] for r in csv.DictReader(open(os.path.join(d, 'unknowns10-all.csv')))}
 check('441.10000' not in all11, 'a folder: its lists read')
+# A RepeaterBook row's Downlink Tone checked; a folder's non-files left alone
+with open(rb, 'a', newline='') as f:
+    csv.writer(f).writerow(['442.20000', '447.20000', '+5', 'D125', 'D125', 'N1CALL', 'Elsewhere'])
+tones_rb = os.path.join(d, 'tones-rb.csv')
+with open(tones_rb, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['frequency_mhz', 'transmissions', 'first', 'last', 'commonest', 'heard'])
+    w.writerow(['441.10000', '20', '', '', '127.3 PL', '127.3 PL x20'])
+    w.writerow(['442.20000', '5', '', '', 'D125', 'D125 x5'])
+out23 = os.path.join(d, 'out23.csv')
+survey.main(['-a', log14, '--tones', tones_rb, '-o', out23, rb])
+rows23 = {r['Output Freq']: r for r in csv.DictReader(open(out23))}
+check(rows23['441.10000']['Tone check'] == 'confirmed' and rows23['442.20000']['Tone check'] == 'confirmed',
+      "a RepeaterBook row's Downlink Tone (127.3, D125) confirmed")
+os.makedirs(os.path.join(folder, 'archive.csv'), exist_ok=True)
+fifo = os.path.join(folder, 'feed.csv')
+if not os.path.exists(fifo):
+    os.mkfifo(fifo)
+survey.main(['-a', log14, '--unknowns', os.path.join(d, 'unknowns11.csv'), folder])
+check(os.path.exists(os.path.join(d, 'unknowns11-all.csv')), "a folder's subfolder and pipe named .csv left alone")
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

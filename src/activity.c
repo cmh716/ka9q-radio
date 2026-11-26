@@ -1238,7 +1238,9 @@ int main(int argc,char *argv[]){
       for(int k = 0; k < n; k++){
 	char path[4096];
 	snprintf(path,sizeof path,"%s/%s",watches[i],list[k]->d_name);
-	read_watch(path);
+	struct stat fst;
+	if(stat(path,&fst) == 0 && S_ISREG(fst.st_mode)) // (a regular file: not a folder, a pipe, named .csv)
+	  read_watch(path);
 	free(list[k]);
       }
       free(list);
