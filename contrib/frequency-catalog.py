@@ -418,6 +418,49 @@ def apply(args):
     print(f'Kept {kept}; ignored {rejected}; pending {len(pending)}; master {len(master)}. Backup: {backup}')
 
 
+def correct(args):
+    """Apply a corrections CSV (frequency-survey.py --corrections): its
+    change rows (ID, Field, From, To) and remove rows (ID); listen, wait and
+    any other rows are left. Each change's From must be what Master holds
+    now, so a stale or edited sheet changes nothing it didn't see. All
+    checked, and the result validated, before anything is written"""
+    w = args.workspace
+    master, ignored, inbox, state = load(w)
+    rows = read_csv(args.corrections, ['ID', 'Action', 'Field', 'From', 'To'])
+    changed, removed, problems = set(), set(), []
+    for n, r in enumerate(rows, 2):
+        action = r['Action'].lower()
+        if action not in ('change', 'remove'):
+            continue
+        key = r['ID']
+        if key not in master:
+            problems.append(f'line {n}: {key}: not in Master (removed already?)')
+            continue
+        if action == 'remove':
+            removed.add(key)
+            continue
+        field = r['Field']
+        if field not in FIELDS or field in ('ID', 'Offset MHz'):
+            problems.append(f'line {n}: {key}: {field!r} is not a field that can be corrected')
+            continue
+        if master[key].get(field, '') != r['From']:
+            problems.append(f'line {n}: {key} {field}: Master has {master[key].get(field, "")!r}, '
+                            f'the sheet expects {r["From"]!r}: survey again, or fix the sheet')
+            continue
+        master[key][field] = r['To']
+        changed.add(key)
+    if problems:
+        raise ValueError('nothing written:\n  ' + '\n  '.join(problems))
+    for key in changed - removed:
+        validate(master[key])
+    for key in removed:
+        ignored[key] = master.pop(key)  # (ignored: an import won't propose it again)
+    backup = snapshot(w)
+    write_csv(w / 'master.csv', FIELDS, master.values())
+    write_csv(w / 'ignored.csv', FIELDS, ignored.values())
+    print(f'Changed {len(changed - removed)}; removed {len(removed)} (to ignored.csv); master {len(master)}. Backup: {backup}')
+
+
 def export(args):
     master, _, _, _ = load(args.workspace)
     rows = []
@@ -477,6 +520,9 @@ def main():
     migration.set_defaults(func=migrate)
     accept = sub.add_parser('apply', help='apply Keep/Ignore decisions from inbox.csv')
     accept.set_defaults(func=apply)
+    fix = sub.add_parser('correct', help="apply a corrections CSV (frequency-survey.py --corrections) to Master")
+    fix.add_argument('corrections', type=Path)
+    fix.set_defaults(func=correct)
     exp = sub.add_parser('export', help='export Master only, as rr2radiod-compatible CSV')
     exp.add_argument('--profile', required=True)
     exp.add_argument('-o', '--output', type=Path, required=True)
@@ -486,6 +532,9 @@ def main():
         if args.command == 'export' and args.output.resolve() in {
                 (args.workspace / n).resolve() for n in ('master.csv', 'inbox.csv', 'ignored.csv', 'import-state.json', 'source-rules.csv', 'device-profiles.csv', 'memory-assignments.csv')}:
             raise ValueError('export output must not overwrite catalog files')
+        if args.command == 'correct' and args.corrections.resolve() in {
+                (args.workspace / n).resolve() for n in ('master.csv', 'inbox.csv', 'ignored.csv')}:
+            raise ValueError('the corrections must be a sheet of their own, not a catalog file')
         args.func(args)
     except (ValueError, OSError, csv.Error) as e:
         ap.exit(1, f'{e}\n')

@@ -137,8 +137,46 @@ To remove it early:
 tune -r fobos-uhf.local -s 1454050 -t 1
 ```
 
+## Correcting the catalog
+
+For `master.csv`, the survey can propose corrections from what was heard:
+
+```sh
+./frequency-survey.py -a ~/activity.csv --tones ~/tone-survey.csv \
+  -o ~/Frequencies/surveys/master-survey.csv \
+  --corrections ~/Frequencies/surveys/master-corrections.csv --skip 'GMRS|FRS' \
+  ~/Frequencies/catalog/master.csv
+```
+
+`--skip` leaves rows alone whose Service, Group or Name match (here, all
+FRS and GMRS). Each row of the sheet has an **Action**:
+
+- **change**: one field of one channel, `From` what Master holds `To` the
+  correction, with the evidence. A tone heard on 10 or more transmissions,
+  at least 60% of those heard, replaces the listed squelch. A digital mode
+  heard the same way replaces FM or FMN, with the squelch set to Digital
+  (and the NAC, for P25). A CTCSS notch follows the tone.
+- **remove**: silent for 2 days or more, and not a rare-use service.
+- **listen**: the evidence conflicts (for example, listed with a DCS code
+  but heard with no tone, which can mean several users share the channel).
+  Listen before deciding. Nothing is applied.
+- **wait**: too little heard yet. Nothing is applied.
+
+Review the sheet. Delete any row you don't want, or set its Action to
+something else. Then close master.csv in your spreadsheet and apply:
+
+```sh
+./frequency-catalog.py --workspace ~/Frequencies/catalog correct ~/Frequencies/surveys/master-corrections.csv
+```
+
+It applies only change and remove rows. It refuses the whole sheet, writing
+nothing, if any `From` no longer matches Master (a stale sheet) or a
+corrected channel fails validation. It backs Master up first, to
+`backups/`. Removed channels go to `ignored.csv`, so an import won't propose
+them again.
+
 ## Then
 
 Add what you've confirmed to the catalog (see
-[frequency-catalog.md](frequency-catalog.md)), correct what differs, and
-generate the radiod config from it.
+[frequency-catalog.md](frequency-catalog.md)) and generate the radiod config
+from it.

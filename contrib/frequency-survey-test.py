@@ -3,6 +3,7 @@
 nearest candidate within 5 kHz, outside coverage, silence (and rare-use
 services flagged), a regular pattern found, both input formats."""
 # SPDX-License-Identifier: GPL-3.0-or-later
+import collections
 import csv
 import datetime
 import importlib.util
@@ -630,5 +631,46 @@ survey.main(['-a', log18, '-o', out24, sites])
 rows24 = {r['Frequency']: r for r in csv.DictReader(open(out24))}
 check(rows24['450.012500']['Transmissions'] == '0' and rows24['460.100000']['Transmissions'] == '5',
       'a broadband event not counted for the frequency at its centre')
+# Proposed corrections for the catalog
+cat4 = os.path.join(d, 'cat4.csv')
+with open(cat4, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['ID', 'Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity', 'CTCSS Notch Hz', 'Service', 'Group', 'P25 NAC'])
+    w.writerow(['t1', 'CFD Ch.2', '453.475000', 'FMN', 'DCS', '364', 'Normal', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['t2', 'Alden FD', '452.700000', 'FMN', 'Carrier', '', '', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['t3', 'GMRS 21', '462.700000', 'FM', 'Carrier', '', '', '', 'GMRS', 'gmrs-frs', ''])
+    w.writerow(['t4', 'Lncstr FG5', '460.537500', 'FMN', 'DCS', '225', 'Normal', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['t5', 'Repeater', '444.100000', 'FM', 'Carrier', '', '', '', 'Ham', 'ham', ''])
+    w.writerow(['t6', 'Rare', '453.900000', 'FMN', 'CTCSS', '100.0', '', '100.0', 'Fire-Tac', 'fire-tac', ''])
+log19 = os.path.join(d, 'log19.csv')
+with open(log19, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k, mhz in enumerate((453.475, 452.7, 462.7, 460.5375, 444.1, 453.9)):
+        tx(w, 10 * k, mhz)
+tones4 = os.path.join(d, 'tones4.csv')
+with open(tones4, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['frequency_mhz', 'transmissions', 'first', 'last', 'commonest', 'heard'])
+    w.writerow(['453.47500', '73', '', '', '127.3 PL', '127.3 PL x56; none x17'])
+    w.writerow(['452.70000', '54', '', '', 'DMR TG 1', 'DMR TG 1 x52; none x2'])
+    w.writerow(['462.70000', '54', '', '', '141.3 PL', '141.3 PL x49; none x5'])
+    w.writerow(['460.53750', '362', '', '', 'none', 'none x347; NXDN (no voice) x14; D627 x1'])
+    w.writerow(['444.10000', '4', '', '', '88.5 PL', '88.5 PL x4'])
+    w.writerow(['453.90000', '30', '', '', '107.2 PL', '107.2 PL x30'])
+fixes = os.path.join(d, 'fixes.csv')
+survey.main(['-a', log19, '--tones', tones4, '-o', os.path.join(d, 'out25.csv'), '--corrections', fixes, '--skip', 'GMRS|FRS', cat4])
+fx = list(csv.DictReader(open(fixes)))
+by = collections.defaultdict(list)
+for r in fx:
+    by[r['ID']].append((r['Action'], r['Field'], r['From'], r['To']))
+check(set(by['t1']) == {('change', 'RX Squelch Type', 'DCS', 'CTCSS'), ('change', 'RX Squelch Value', '364', '127.3'),
+                        ('change', 'RX DCS Polarity', 'Normal', '')}, 'a tone heard most: the squelch changed')
+check(('change', 'RX Mode', 'FMN', 'DMR') in by['t2'] and ('change', 'RX Squelch Type', 'Carrier', 'Digital') in by['t2'],
+      'digital heard: the mode changed')
+check('t3' not in by, '--skip: GMRS left alone')
+check([a for a, *_ in by['t4']] == ['listen'], 'listed DCS, heard no tone: listen first')
+check([a for a, *_ in by['t5']] == ['wait'], 'too few: wait')
+check(('change', 'CTCSS Notch Hz', '100.0', '107.2') in by['t6'], 'the notch follows the tone')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

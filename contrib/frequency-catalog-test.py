@@ -306,5 +306,46 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(self.read('master.csv')[0]['My Custom Column'], 'Do not lose')
 
 
+    def keep_both(self):
+        rows = self.read('inbox.csv')
+        for r in rows:
+            r['Decision'] = 'Keep'
+        catalog.write_csv(self.w / 'inbox.csv', catalog.INBOX, rows)
+        self.call(catalog.apply)
+        return {r['Name']: r for r in self.read('master.csv')}
+
+    def test_corrections_change_remove_and_refuse_stale(self):
+        master = self.keep_both()
+        a, b = master['GMRS 15'], master['GMRS 16']
+        sheet = self.root / 'corrections.csv'
+        fields = ['ID', 'Name', 'RX MHz', 'Action', 'Field', 'From', 'To', 'Evidence']
+        catalog.write_csv(sheet, fields, [
+            {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Squelch Type', 'From': a['RX Squelch Type'], 'To': 'CTCSS'},
+            {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Squelch Value', 'From': a['RX Squelch Value'], 'To': '141.3'},
+            {'ID': a['ID'], 'Action': 'listen', 'Field': '', 'From': '', 'To': ''},
+            {'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': '', 'To': ''}])
+        self.call(catalog.correct, corrections=sheet)
+        after = {r['Name']: r for r in self.read('master.csv')}
+        self.assertEqual((after['GMRS 15']['RX Squelch Type'], after['GMRS 15']['RX Squelch Value']), ('CTCSS', '141.3'))
+        self.assertNotIn('GMRS 16', after)
+        self.assertIn(b['ID'], {r['ID'] for r in self.read('ignored.csv')})
+        # The same sheet again: its From values are stale now, and nothing is written
+        before = (self.w / 'master.csv').read_text()
+        with self.assertRaises(ValueError):
+            self.call(catalog.correct, corrections=sheet)
+        self.assertEqual((self.w / 'master.csv').read_text(), before)
+
+    def test_corrections_validated_before_writing(self):
+        master = self.keep_both()
+        a = master['GMRS 15']
+        sheet = self.root / 'corrections.csv'
+        catalog.write_csv(sheet, ['ID', 'Action', 'Field', 'From', 'To'], [
+            {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Mode', 'From': a['RX Mode'], 'To': 'NOPE'}])
+        before = (self.w / 'master.csv').read_text()
+        with self.assertRaises(ValueError):
+            self.call(catalog.correct, corrections=sheet)
+        self.assertEqual((self.w / 'master.csv').read_text(), before)
+
+
 if __name__ == '__main__':
     unittest.main()

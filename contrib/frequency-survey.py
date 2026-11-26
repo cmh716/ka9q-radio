@@ -637,6 +637,113 @@ def listed_tone(row):
     return text
 
 
+ENOUGH = 10    # identified transmissions before a change is proposed
+SHARE = 0.6    # of those heard, the share that must agree
+DIGITAL_MODES = {'P25': 'P25', 'DMR': 'DMR', 'NXDN': 'NXDN', 'YSF': 'YSF', 'DSTAR': 'D-STAR', 'M17': None}
+
+
+def heard_kinds(heard):
+    """tone-survey's 'heard' text: [(what, count)]"""
+    out = []
+    for m in re.finditer(r'(?:^|; )(.+?) x(\d+)(?=; |$)', heard or ''):
+        out.append((m.group(1), int(m.group(2))))
+    return out
+
+
+def corrections(rows, skip=None):
+    """Proposed changes to catalog rows (ID, RX Squelch Type...) from their
+    survey and tone check: (ID, Name, RX MHz, Action, Field, From, To,
+    Evidence). Action: change and remove (applied by frequency-catalog.py
+    correct), listen (the evidence conflicts: hear it first), wait (too
+    little yet). skip: a pattern of Service, Group or Name left alone"""
+    out = []
+    for r in rows:
+        if not r.get('ID'):
+            continue
+        if skip and any(re.search(skip, r.get(k) or '', re.I) for k in ('Service', 'Group', 'Name')):
+            continue
+        base = {'ID': r['ID'], 'Name': r.get('Name', ''), 'RX MHz': r.get('RX MHz', '')}
+        def add(action, field, old, new, evidence):
+            out.append(dict(base, Action=action, Field=field, From=old, To=new, Evidence=evidence))
+        survey = r.get('Survey', '')
+        if survey.startswith('no RF activity') and r.get('Rare-use') != 'yes':
+            days = float(r.get('Monitored days') or 0)
+            add('remove' if days >= 2 else 'wait', '', '', '', f'{survey} (not rare-use)')
+            continue
+        if survey != ACTIVE:
+            continue
+        kinds = heard_kinds(r.get('Heard'))
+        if not kinds:
+            continue
+        total = sum(n for _, n in kinds)
+        heard = r.get('Heard', '')
+        mode = (r.get('RX Mode') or '').upper()
+        # Digital: the mode heard most, if most of what's heard
+        digital = collections.Counter()
+        nacs = collections.Counter()
+        for what, n in kinds:
+            word = what.split()[0]
+            if word in DIGITAL_MODES:
+                digital[word] += n
+                m = re.match(r'P25 NAC ([0-9A-F]{3})', what)
+                if m:
+                    nacs[m.group(1)] += n
+        analog = [(w, n) for w, n in kinds if w.split()[0] not in DIGITAL_MODES]
+        if digital:
+            word, n = digital.most_common(1)[0]
+            new = DIGITAL_MODES[word]
+            if mode in ('FM', 'FMN') and new:
+                if n >= ENOUGH and n >= SHARE * total:
+                    add('change', 'RX Mode', r.get('RX Mode', ''), new, f'heard {word} x{n} of {total}: {heard}')
+                    if (r.get('RX Squelch Type') or '') != 'Digital':
+                        add('change', 'RX Squelch Type', r.get('RX Squelch Type', ''), 'Digital', 'with the mode')
+                    if r.get('RX Squelch Value'):
+                        add('change', 'RX Squelch Value', r['RX Squelch Value'], '', 'with the mode')
+                    if r.get('RX DCS Polarity'):
+                        add('change', 'RX DCS Polarity', r['RX DCS Polarity'], '', 'with the mode')
+                    if r.get('CTCSS Notch Hz'):
+                        add('change', 'CTCSS Notch Hz', r['CTCSS Notch Hz'], '', 'no notch for digital')
+                    if new == 'P25' and nacs and not r.get('P25 NAC'):
+                        add('change', 'P25 NAC', '', nacs.most_common(1)[0][0], 'the NAC heard')
+                    continue
+                if n >= 3 and n >= SHARE * total:
+                    add('wait', '', '', '', f'digital {word} x{n} of {total}: {heard}')
+                    continue
+                # (a few digital hits among analog: the analog question below)
+        # Analog: the tone heard most, if most of what's analog
+        atotal = sum(n for _, n in analog)
+        if not analog or mode not in ('FM', 'FMN'):
+            continue
+        what, n = max(analog, key=lambda k: k[1])
+        listed = listed_tone(r)
+        if what == listed:
+            continue
+        if what == 'none':
+            if listed and listed != 'none':
+                add('listen' if n >= ENOUGH else 'wait', '', '', '',
+                    f'listed {listed}, heard no tone x{n} of {total}: shared, or untoned paging? {heard}')
+            continue
+        if n < ENOUGH or n < SHARE * atotal:
+            add('wait', '', '', '', f'listed {listed or "none"}, heard {what} x{n} of {total}: {heard}')
+            continue
+        evidence = f'listed {listed or "none"}, heard {what} x{n} of {total}: {heard}'
+        old_type, old_value, old_pol = (r.get('RX Squelch Type') or ''), (r.get('RX Squelch Value') or ''), (r.get('RX DCS Polarity') or '')
+        if what.endswith(' PL'):
+            tone = what[:-3]
+            new_type, new_value, new_pol = 'CTCSS', tone, ''
+        else:
+            new_type, new_value, new_pol = 'DCS', what[1:], 'Inverted' if what[0] == 'I' else 'Normal'
+        for field, old, new in (('RX Squelch Type', old_type, new_type), ('RX Squelch Value', old_value, new_value),
+                                ('RX DCS Polarity', old_pol, new_pol)):
+            if old != new:
+                add('change', field, old, new, evidence)
+                evidence = 'with the tone'
+        notch = r.get('CTCSS Notch Hz') or ''
+        if notch and notch not in ('0',):
+            add('change', 'CTCSS Notch Hz', notch, new_value if new_type == 'CTCSS' else '', 'the notch follows the tone')
+    return out
+
+
 def read_tones(path):
     """tone-survey's results: frequency (Hz) -> (commonest, all heard)"""
     out = {}
@@ -738,6 +845,9 @@ def main(argv=None):
                     help="instead: the log's channels that none of the lists (or radiod's channels) has: "
                          "OUT.csv the ones worth looking up, ranked; OUT-all.csv every one, with why the rest aren't")
     ap.add_argument('--shortlist', type=int, default=40, help='how many to rank in OUT.csv (default 40)')
+    ap.add_argument('--corrections', metavar='OUT.csv',
+                    help="with --tones and the catalog's master.csv: proposed changes, for frequency-catalog.py correct")
+    ap.add_argument('--skip', metavar='PATTERN', help="with --corrections: rows whose Service, Group or Name match are left alone")
     ap.add_argument('--max-width', type=float, default=50,
                     help='kHz: logged signals wider are broadband events, not transmissions (default 50)')
     args = ap.parse_args(argv)
@@ -844,6 +954,20 @@ def main(argv=None):
         if same_file(out, source):
             sys.exit(f'{out}: that is {source}, an input: give another output')
     write_csv(out, fields + [e for e in EVIDENCE if e not in fields], rows)
+    if args.corrections:
+        if not args.tones:
+            sys.exit('--corrections needs --tones')
+        if 'ID' not in fields or 'RX Squelch Type' not in fields:
+            sys.exit('--corrections: the catalog (master.csv) only: its rows have IDs to correct')
+        for source in inputs + (out,):
+            if same_file(args.corrections, source):
+                sys.exit(f'{args.corrections}: that is {source}: give another output')
+        found = corrections(rows, args.skip)
+        write_csv(args.corrections, ['ID', 'Name', 'RX MHz', 'Action', 'Field', 'From', 'To', 'Evidence'], found)
+        actions = collections.Counter(r['Action'] for r in found)
+        changed = len({r['ID'] for r in found if r['Action'] == 'change'})
+        print(f"corrections: {changed} channels to change, {actions['remove']} to remove, "
+              f"{actions['listen']} to listen to first, {actions['wait']} waiting for more; in {args.corrections}")
     verdicts = collections.Counter(r.get('Survey', '').split(' (rare')[0] for r in rows)
     span = (f'{min(t[1] for t in transmissions):%Y-%m-%d %H:%M} to {max(t[2] for t in transmissions):%Y-%m-%d %H:%M}'
             if transmissions else 'none')
