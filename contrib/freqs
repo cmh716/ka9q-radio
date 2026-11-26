@@ -503,7 +503,9 @@ def config(s, write):
         s['names'].parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(new_conf, s['config'])
         shutil.copyfile(new_names, s['names'])
-        print(f'Written {s["config"]} and {s["names"]} (the old ones in {backup}). Restart radiod to use them.')
+        print(f'Written {s["config"]} and {s["names"]} (the old ones in {backup}).')
+        print('Next: restart radiod (the channels), then install the names for monitor and pcmrecord:')
+        print(f'  sudo {s["names"].parent.parent / "deploy-names"}   (if you use it), then restart monitor')
 
 
 # --- status ---
