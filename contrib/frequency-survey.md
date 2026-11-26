@@ -38,6 +38,31 @@ cd ~/ka9q-radio/contrib
    rebuilt radiod config would add and drop, then `freqs config --write` and
    restart radiod. The old config is backed up first.
 
+`freqs review` also lists the busiest frequencies that match no list. Look them
+up (RadioReference's FCC search), or download the list of the system they
+belong to: once it's in `downloads/`, they can be proposed as additions.
+
+### What gets checked, and for how long
+
+Every review checks the whole catalog (everything in `master.csv`, the channels
+you've added included) against the latest evidence, as well as everything in
+`downloads/`. A channel heard with a different tone, or gone digital, or silent,
+is proposed again whenever the evidence says so.
+
+There's one limit. To spread its channels around, the audit stops listening to a
+frequency once tone-survey has identified 10 of its transmissions. After that,
+a channel's tone isn't re-measured, though its activity (or silence) still is.
+To measure every tone afresh, say every few months, start a new tone survey:
+
+```sh
+systemctl --user stop freqs-tone-survey
+mv ~/tone-survey.csv ~/tone-survey-$(date +%Y-%m).csv
+systemctl --user start freqs-tone-survey
+systemctl --user restart freqs-activity
+```
+
+Until the new survey has enough, reviews propose fewer changes, not wrong ones.
+
 A proposal appears only when the evidence is strong: at least 10 identified
 transmissions, 60% of them agreeing. FRS and GMRS channels are never changed
 or removed. Trunked systems' channels (their site lists in `downloads/sites/`)
@@ -47,6 +72,14 @@ To check more lists, save them in `~/Frequencies/downloads/` (RadioReference
 county downloads, RepeaterBook exports) or `~/Frequencies/downloads/sites/`
 (trunked site downloads), then restart activity:
 `systemctl --user restart freqs-activity`.
+
+### Housekeeping
+
+- `catalog/backups/` gets a copy of the catalog before every change. Delete old
+  ones whenever you like.
+- `activity.csv` grows by roughly 300,000 rows a day. To start it afresh, stop
+  freqs-activity, move `activity.csv` and `activity-coverage.csv` aside, and
+  start it again. Reviews then work from the new log only.
 
 ### Settings
 

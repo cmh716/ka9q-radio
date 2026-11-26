@@ -1,5 +1,10 @@
 # Curated frequency catalog
 
+For day-to-day use, [freqs](frequency-survey.md) keeps the catalog for you: it
+proposes additions, changes and removals from what your receiver hears, in one
+sheet you approve or reject. The rest of this page describes the catalog
+itself, and the manual import and apply workflow underneath.
+
 Use a spreadsheet editor for `master.csv` and `inbox.csv`. Downloads only propose
 entries; only Master is exported. This starter uses Python's standard library.
 It does not program radios or change running receivers.

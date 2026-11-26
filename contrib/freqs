@@ -348,7 +348,25 @@ def review(s, quiet=False):
         print(f'{days:.1f} days of evidence. {len(rows)} to decide in {sheet}: '
               f"{kinds['change']} to change, {kinds['remove']} to remove, {kinds['add']} to add.")
         print('Type Approve or Reject in the Decision column, save and close it, then: freqs apply')
+        unknown_summary(s, coverage)
     return rows
+
+
+def unknown_summary(s, coverage):
+    """The busiest frequencies no list has: to look up, or a list to download"""
+    lists = [str(s['catalog'] / 'master.csv')]
+    for folder in (s['downloads'], s['sites']):
+        if folder.is_dir():
+            lists += sorted(str(p) for p in folder.glob('*.csv') if p.is_file())
+    tuned = [(a, b, round((lo + hi) / 2)) for a, b, lo, hi in (coverage or [])]
+    found = survey.unknowns(lists, str(s['activity']), coverage, tuned)
+    worth = sorted((r for r in found if r['rank'] != ''), key=lambda r: r['rank'])
+    if not worth:
+        return
+    print(f'{len(worth)} busy frequencies match no list. The busiest (look them up, or download their system\'s list):')
+    for r in worth[:5]:
+        print(f"  {r['frequency_mhz']}  heard {r['transmissions']} times, {r['average_s']} s each, busiest {r['busiest_hours']}"
+              + (f"  ({r['hint']})" if r['hint'] else ''))
 
 
 # --- applying ---
