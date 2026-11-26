@@ -48,7 +48,9 @@ EMS, mutual aid...) is flagged, so silence isn't taken against it. Nothing
 is changed: decide in the catalog.
 
 Each logged transmission counts for the nearest candidate within 5 kHz,
-among those within --range.
+among those within --range. Logged signals wider than --max-width (50 kHz)
+aren't transmissions: strong local transmitters' skirts, run together over
+a megahertz or more, or impulses, whose centre may fall anywhere.
 """
 # SPDX-License-Identifier: GPL-3.0-or-later
 import argparse
@@ -264,6 +266,8 @@ def unknowns(paths, activity_path, coverage=None, tuned=()):
                 dbfs = float(r['dbfs'])
             except (KeyError, ValueError, TypeError):
                 continue
+            if too_wide(r):
+                continue
             if (r.get('known') or '').strip():
                 configured.add(ch)
                 names.setdefault(ch, r['known'].strip())
@@ -475,6 +479,19 @@ def triage(rows):
             r['rank'] = ''
 
 
+MAX_WIDTH_KHZ = 50  # (--max-width) wider: a broadband event, not a transmission
+
+
+def too_wide(r):
+    """A logged signal far wider than any channel (strong local
+    transmitters' skirts, run together over a megahertz or more; impulses):
+    not a transmission on the frequency at its centre"""
+    try:
+        return float(r.get('width_khz') or 0) > MAX_WIDTH_KHZ
+    except ValueError:
+        return False
+
+
 def read_activity(path):
     """The log's transmissions: (frequency Hz, start, seconds), and the times it covers"""
     out = []
@@ -487,6 +504,8 @@ def read_activity(path):
                 secs = float(r['seconds'])
             except (KeyError, ValueError, TypeError):
                 continue  # an incomplete row (activity skips them too)
+            if too_wide(r):
+                continue
             out.append((hz, start, end, secs))
     return out
 
@@ -719,7 +738,10 @@ def main(argv=None):
                     help="instead: the log's channels that none of the lists (or radiod's channels) has: "
                          "OUT.csv the ones worth looking up, ranked; OUT-all.csv every one, with why the rest aren't")
     ap.add_argument('--shortlist', type=int, default=40, help='how many to rank in OUT.csv (default 40)')
+    ap.add_argument('--max-width', type=float, default=50,
+                    help='kHz: logged signals wider are broadband events, not transmissions (default 50)')
     args = ap.parse_args(argv)
+    globals()['MAX_WIDTH_KHZ'] = args.max_width  # (too_wide()'s, for this run)
     # A folder: every .csv in it (with --unknowns)
     import os
     expanded = []

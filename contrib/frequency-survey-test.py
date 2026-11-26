@@ -616,5 +616,19 @@ if not os.path.exists(fifo):
     os.mkfifo(fifo)
 survey.main(['-a', log14, '--unknowns', os.path.join(d, 'unknowns11.csv'), folder])
 check(os.path.exists(os.path.join(d, 'unknowns11-all.csv')), "a folder's subfolder and pipe named .csv left alone")
+# A broadband event (wider than 50 kHz) is no transmission on its centre
+log18 = os.path.join(d, 'log18.csv')
+with open(log18, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(cols)
+    for k in range(5):
+        stamp = f'2026-11-25 10:0{k}:00Z'
+        w.writerow([stamp, stamp, '450.0125', '450.01250', '1562.50', 3, 55, -40, '', ''])   # broadband, centred on a listed one
+        w.writerow([stamp, stamp, '460.1000', '460.10000', '12.5', 3, 20, -90, '', ''])      # a real one
+out24 = os.path.join(d, 'out24.csv')
+survey.main(['-a', log18, '-o', out24, sites])
+rows24 = {r['Frequency']: r for r in csv.DictReader(open(out24))}
+check(rows24['450.012500']['Transmissions'] == '0' and rows24['460.100000']['Transmissions'] == '5',
+      'a broadband event not counted for the frequency at its centre')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
