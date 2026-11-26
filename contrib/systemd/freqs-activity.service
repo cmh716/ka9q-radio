@@ -1,0 +1,21 @@
+# activity, for freqs: every transmission the receiver hears, and the
+# on-demand audit of the catalog and downloaded lists. A user service:
+#   cp freqs-activity.service freqs-tone-survey.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now freqs-activity freqs-tone-survey
+#   sudo loginctl enable-linger $USER      # (to start at boot, logged in or not)
+# Edit the paths and radiod's status group (fobos-uhf.local) to suit.
+[Unit]
+Description=activity: log every transmission; audit listed frequencies (freqs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/activity -c %h/Frequencies/uhf.d -l %h/activity.csv -s %h/activity-summary.csv \
+  -w %h/Frequencies/catalog/master.csv -w %h/Frequencies/downloads -w %h/Frequencies/downloads/sites \
+  -a tone-survey.local -r %h/tone-survey.csv fobos-uhf.local
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

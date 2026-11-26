@@ -1,5 +1,82 @@
 # Checking frequency lists on the air
 
+Your receiver checks downloaded frequency lists against what it actually hears,
+and proposes changes to your catalog. You approve or reject each one in a single
+sheet. Nothing changes until you do.
+
+## Day to day: freqs
+
+```sh
+cd ~/ka9q-radio/contrib
+./freqs review       # make the sheet: ~/Frequencies/catalog/review.csv
+./freqs apply        # apply what you approved
+./freqs config       # see what rebuilding the radiod config would change
+./freqs status       # what's running, how much evidence, what's waiting
+```
+
+1. Run `freqs review` whenever you like. It takes a minute or so. A day or two
+   of evidence is enough for busy channels.
+2. Open `review.csv`. Each row is one proposal:
+
+   | Decision | Frequency | Name | Proposal | Why |
+   |---|---|---|---|---|
+   | | 453.4750 | CFD Ch.2 FG | Change tone D364 -> 127.3 PL | heard 127.3 PL on 56 of 73 transmissions (listed D364) |
+   | | 424.2500 | W Seneca | Add (88.5 PL, as listed) | heard 88.5 PL on 193 of 193 transmissions |
+   | | 444.1500 | WB2JPQ | Remove | no RF activity in 2.3 days monitored |
+
+   - **Change**: a catalog channel heard with another tone, or digital.
+   - **Remove**: a catalog channel silent for 2 days or more. Fire, EMS and
+     other rare-use channels are never proposed for removal.
+   - **Add**: a downloaded listing heard on the air, with its tone or mode
+     confirmed, at a frequency the catalog doesn't have.
+
+3. Type **Approve** or **Reject** in the Decision column. Leave a row blank to
+   decide later. Save, and close the sheet.
+4. Run `freqs apply`. A rejected proposal isn't offered again, unless new
+   evidence changes it. The catalog is backed up first, to `catalog/backups/`.
+5. When you want the changes on the air, run `freqs config` to see what a
+   rebuilt radiod config would add and drop, then `freqs config --write` and
+   restart radiod. The old config is backed up first.
+
+A proposal appears only when the evidence is strong: at least 10 identified
+transmissions, 60% of them agreeing. FRS and GMRS channels are never changed
+or removed. Trunked systems' channels (their site lists in `downloads/sites/`)
+are never added as conventional channels.
+
+To check more lists, save them in `~/Frequencies/downloads/` (RadioReference
+county downloads, RepeaterBook exports) or `~/Frequencies/downloads/sites/`
+(trunked site downloads), then restart activity:
+`systemctl --user restart freqs-activity`.
+
+### Settings
+
+All optional, in `~/Frequencies/freqs.conf`. `freqs --help` lists them: the
+folders, `skip` (catalog channels never changed or removed, by default
+`GMRS|FRS`) and `profile` (the catalog profile the radiod config is made from,
+by default `uhf`).
+
+### Setting up the background programs (once)
+
+`activity` and `tone-survey` gather the evidence, and run all the time as user
+services. Stop any you started by hand, then:
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp ~/ka9q-radio/contrib/systemd/freqs-*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now freqs-activity freqs-tone-survey
+sudo loginctl enable-linger $USER     # so they start at boot, logged in or not
+```
+
+Check them with `freqs status`, or `systemctl --user status freqs-activity`.
+To change their options (the radiod status group, the paths), edit the copies
+in `~/.config/systemd/user/`, then `systemctl --user daemon-reload` and restart.
+
+## The details
+
+You don't need any of this day to day. It's here for when you want to look
+underneath `freqs`.
+
 These tools check downloaded frequency lists against what your receiver actually
 hears, before anything goes into your radiod config. Nothing is added to the
 config automatically: you decide in the [frequency catalog](frequency-catalog.md).
@@ -12,7 +89,7 @@ config automatically: you decide in the [frequency catalog](frequency-catalog.md
 
 See `activity(1)` and `tone-survey(1)` for every option.
 
-## Where the lists go
+### Where the lists go
 
 The commands below expect this layout. Each tool takes a folder and reads
 every `.csv` in it, so adding a list just means saving it in the right folder.
@@ -37,7 +114,7 @@ Readable formats:
 Keep RadioReference talkgroup downloads (`trs_tg_*.csv`) out of these folders.
 They have no frequencies, and activity refuses a list without a frequency column.
 
-## Running
+### Running
 
 activity and tone-survey run all the time. Start them once:
 
@@ -58,7 +135,7 @@ tone-survey -o ~/tone-survey.csv tone-survey.local
 After adding or removing a list, restart activity: it reads the lists only at
 start. tone-survey needn't restart. Both keep their results across restarts.
 
-## Reports
+### Reports
 
 Run these whenever you like. A day or two of data is enough for busy
 frequencies; give rarely used ones a week.
@@ -118,7 +195,7 @@ To identify an unknown:
 - Use the FCC's ULS for 454.025–454.650 MHz (mostly Part 22 channels).
 - Use ISED's Spectrum Management System for Ontario stations.
 
-## Listening to one
+### Listening to one
 
 A temporary channel, heard in monitor among the group's channels:
 
@@ -137,7 +214,7 @@ To remove it early:
 tune -r fobos-uhf.local -s 1454050 -t 1
 ```
 
-## Correcting the catalog
+### Correcting the catalog
 
 For `master.csv`, the survey can propose corrections from what was heard:
 
@@ -175,7 +252,7 @@ corrected channel fails validation. It backs Master up first, to
 `backups/`. Removed channels go to `ignored.csv`, so an import won't propose
 them again.
 
-## Then
+### Then
 
 Add what you've confirmed to the catalog (see
 [frequency-catalog.md](frequency-catalog.md)) and generate the radiod config

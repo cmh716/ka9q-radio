@@ -540,6 +540,34 @@ def busiest_hours(starts):
     return ' '.join(f'{h:02d}h' for h in sorted(top))
 
 
+def evidence(activity_path, coverage_path=None, lo=None, hi=None):
+    """The log and the coverage: (every row, broadband events too, with
+    their flag; the transmissions; the coverage, or None). Every row says
+    the receiver was watching; only the narrower are transmissions on a
+    frequency. The coverage: the given file, else the log's name with
+    -coverage if it's there; the log from before it began counted as
+    watched from its first transmission, across lo-hi or the log's span"""
+    import os
+    logged = read_activity(activity_path, wide=True) if os.path.exists(activity_path) else []
+    transmissions = [t[:4] for t in logged if not t[4]]
+    cover_path = coverage_path or re.sub(r'(\.csv)?$', '-coverage.csv', activity_path, count=1)
+    coverage = None
+    if coverage_path or os.path.exists(cover_path):
+        coverage = read_coverage(cover_path)
+        if not coverage:
+            sys.exit(f'{cover_path}: no coverage rows')
+    if not logged and coverage is None:
+        sys.exit(f'{activity_path}: no transmissions logged, and no coverage file to say it was watching')
+    if coverage is not None:
+        began = min(s for s, _, _, _ in coverage)
+        before = [(t[0], t[1]) for t in logged if t[1] < began - SLACK]
+        if before:
+            blo = lo if lo is not None else min(hz for hz, _ in before)
+            bhi = hi if hi is not None else max(hz for hz, _ in before)
+            coverage.append((min(t for _, t in before), began - datetime.timedelta(seconds=1), blo, bhi))
+    return logged, transmissions, coverage
+
+
 def survey(rows, transmissions, lo, hi, coverage=None):
     """lo, hi: the coverage given (Hz), or None; coverage: activity's rows, or None"""
     cands = [(i, frequency_of(r)) for i, r in enumerate(rows)]
@@ -951,10 +979,6 @@ def main(argv=None):
     args.candidates = args.candidates[0]
 
     import os
-    # Every row, the broadband events too, says the receiver was watching;
-    # only the narrower ones are transmissions on a frequency
-    logged = read_activity(args.activity, wide=True) if os.path.exists(args.activity) else []
-    transmissions = [t[:4] for t in logged if not t[4]]
     lo = hi = None
     if args.range:
         m = re.fullmatch(r'\s*([\d.]+)\s*-\s*([\d.]+)\s*', args.range)
@@ -964,24 +988,7 @@ def main(argv=None):
 
     fields, rows = read_candidates(args.candidates)
     cover_path = args.coverage or re.sub(r'(\.csv)?$', '-coverage.csv', args.activity, count=1)
-    coverage = None
-    if args.coverage or os.path.exists(cover_path):
-        coverage = read_coverage(cover_path)
-        if not coverage:
-            sys.exit(f'{cover_path}: no coverage rows')
-    if not logged and coverage is None:
-        sys.exit(f'{args.activity}: no transmissions logged, and no coverage file to say it was watching')
-    if coverage is not None:
-        # The log from before coverage was recorded (an older activity):
-        # watched as the log says, from its first transmission until the
-        # coverage starts, across --range or the log's span, as with no
-        # coverage file at all
-        began = min(s for s, _, _, _ in coverage)
-        before = [(t[0], t[1]) for t in logged if t[1] < began - SLACK]
-        if before:
-            blo = lo if lo is not None else min(hz for hz, _ in before)
-            bhi = hi if hi is not None else max(hz for hz, _ in before)
-            coverage.append((min(t for _, t in before), began - datetime.timedelta(seconds=1), blo, bhi))
+    logged, transmissions, coverage = evidence(args.activity, args.coverage, lo, hi)
     rows = survey(rows, transmissions, lo, hi, coverage)
     if args.tones:
         results = read_tones(args.tones)

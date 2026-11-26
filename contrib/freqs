@@ -1,0 +1,520 @@
+#!/usr/bin/env python3
+"""freqs: one approve/reject sheet for the frequency catalog.
+
+  freqs review          the sheet (~/Frequencies/catalog/review.csv), from the latest evidence
+  freqs apply           your Approve/Reject marks applied to the catalog
+  freqs config [--write]  what the radiod config would change; --write writes it
+  freqs status          what's running, how much evidence there is, what's waiting
+
+The evidence: activity's log (every transmission the receiver hears) and
+tone-survey's results (the tone or digital mode of each), both running all
+the time. review turns it into proposals, one a row:
+
+  Change   a catalog channel heard with another tone, or digital
+  Remove   a catalog channel silent for days (not fire, EMS or other rare-use)
+  Add      a downloaded listing (~/Frequencies/downloads) heard on the air, its
+           tone or mode confirmed, at a frequency the catalog doesn't have yet
+
+Type Approve or Reject in the Decision column, save, close the sheet, and
+run apply. Blank rows wait. A rejected proposal doesn't come back (unless
+new evidence changes it). apply changes the catalog only: the radiod config
+is rebuilt with config --write, when you choose, after seeing what changes.
+
+Settings (all optional), in ~/Frequencies/freqs.conf:
+
+  [freqs]
+  catalog = ~/Frequencies/catalog
+  downloads = ~/Frequencies/downloads
+  sites = ~/Frequencies/downloads/sites   ; trunked systems' site lists: their channels aren't added
+  activity = ~/activity.csv
+  tones = ~/tone-survey.csv
+  skip = GMRS|FRS          ; catalog channels never changed or removed (Service, Group or Name)
+  profile = uhf            ; the catalog profile the radiod config is made from
+  base = ~/Frequencies/uhf.d
+  config = ~/Frequencies/uhf.d/50-conventional.conf
+  names = ~/Frequencies/names/uhf-names.csv
+"""
+# SPDX-License-Identifier: GPL-3.0-or-later
+import argparse
+import collections
+import configparser
+import csv
+import datetime
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def module(name, filename):
+    spec = importlib.util.spec_from_file_location(name, HERE / filename)
+    m = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(m)
+    return m
+
+
+survey = module('frequency_survey', 'frequency-survey.py')
+catalog = module('frequency_catalog', 'frequency-catalog.py')
+
+DEFAULTS = {
+    'catalog': '~/Frequencies/catalog',
+    'downloads': '~/Frequencies/downloads',
+    'sites': '~/Frequencies/downloads/sites',
+    'activity': '~/activity.csv',
+    'tones': '~/tone-survey.csv',
+    'skip': 'GMRS|FRS',
+    'profile': 'uhf',
+    'base': '~/Frequencies/uhf.d',
+    'config': '~/Frequencies/uhf.d/50-conventional.conf',
+    'names': '~/Frequencies/names/uhf-names.csv',
+}
+COLUMNS = ['Decision', 'Frequency', 'Name', 'Proposal', 'Why', 'List', 'Key', 'Payload']
+APPROVE = {'approve', 'approved', 'yes', 'y', 'a', 'ok', 'keep'}
+REJECT = {'reject', 'rejected', 'no', 'n', 'r', 'ignore'}
+
+
+def settings(path=None):
+    cp = configparser.ConfigParser(inline_comment_prefixes=(';', '#'))
+    cp.read_dict({'freqs': DEFAULTS})
+    cp.read(os.path.expanduser(path or '~/Frequencies/freqs.conf'))
+    s = dict(cp['freqs'])
+    for k in ('catalog', 'downloads', 'sites', 'activity', 'tones', 'base', 'config', 'names'):
+        s[k] = Path(os.path.expanduser(s[k]))
+    return s
+
+
+def key_of(kind, ident, payload):
+    return f'{kind}:{ident}:' + hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:10]
+
+
+def state_path(s):
+    return s['catalog'] / 'review-state.json'
+
+
+def load_state(s):
+    p = state_path(s)
+    return json.loads(p.read_text()) if p.exists() else {'rejected': {}}
+
+
+def save_state(s, state):
+    catalog.atomic_text(state_path(s), json.dumps(state, indent=2, sort_keys=True) + '\n')
+
+
+def mhz_text(value):
+    try:
+        return f'{float(value):.4f}'
+    except (TypeError, ValueError):
+        return value or ''
+
+
+def days_watched(coverage, logged):
+    if coverage:
+        return survey.merged_seconds((a, b) for a, b, _, _ in coverage) / 86400
+    if logged:
+        return (max(t[2] for t in logged) - min(t[1] for t in logged)).total_seconds() / 86400
+    return 0
+
+
+# --- the proposals ---
+
+def plain(evidence):
+    """frequency-survey's evidence, plainly: 'heard 127.3 PL on 56 of 73
+    transmissions (listed D364)'"""
+    m = re.search(r'heard (.+?) x(\d+) of (\d+)', evidence)
+    if not m:
+        return evidence
+    listed = re.match(r'listed (\S+(?: PL)?),', evidence)
+    return (f'heard {m.group(1)} on {m.group(2)} of {m.group(3)} transmissions'
+            + (f' (listed {listed.group(1)})' if listed else ''))
+
+
+def change_rows(s, logged_tx, coverage, results):
+    """Catalog channels to change or remove: frequency-survey's corrections,
+    one sheet row a channel"""
+    fields, rows = survey.read_candidates(str(s['catalog'] / 'master.csv'))
+    rows = survey.survey(rows, logged_tx, None, None, coverage)
+    for r in rows:
+        survey.tone_check(r, results)
+    by_id = {r['ID']: r for r in rows}
+    found = collections.OrderedDict()
+    for c in survey.corrections(rows, s['skip'] or None, fields):
+        if c['Action'] in ('change', 'remove'):
+            found.setdefault(c['ID'], []).append(c)
+    out = []
+    for ident, cs in found.items():
+        r = by_id[ident]
+        payload = [{k: c[k] for k in ('ID', 'Action', 'Field', 'From', 'To')} for c in cs]
+        if cs[0]['Action'] == 'remove':
+            kind, proposal = 'remove', 'Remove'
+            why = cs[0]['Evidence']
+        else:
+            kind = 'change'
+            fields_to = {c['Field']: c['To'] for c in cs}
+            listed = survey.listed_tone(r) or 'none'
+            if 'RX Mode' in fields_to:
+                proposal = f"Change {r.get('RX Mode', '')} -> {fields_to['RX Mode']}"
+                if fields_to.get('P25 NAC'):
+                    proposal += f" (NAC {fields_to['P25 NAC']})"
+            else:
+                kind_to = fields_to.get('RX Squelch Type', r.get('RX Squelch Type', ''))
+                value_to = fields_to.get('RX Squelch Value', r.get('RX Squelch Value', ''))
+                pol_to = fields_to.get('RX DCS Polarity', r.get('RX DCS Polarity', ''))
+                heard = (f'{float(value_to):.1f} PL' if kind_to == 'CTCSS' else
+                         ('I' if pol_to.lower().startswith('inv') else 'D') + value_to.zfill(3) if kind_to == 'DCS' else kind_to)
+                proposal = f'Change tone {listed} -> {heard}'
+            why = cs[0]['Evidence']
+        why = plain(why)
+        out.append({'Frequency': mhz_text(r.get('RX MHz')), 'Name': r.get('Name', ''), 'Proposal': proposal,
+                    'Why': why, 'List': 'catalog', 'Key': key_of(kind, ident, payload),
+                    'Payload': json.dumps({'kind': kind, 'corrections': payload})})
+    return out
+
+
+def add_rows(s, logged_tx, coverage, results):
+    """Downloaded listings heard on the air, their tone or mode confirmed, at a
+    frequency the catalog doesn't have: one per frequency"""
+    master, ignored, _, _ = catalog.load(s['catalog'])
+    have = sorted(round(float(r['RX MHz']) * 1e6) for r in master.values() if r.get('RX MHz'))
+    import bisect
+
+    def in_catalog(hz):
+        k = bisect.bisect_left(have, hz - 1000)
+        return k < len(have) and abs(have[k] - hz) <= 1000
+    # A trunked system's channels (its site lists): followed through the
+    # system, not added as conventional channels
+    trunked = set()
+    if s['sites'].is_dir():
+        for p in s['sites'].glob('*.csv'):
+            if p.is_file():
+                for r in survey.read_candidates(str(p))[1]:
+                    f = survey.frequency_of(r)
+                    if f:
+                        trunked.add(round(f / 1000))
+    rules_path = s['catalog'] / 'source-rules.csv'
+    rules = {r['File']: r for r in catalog.read_csv(rules_path, ['File', 'Service', 'Group'])}
+    files = sorted(p for p in s['downloads'].glob('*.csv') if p.is_file() and not p.name.startswith('.'))
+    found = {}
+    for p in files:
+        try:
+            found.update(catalog.source_rows([p], rules))
+        except ValueError as e:
+            print(f'  ({p.name} left out: {e})', file=sys.stderr)
+    candidates = {}
+    for ident, row in found.items():
+        if ident in master or ident in ignored or not row.get('RX MHz'):
+            continue
+        hz = round(float(row['RX MHz']) * 1e6)
+        if in_catalog(hz) or round(hz / 1000) in trunked:
+            continue
+        candidates.setdefault(round(hz / 100), []).append((ident, catalog.upgrade(dict(row))))
+    rows, originals = [], {}
+    for group in candidates.values():
+        for ident, row in group:
+            originals[ident] = dict(row)
+            rows.append(row)
+    rows = survey.survey(rows, logged_tx, None, None, coverage)
+    for r in rows:
+        survey.tone_check(r, results)
+    by_freq = collections.defaultdict(list)
+    for r in rows:
+        if r.get('Survey') == survey.ACTIVE and r.get('Heard'):
+            by_freq[round(float(r['RX MHz']) * 1e4)].append(r)
+    out = []
+    for group in by_freq.values():
+        # One listing a frequency: the one whose listed tone matches what's heard, if any
+        group.sort(key=lambda r: (r.get('Tone check') != 'confirmed', r.get('Name', '')))
+        r = group[0]
+        verdict = add_verdict(r)
+        if verdict is None:
+            continue
+        proposal, changes, why = verdict
+        row = dict(originals[r['ID']])
+        source = dict(found[r['ID']])
+        row.update(changes)
+        if not row.get('Name'):
+            # (the catalog needs a name: the listing's description, else its frequency)
+            row['Name'] = (row.get('Description') or '').strip()[:24] or mhz_text(row.get('RX MHz'))
+        payload = {'kind': 'add', 'row': row, 'source': source}
+        others = f' (and {len(group) - 1} other listing{"s" if len(group) > 2 else ""} there)' if len(group) > 1 else ''
+        out.append({'Frequency': mhz_text(r.get('RX MHz')), 'Name': r.get('Name', ''), 'Proposal': proposal + others,
+                    'Why': why, 'List': row.get('Source', ''), 'Key': key_of('add', r['ID'], {k: row[k] for k in sorted(row)}),
+                    'Payload': json.dumps(payload)})
+    return out
+
+
+def add_verdict(r):
+    """A downloaded listing's case for adding: (proposal, field changes, why), or None"""
+    kinds = survey.heard_kinds(r.get('Heard'))
+    total = sum(n for _, n in kinds)
+    if not total:
+        return None
+    listed = survey.listed_tone(r)
+    digital = collections.Counter()
+    nacs = collections.Counter()
+    for what, n in kinds:
+        word = what.split()[0]
+        if word in survey.DIGITAL_MODES:
+            digital[word] += n
+            m = re.match(r'P25 NAC ([0-9A-F]{3})', what)
+            if m:
+                nacs[m.group(1)] += n
+    listed_heard = bool(listed) and listed != 'none' and any(w == listed for w, _ in kinds)
+    if digital:
+        word, n = digital.most_common(1)[0]
+        mode = survey.DIGITAL_MODES[word]
+        if mode and n >= survey.ENOUGH and n >= survey.SHARE * total and not listed_heard:
+            was = (r.get('RX Mode') or '').upper()
+            if was != mode and (was.rstrip('E') == mode or was.startswith(mode) and was[len(mode):].isdigit()):
+                mode = was  # (listed more exactly, encrypted or NXDN48/96: kept so)
+            changes = {'RX Mode': mode, 'RX Squelch Type': 'Digital', 'RX Squelch Value': '', 'RX DCS Polarity': '',
+                       'CTCSS Notch Hz': ''}
+            if mode == 'P25' and nacs:
+                nac, k = nacs.most_common(1)[0]
+                if k >= survey.ENOUGH and k >= survey.SHARE * n:
+                    changes['P25 NAC'] = nac
+            return (f'Add as {mode}' + (f' (listed {was})' if was and was != mode else ''), changes,
+                    f'heard {word} on {n} of {total} transmissions')
+    values = [(w, n) for w, n in kinds if w != 'other' and w.split()[0] not in survey.DIGITAL_MODES]
+    if not values or (r.get('RX Mode') or '').upper() not in ('FM', 'FMN'):
+        return None
+    atotal = sum(n for w, n in kinds if w.split()[0] not in survey.DIGITAL_MODES)
+    what, n = max(values, key=lambda k: k[1])
+    if n < survey.ENOUGH or n < survey.SHARE * atotal:
+        return None
+    if what == 'none':
+        if listed and listed != 'none':
+            return None  # listed with a tone, heard without: hear it first
+        return ('Add (no tone)', {'RX Squelch Type': 'Carrier', 'RX Squelch Value': '', 'RX DCS Polarity': ''},
+                f'heard with no tone on {n} of {total} transmissions')
+    if not re.fullmatch(r'\d+\.\d PL|[DI][0-7]{3}', what):
+        return None
+    if listed_heard and what != listed:
+        return None  # the listed tone heard too: shared
+    if what.endswith(' PL'):
+        changes = {'RX Squelch Type': 'CTCSS', 'RX Squelch Value': what[:-3], 'RX DCS Polarity': ''}
+    else:
+        changes = {'RX Squelch Type': 'DCS', 'RX Squelch Value': what[1:], 'RX DCS Polarity': 'Inverted' if what[0] == 'I' else 'Normal'}
+    if what == listed:
+        return f'Add ({what}, as listed)', changes, f'heard {what} on {n} of {total} transmissions'
+    return (f'Add with {what} (listed {listed or "none"})', changes, f'heard {what} on {n} of {total} transmissions')
+
+
+def review(s, quiet=False):
+    """The sheet, from the latest evidence; decisions already typed kept"""
+    logged, transmissions, coverage = survey.evidence(str(s['activity']))
+    results = survey.read_tones(str(s['tones'])) if s['tones'].exists() else {}
+    days = days_watched(coverage, logged)
+    proposals = change_rows(s, transmissions, coverage, results) + add_rows(s, transmissions, coverage, results)
+    for p in proposals:
+        if not p['Name']:
+            p['Name'] = json.loads(p['Payload']).get('row', {}).get('Name', '')
+    state = load_state(s)
+    sheet = s['catalog'] / 'review.csv'
+    typed = {}
+    if sheet.exists():
+        for r in catalog.read_csv(sheet):
+            if r.get('Key') and r.get('Decision'):
+                typed[r['Key']] = r['Decision']
+    rows = []
+    for p in proposals:
+        if p['Key'] in state['rejected']:
+            continue
+        p['Decision'] = typed.get(p['Key'], '')
+        rows.append(p)
+    order = {'change': 0, 'remove': 1, 'add': 2}
+    rows.sort(key=lambda r: (order[r['Key'].split(':')[0]], float(r['Frequency'] or 0)))
+    survey.write_csv(str(sheet), COLUMNS, rows)
+    if not quiet:
+        kinds = collections.Counter(r['Key'].split(':')[0] for r in rows)
+        print(f'{days:.1f} days of evidence. {len(rows)} to decide in {sheet}: '
+              f"{kinds['change']} to change, {kinds['remove']} to remove, {kinds['add']} to add.")
+        print('Type Approve or Reject in the Decision column, save and close it, then: freqs apply')
+    return rows
+
+
+# --- applying ---
+
+def apply(s):
+    sheet = s['catalog'] / 'review.csv'
+    if not sheet.exists():
+        sys.exit('no review sheet yet: freqs review')
+    rows = catalog.read_csv(sheet, ['Decision', 'Key', 'Payload'])
+    state = load_state(s)
+    approved, rejected, other = [], [], []
+    for r in rows:
+        d = r['Decision'].strip().lower()
+        if d in APPROVE:
+            approved.append(r)
+        elif d in REJECT:
+            rejected.append(r)
+        elif d:
+            other.append(r)
+    if other:
+        sys.exit('Decision must be Approve, Reject or blank: ' + ', '.join(f"{r['Frequency']} ({r['Decision']})" for r in other))
+    fixes, adds = [], []
+    for r in approved:
+        p = json.loads(r['Payload'])
+        (adds if p['kind'] == 'add' else fixes).append(p)
+    changed = removed = added = 0
+    if fixes:
+        with tempfile.NamedTemporaryFile('w', suffix='.csv', delete=False, newline='') as f:
+            w = csv.DictWriter(f, fieldnames=['ID', 'Action', 'Field', 'From', 'To'])
+            w.writeheader()
+            for p in fixes:
+                w.writerows(p['corrections'])
+            tmp = f.name
+        try:
+            catalog.correct(argparse.Namespace(workspace=s['catalog'], corrections=Path(tmp)))
+        except ValueError as e:
+            sys.exit(f'{e}\nNothing was changed. Run freqs review for a fresh sheet.')
+        finally:
+            os.unlink(tmp)
+        changed = sum(1 for p in fixes if p['kind'] == 'change')
+        removed = sum(1 for p in fixes if p['kind'] == 'remove')
+    if adds:
+        master, ignored, inbox, cstate = catalog.load(s['catalog'])
+        for p in adds:
+            row = catalog.upgrade(dict(p['row']))
+            if row['ID'] in master:
+                continue
+            catalog.validate(row)
+            master[row['ID']] = row
+            ignored.pop(row['ID'], None)
+            inbox.pop(row['ID'], None)
+            cstate['approved'][row['ID']] = catalog.upgrade(dict(p['source']))  # (an import won't propose it again)
+            added += 1
+        backup = catalog.snapshot(s['catalog'])
+        catalog.write_csv(s['catalog'] / 'master.csv', catalog.FIELDS, master.values())
+        catalog.write_csv(s['catalog'] / 'ignored.csv', catalog.FIELDS, ignored.values())
+        catalog.write_csv(s['catalog'] / 'inbox.csv', catalog.INBOX, inbox.values())
+        catalog.save_state(s['catalog'], cstate)
+        print(f'(backup of the catalog before adding: {backup})')
+    now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
+    for r in rejected:
+        state['rejected'][r['Key']] = now
+    save_state(s, state)
+    print(f'Applied: {changed} changed, {removed} removed, {added} added; {len(rejected)} rejected (not proposed again).')
+    left = review(s, quiet=True)
+    print(f'{len(left)} still to decide in {sheet}.')
+    if changed or removed or added:
+        print('The radiod config is unchanged: freqs config shows what rebuilding it would change.')
+
+
+# --- the radiod config ---
+
+def sections(path):
+    """A radiod config's channels: {(section, frequency)}"""
+    out = set()
+    if not path.exists():
+        return out
+    section = None
+    for line in path.read_text().splitlines():
+        line = line.split('#')[0].split(';')[0].strip()
+        m = re.fullmatch(r'\[(.+)\]', line)
+        if m:
+            section = m.group(1)
+            continue
+        m = re.fullmatch(r'freq\s*=\s*"?([^"]*)"?', line)
+        if m and section:
+            for f in m.group(1).split():
+                out.add((section, f))
+    return out
+
+
+def config(s, write):
+    with tempfile.TemporaryDirectory() as d:
+        export = Path(d) / 'export.csv'
+        new_conf = Path(d) / 'conventional.conf'
+        new_names = Path(d) / 'names.csv'
+        catalog.export(argparse.Namespace(workspace=s['catalog'], profile=s['profile'], output=export))
+        r = subprocess.run([sys.executable, str(HERE / 'rr2radiod.py'), '--base', str(s['base']), '-o', str(new_conf),
+                            '-n', str(new_names), str(export)], capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit(r.stderr.strip() or 'rr2radiod failed')
+        old, new = sections(s['config']), sections(new_conf)
+        old_f = {f for _, f in old}
+        new_f = {f for _, f in new}
+        gone, come = sorted(old_f - new_f), sorted(new_f - old_f)
+        moved = sorted({f for _, f in new ^ old} & old_f & new_f)
+        print(f"The catalog's {s['profile']} profile, as a radiod config, against {s['config']}:")
+        print(f'  {len(new_f)} frequencies (now {len(old_f)}): {len(come)} new, {len(gone)} gone, {len(moved)} with other settings')
+        for title, items in (('new', come), ('gone', gone), ('other settings', moved)):
+            if items:
+                print(f'  {title}: ' + ' '.join(items[:24]) + (f' and {len(items) - 24} more' if len(items) > 24 else ''))
+        if not (gone or come or moved):
+            print('  no change')
+            return
+        if len(new_f) > len(old_f) + 25:
+            print(f'  NOTE: {len(new_f) - len(old_f)} more channels than now: each costs radiod CPU (check idle time in')
+            print("  top after restarting). To leave some out, take them out of the profile in the catalog's Profiles column.")
+        if not write:
+            print('To write it (the present files backed up first): freqs config --write; then restart radiod.')
+            return
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        backup = s['catalog'] / 'backups' / f'{stamp}-config'
+        backup.mkdir(parents=True, exist_ok=True)
+        for p in (s['config'], s['names']):
+            if p.exists():
+                shutil.copy2(p, backup / p.name)
+        s['names'].parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(new_conf, s['config'])
+        shutil.copyfile(new_names, s['names'])
+        print(f'Written {s["config"]} and {s["names"]} (the old ones in {backup}). Restart radiod to use them.')
+
+
+# --- status ---
+
+def status(s):
+    for prog in ('activity', 'tone-survey', 'radiod'):
+        r = subprocess.run(['pgrep', '-x', prog], capture_output=True, text=True)
+        print(f"  {prog:12} {'running' if r.stdout.strip() else 'NOT RUNNING'}")
+    if s['activity'].exists():
+        logged, _, coverage = survey.evidence(str(s['activity']))
+        print(f'  evidence: {days_watched(coverage, logged):.1f} days, {len(logged)} logged transmissions')
+    if s['tones'].exists():
+        print(f"  tone-survey: {len(survey.read_tones(str(s['tones'])))} frequencies identified")
+    sheet = s['catalog'] / 'review.csv'
+    if sheet.exists():
+        rows = catalog.read_csv(sheet)
+        marked = sum(1 for r in rows if r.get('Decision'))
+        print(f'  review sheet: {len(rows)} proposals, {marked} marked (freqs apply to apply them)')
+    else:
+        print('  review sheet: none yet (freqs review)')
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0], epilog='See contrib/frequency-survey.md.',
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--settings', help='settings file (default ~/Frequencies/freqs.conf)')
+    sub = ap.add_subparsers(dest='command', required=True)
+    sub.add_parser('review', help='make the approve/reject sheet from the latest evidence')
+    sub.add_parser('apply', help='apply the Approve/Reject marks to the catalog')
+    c = sub.add_parser('config', help='what the radiod config would change; --write writes it')
+    c.add_argument('--write', action='store_true')
+    sub.add_parser('status', help="what's running, how much evidence, what's waiting")
+    args = ap.parse_args(argv)
+    s = settings(args.settings)
+    try:
+        if args.command == 'review':
+            review(s)
+        elif args.command == 'apply':
+            apply(s)
+        elif args.command == 'config':
+            config(s, args.write)
+        else:
+            status(s)
+    except (ValueError, OSError, csv.Error) as e:
+        sys.exit(str(e))
+
+
+if __name__ == '__main__':
+    main()

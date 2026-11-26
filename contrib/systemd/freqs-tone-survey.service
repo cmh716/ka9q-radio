@@ -1,0 +1,14 @@
+# tone-survey, for freqs: the tone or digital mode of each audited
+# transmission. Installed with freqs-activity.service (see there).
+[Unit]
+Description=tone-survey: what each audited transmission carries (freqs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/tone-survey -o %h/tone-survey.csv tone-survey.local
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
