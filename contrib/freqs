@@ -529,7 +529,7 @@ def status(s):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0], epilog='See contrib/frequency-survey.md.',
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0], epilog='See contrib/freqs.md.',
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--settings', help='settings file (default ~/Frequencies/freqs.conf)')
     sub = ap.add_subparsers(dest='command', required=True)

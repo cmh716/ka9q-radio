@@ -1,6 +1,6 @@
 # Curated frequency catalog
 
-For day-to-day use, [freqs](frequency-survey.md) keeps the catalog for you: it
+For day-to-day use, [freqs](freqs.md) keeps the catalog for you: it
 proposes additions, changes and removals from what your receiver hears, in one
 sheet you approve or reject. The rest of this page describes the catalog
 itself, and the manual import and apply workflow underneath.
@@ -141,7 +141,7 @@ that would reintroduce unwanted channels. Move personal corrections from the old
 that old file automatically. The initial setup does not replace any receiver files.
 
 To check candidates on the air before adding them to a listening profile,
-see [Checking frequency lists on the air](frequency-survey.md): activity(1)
+see [Checking frequency lists on the air](freqs.md): activity(1)
 audits them as they're used, tone-survey(1) records what each carries, and
 frequency-survey.py reports on each list and on busy frequencies no list has.
 

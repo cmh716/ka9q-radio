@@ -1,4 +1,4 @@
-# Checking frequency lists on the air
+# freqs: checking frequency lists on the air
 
 Your receiver checks downloaded frequency lists against what it actually hears,
 and proposes changes to your catalog. You approve or reject each one in a single
