@@ -180,5 +180,25 @@ try:
 except OSError:
     pass
 check(a_.read_text() == 'old a' and not [p for p in d.glob('.one.txt*')], 'a failing batch write: the first file as it was, no temporary left')
+# A rename failing partway: those already replaced put back
+c_ = d / 'three.txt'; e_ = d / 'four.txt'
+c_.write_text('old c'); e_.write_text('old e')
+real = catalog.os.replace
+calls = []
+def failing(src, dst):
+    calls.append(dst)
+    if len(calls) == 2:
+        raise OSError('the second rename fails')
+    return real(src, dst)
+catalog.os.replace = failing
+try:
+    catalog.write_together({c_: 'new c', e_: 'new e'})
+    check(False, 'a rename failing raises')
+except OSError:
+    pass
+finally:
+    catalog.os.replace = real
+check(c_.read_text() == 'old c' and e_.read_text() == 'old e' and not [p for p in d.glob('.three*')] and not [p for p in d.glob('.four*')],
+      'a rename failing partway: the first put back, no temporary left')
 print('freqs tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

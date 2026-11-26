@@ -444,8 +444,10 @@ def config(s, write):
         catalog.export(argparse.Namespace(workspace=s['catalog'], profile=s['profile'], output=export))
         command = [sys.executable, str(HERE / 'rr2radiod.py'), '--base', str(s['base']), '-o', str(new_conf),
                    '-n', str(new_names)]
-        if s['base'].is_dir() and s['config'].exists() and s['config'].resolve().parent == s['base'].resolve():
-            command += ['--replaces', s['config'].name]  # (the file this stands in for, left out of the base; none yet: a new one)
+        if s['base'].is_dir() and s['config'].resolve().parent == s['base'].resolve():
+            # The file this stands in for, left out of the base; none yet: a
+            # new one, beside every file there
+            command += ['--replaces', s['config'].name] if s['config'].exists() else ['--new']
         r = subprocess.run(command + [str(export)], capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit(r.stderr.strip() or 'rr2radiod failed')

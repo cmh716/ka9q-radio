@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import shutil
 import tempfile
 from decimal import Decimal, InvalidOperation
 
@@ -99,9 +100,36 @@ def write_together(files):
         for tmp, path in staged:
             if os.path.exists(path) and not os.path.isfile(path):
                 raise OSError(f'{path}: not a file')
-        for tmp, path in staged:
-            os.replace(tmp, path)
-        staged = []
+        # The files as they are, kept beside them: should a rename fail
+        # partway, those already replaced are put back
+        kept = []
+        try:
+            for _, path in staged:
+                if os.path.exists(path):
+                    fd, old = tempfile.mkstemp(prefix='.' + path.name + '.old', dir=path.parent)
+                    os.close(fd)
+                    shutil.copy2(path, old)
+                    kept.append((path, old))
+                else:
+                    kept.append((path, None))
+            done = []
+            try:
+                for tmp, path in staged:
+                    os.replace(tmp, path)
+                    done.append(path)
+            except OSError:
+                for path, old in kept:
+                    if path in done:
+                        if old is not None:
+                            os.replace(old, path)
+                        else:
+                            os.unlink(path)
+                raise
+            staged = []
+        finally:
+            for _, old in kept:
+                if old is not None and os.path.exists(old):
+                    os.unlink(old)
     finally:
         for tmp, _ in staged:
             if os.path.exists(tmp):
