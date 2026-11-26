@@ -230,12 +230,11 @@ def add_rows(s, logged_tx, coverage, results):
             by_freq[round(float(r['RX MHz']) * 1e4)].append(r)
     out = []
     for group in by_freq.values():
-        # One listing a frequency: the one whose listed tone matches what's heard, if any
-        group.sort(key=lambda r: (r.get('Tone check') != 'confirmed', r.get('Name', '')))
-        r = group[0]
-        verdict = add_verdict(r)
-        if verdict is None:
+        # One listing a frequency
+        chosen = choose(group)
+        if chosen is None:
             continue
+        r, verdict = chosen
         proposal, changes, why = verdict
         row = dict(originals[r['ID']])
         source = dict(found[r['ID']])
@@ -249,6 +248,17 @@ def add_rows(s, logged_tx, coverage, results):
                     'Why': why, 'List': row.get('Source', ''), 'Key': key_of('add', r['ID'], {k: row[k] for k in sorted(row)}),
                     'Payload': json.dumps(payload)})
     return out
+
+
+def choose(group):
+    """Of the listings heard at one frequency, the one to propose and its case:
+    the first with a case, those whose listed tone was heard first; or None"""
+    group = sorted(group, key=lambda r: (r.get('Tone check') != 'confirmed', r.get('Name', '')))
+    for r in group:
+        v = add_verdict(r)
+        if v is not None:
+            return r, v
+    return None
 
 
 def add_verdict(r):
@@ -364,24 +374,13 @@ def apply(s):
     for r in approved:
         p = json.loads(r['Payload'])
         (adds if p['kind'] == 'add' else fixes).append(p)
-    changed = removed = added = 0
-    if fixes:
-        with tempfile.NamedTemporaryFile('w', suffix='.csv', delete=False, newline='') as f:
-            w = csv.DictWriter(f, fieldnames=['ID', 'Action', 'Field', 'From', 'To'])
-            w.writeheader()
-            for p in fixes:
-                w.writerows(p['corrections'])
-            tmp = f.name
-        try:
-            catalog.correct(argparse.Namespace(workspace=s['catalog'], corrections=Path(tmp)))
-        except ValueError as e:
-            sys.exit(f'{e}\nNothing was changed. Run freqs review for a fresh sheet.')
-        finally:
-            os.unlink(tmp)
-        changed = sum(1 for p in fixes if p['kind'] == 'change')
-        removed = sum(1 for p in fixes if p['kind'] == 'remove')
-    if adds:
-        master, ignored, inbox, cstate = catalog.load(s['catalog'])
+    # One batch: the corrections and the additions planned together, every
+    # one checked and validated, then written once (a failure writes nothing)
+    added = 0
+    master, ignored, inbox, cstate = catalog.load(s['catalog'])
+    try:
+        changed_ids, removed_ids = catalog.plan_corrections(
+            s['catalog'], master, ignored, [c for p in fixes for c in p['corrections']])
         for p in adds:
             row = catalog.upgrade(dict(p['row']))
             if row['ID'] in master:
@@ -392,12 +391,16 @@ def apply(s):
             inbox.pop(row['ID'], None)
             cstate['approved'][row['ID']] = catalog.upgrade(dict(p['source']))  # (an import won't propose it again)
             added += 1
+    except ValueError as e:
+        sys.exit(f'{e}\nNothing was changed. Run freqs review for a fresh sheet.')
+    changed, removed = len(changed_ids - removed_ids), len(removed_ids)
+    if changed or removed or added:
         backup = catalog.snapshot(s['catalog'])
         catalog.write_csv(s['catalog'] / 'master.csv', catalog.FIELDS, master.values())
         catalog.write_csv(s['catalog'] / 'ignored.csv', catalog.FIELDS, ignored.values())
         catalog.write_csv(s['catalog'] / 'inbox.csv', catalog.INBOX, inbox.values())
         catalog.save_state(s['catalog'], cstate)
-        print(f'(backup of the catalog before adding: {backup})')
+        print(f'(the catalog as it was: {backup})')
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
     for r in rejected:
         state['rejected'][r['Key']] = now
@@ -423,7 +426,7 @@ def sections(path):
         if m:
             section = m.group(1)
             continue
-        m = re.fullmatch(r'freq\s*=\s*"?([^"]*)"?', line)
+        m = re.fullmatch(r'freq\d?\s*=\s*"?([^"]*)"?', line)  # (freq, and freq0..freq9: rr2radiod's longer lists)
         if m and section:
             for f in m.group(1).split():
                 out.add((section, f))
@@ -436,8 +439,11 @@ def config(s, write):
         new_conf = Path(d) / 'conventional.conf'
         new_names = Path(d) / 'names.csv'
         catalog.export(argparse.Namespace(workspace=s['catalog'], profile=s['profile'], output=export))
-        r = subprocess.run([sys.executable, str(HERE / 'rr2radiod.py'), '--base', str(s['base']), '-o', str(new_conf),
-                            '-n', str(new_names), str(export)], capture_output=True, text=True)
+        command = [sys.executable, str(HERE / 'rr2radiod.py'), '--base', str(s['base']), '-o', str(new_conf),
+                   '-n', str(new_names)]
+        if s['base'].is_dir() and s['config'].resolve().parent == s['base'].resolve():
+            command += ['--replaces', s['config'].name]  # (the file this stands in for, left out of the base)
+        r = subprocess.run(command + [str(export)], capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit(r.stderr.strip() or 'rr2radiod failed')
         old, new = sections(s['config']), sections(new_conf)
@@ -450,9 +456,15 @@ def config(s, write):
         for title, items in (('new', come), ('gone', gone), ('other settings', moved)):
             if items:
                 print(f'  {title}: ' + ' '.join(items[:24]) + (f' and {len(items) - 24} more' if len(items) > 24 else ''))
-        if not (gone or come or moved):
+        def content(p):
+            # (the generated text, comments aside: they name the temporary export)
+            return [l for l in p.read_text().splitlines() if not l.lstrip().startswith('#')] if p.exists() else None
+        same_names = s['names'].exists() and s['names'].read_bytes() == new_names.read_bytes()
+        if content(s['config']) == content(new_conf) and same_names:
             print('  no change')
             return
+        if not (gone or come or moved):
+            print('  the same channels; other settings or names differ')
         if len(new_f) > len(old_f) + 25:
             print(f'  NOTE: {len(new_f) - len(old_f)} more channels than now: each costs radiod CPU (check idle time in')
             print("  top after restarting). To leave some out, take them out of the profile in the catalog's Profiles column.")

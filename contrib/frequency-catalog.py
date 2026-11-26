@@ -436,6 +436,18 @@ def correct(args):
     w = args.workspace
     master, ignored, inbox, state = load(w)
     rows = read_csv(args.corrections, ['ID', 'Action', 'Field', 'From', 'To'])
+    changed, removed = plan_corrections(w, master, ignored, rows)
+    backup = snapshot(w)
+    write_csv(w / 'master.csv', FIELDS, master.values())
+    write_csv(w / 'ignored.csv', FIELDS, ignored.values())
+    print(f'Changed {len(changed - removed)}; removed {len(removed)} (to ignored.csv); master {len(master)}. Backup: {backup}')
+
+
+def plan_corrections(w, master, ignored, rows):
+    """Corrections (change and remove rows) made to master and ignored in
+    memory, every one checked and the result validated: (changed IDs,
+    removed IDs). ValueError, with nothing changed that matters (the
+    caller writes nothing), if any doesn't hold"""
     # Master as the file holds it (before upgrade()'s defaults): what a
     # removal's fingerprint was taken of
     with (w / 'master.csv').open(newline='', encoding='utf-8-sig') as f:
@@ -475,10 +487,7 @@ def correct(args):
         validate(master[key])
     for key in removed:
         ignored[key] = master.pop(key)  # (ignored: an import won't propose it again)
-    backup = snapshot(w)
-    write_csv(w / 'master.csv', FIELDS, master.values())
-    write_csv(w / 'ignored.csv', FIELDS, ignored.values())
-    print(f'Changed {len(changed - removed)}; removed {len(removed)} (to ignored.csv); master {len(master)}. Backup: {backup}')
+    return changed, removed
 
 
 def export(args):
