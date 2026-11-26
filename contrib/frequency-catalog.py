@@ -100,36 +100,44 @@ def write_together(files):
         for tmp, path in staged:
             if os.path.exists(path) and not os.path.isfile(path):
                 raise OSError(f'{path}: not a file')
-        # The files as they are, kept beside them: should a rename fail
-        # partway, those already replaced are put back
-        kept = []
+        # The files as they are, kept beside them: should a rename fail, or
+        # an interrupt come, partway, those already replaced are put back. A
+        # file was replaced exactly when its temporary is gone (whenever the
+        # interrupt came); each restore tried on its own, and an original
+        # not restored kept, its place in the error
+        kept = {}
+        for _, path in staged:
+            if os.path.exists(path):
+                fd, old = tempfile.mkstemp(prefix='.' + path.name + '.old', dir=path.parent)
+                os.close(fd)
+                shutil.copy2(path, old)
+                kept[path] = old
+        stranded = []
         try:
-            for _, path in staged:
-                if os.path.exists(path):
-                    fd, old = tempfile.mkstemp(prefix='.' + path.name + '.old', dir=path.parent)
-                    os.close(fd)
-                    shutil.copy2(path, old)
-                    kept.append((path, old))
-                else:
-                    kept.append((path, None))
-            done = []
-            try:
-                for tmp, path in staged:
-                    os.replace(tmp, path)
-                    done.append(path)
-            except OSError:
-                for path, old in kept:
-                    if path in done:
-                        if old is not None:
-                            os.replace(old, path)
-                        else:
-                            os.unlink(path)
-                raise
-            staged = []
+            for tmp, path in staged:
+                os.replace(tmp, path)
+        except BaseException as e:
+            for tmp, path in staged:
+                if os.path.exists(tmp):
+                    continue  # (not replaced)
+                old = kept.get(path)
+                try:
+                    if old is not None:
+                        os.replace(old, path)
+                    else:
+                        os.unlink(path)  # (didn't exist before)
+                    kept.pop(path, None)
+                except OSError:
+                    kept.pop(path, None)  # (kept on disk: not cleaned up below)
+                    stranded.append(f'{path} (as it was: {old or "not there"})')
+            if stranded:
+                raise OSError(f'{e}; and these could not be put back: ' + '; '.join(stranded)) from e
+            raise
         finally:
-            for _, old in kept:
-                if old is not None and os.path.exists(old):
+            for old in kept.values():
+                if os.path.exists(old):
                     os.unlink(old)
+        staged = []
     finally:
         for tmp, _ in staged:
             if os.path.exists(tmp):

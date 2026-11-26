@@ -200,5 +200,45 @@ finally:
     catalog.os.replace = real
 check(c_.read_text() == 'old c' and e_.read_text() == 'old e' and not [p for p in d.glob('.three*')] and not [p for p in d.glob('.four*')],
       'a rename failing partway: the first put back, no temporary left')
+# The first restore failing too: its original kept, named in the error
+c_.write_text('old c'); e_.write_text('old e')
+calls = []
+def failing2(src, dst):
+    calls.append((src, dst))
+    if len(calls) == 2:
+        raise OSError('the second rename fails')
+    if len(calls) == 3:
+        raise OSError('and the restore fails')
+    return real(src, dst)
+catalog.os.replace = failing2
+try:
+    catalog.write_together({c_: 'new c', e_: 'new e'})
+    check(False, 'a failed restore raises')
+except OSError as err:
+    kept_old = [Path(p) for p in d.glob('.three.txt.old*')]
+    check('could not be put back' in str(err) and kept_old and kept_old[0].read_text() == 'old c',
+          "a restore failing: the original kept, and named")
+    for p in kept_old:
+        p.unlink()
+finally:
+    catalog.os.replace = real
+# Ctrl-C just after a rename completes: rolled back all the same
+c_.write_text('old c'); e_.write_text('old e')
+calls = []
+def interrupted(src, dst):
+    real(src, dst)
+    calls.append(dst)
+    if len(calls) == 1:
+        raise KeyboardInterrupt
+catalog.os.replace = interrupted
+try:
+    catalog.write_together({c_: 'new c', e_: 'new e'})
+    check(False, 'an interrupt passes through')
+except KeyboardInterrupt:
+    pass
+finally:
+    catalog.os.replace = real
+check(c_.read_text() == 'old c' and e_.read_text() == 'old e' and not list(d.glob('.three*')) and not list(d.glob('.four*')),
+      'Ctrl-C after a rename: put back, nothing left over')
 print('freqs tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
