@@ -139,6 +139,35 @@ def plain(evidence):
             + (f' (listed {listed.group(1)})' if listed else ''))
 
 
+TRUNKED_TAGS = ('TRS', 'DEPRECATED')  # RadioReference's tags for trunked systems' site frequencies
+
+
+def trunked_frequencies(s):
+    """Trunked systems' frequencies (kHz): their site lists (downloads/sites),
+    and the county downloads' own TRS rows (RadioReference lists each
+    system's sites there too). Digital heard there is the system's, not a
+    conventional listing's"""
+    out = set()
+    folders = [(s['sites'], None), (s['downloads'], TRUNKED_TAGS)]
+    for folder, tags in folders:
+        if not folder.is_dir():
+            continue
+        for p in folder.glob('*.csv'):
+            if not p.is_file():
+                continue
+            try:
+                rows = survey.read_candidates(str(p))[1]
+            except (OSError, csv.Error, UnicodeDecodeError):
+                continue
+            for r in rows:
+                if tags is not None and (r.get('Tag') or '').strip().upper() not in tags:
+                    continue
+                f = survey.frequency_of(r)
+                if f:
+                    out.add(round(f / 1000))
+    return out
+
+
 def change_rows(s, logged_tx, coverage, results):
     """Catalog channels to change or remove: frequency-survey's corrections,
     one sheet row a channel"""
@@ -148,9 +177,17 @@ def change_rows(s, logged_tx, coverage, results):
         survey.tone_check(r, results)
     by_id = {r['ID']: r for r in rows}
     found = collections.OrderedDict()
+    trunked = trunked_frequencies(s)
     for c in survey.corrections(rows, s['skip'] or None, fields):
         if c['Action'] in ('change', 'remove'):
             found.setdefault(c['ID'], []).append(c)
+    # A trunked system's frequency: digital heard there is the system's, not
+    # this listing's (no mode change proposed)
+    for ident in list(found):
+        r = by_id[ident]
+        if (any(c['Field'] == 'RX Mode' for c in found[ident])
+                and round(float(r.get('RX MHz') or 0) * 1000) in trunked):
+            del found[ident]
     out = []
     for ident, cs in found.items():
         r = by_id[ident]
@@ -191,16 +228,10 @@ def add_rows(s, logged_tx, coverage, results):
     def in_catalog(hz):
         k = bisect.bisect_left(have, hz - 1000)
         return k < len(have) and abs(have[k] - hz) <= 1000
-    # A trunked system's channels (its site lists): followed through the
-    # system, not added as conventional channels
-    trunked = set()
-    if s['sites'].is_dir():
-        for p in s['sites'].glob('*.csv'):
-            if p.is_file():
-                for r in survey.read_candidates(str(p))[1]:
-                    f = survey.frequency_of(r)
-                    if f:
-                        trunked.add(round(f / 1000))
+    # A trunked system's channels (its site lists, the downloads' TRS rows):
+    # followed through the system, not added as conventional channels, nor
+    # any listing sharing them
+    trunked = trunked_frequencies(s)
     rules_path = s['catalog'] / 'source-rules.csv'
     rules = {r['File']: r for r in catalog.read_csv(rules_path, ['File', 'Service', 'Group'])}
     files = sorted(p for p in s['downloads'].glob('*.csv') if p.is_file() and not p.name.startswith('.'))
@@ -213,6 +244,8 @@ def add_rows(s, logged_tx, coverage, results):
     candidates = {}
     for ident, row in found.items():
         if ident in master or ident in ignored or not row.get('RX MHz'):
+            continue
+        if (row.get('Service') or '').strip().upper() in TRUNKED_TAGS:
             continue
         hz = round(float(row['RX MHz']) * 1e6)
         if in_catalog(hz) or round(hz / 1000) in trunked:

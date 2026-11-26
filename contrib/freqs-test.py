@@ -45,11 +45,12 @@ downloads.mkdir()
 catalog.write_csv(cat / 'source-rules.csv', ['File', 'Service', 'Group'], [])
 rows = []
 for ident, name, mhz, kind, value in (('m1', 'Wrong tone', '453.475000', 'DCS', '364'),
-                                       ('m2', 'Silent', '453.900000', 'Carrier', '')):
+                                       ('m2', 'Silent', '453.900000', 'Carrier', ''),
+                                       ('m3', 'On a trunk', '463.300000', 'Carrier', '')):
     r = dict.fromkeys(catalog.FIELDS, '')
     r.update({'ID': ident, 'Name': name, 'RX MHz': mhz, 'RX Mode': 'FMN', 'RX Squelch Type': kind,
               'RX Squelch Value': value, 'RX DCS Polarity': 'Normal' if kind == 'DCS' else '',
-              'Service': 'Fire-Tac' if ident == 'm1' else 'Ham', 'Group': 'fire-tac' if ident == 'm1' else 'ham',
+              'Service': 'Ham' if ident == 'm2' else 'Fire-Tac', 'Group': 'ham' if ident == 'm2' else 'fire-tac',
               'Receive Only': 'yes', 'Operation': 'Unknown',
               'Profiles': 'uhf'})
     rows.append(catalog.upgrade(r))
@@ -64,6 +65,8 @@ with open(downloads / 'County.csv', 'w', newline='') as f:
     w.writerow(['461.200000', '', '', 'Town', 'Town Police', 'Twn PD', '', '', 'FMN', 'FB', 'Law Dispatch'])
     w.writerow(['462.900000', '', '', 'Town', 'Never heard', 'Quiet', '', '', 'FMN', 'FB', 'Business'])
     w.writerow(['424.300000', '', '', 'County', 'Trunked', 'Trunk', '', '', 'P25', 'FB', 'Law Dispatch'])
+    w.writerow(['463.300000', '', '', 'SaiaNet', 'Site 008', '', '', '', 'DMR', '', 'TRS'])          # a trunked site, in the county list
+    w.writerow(['463.300000', '', '', 'Town', 'Town Fire Tac', 'Fire Tac', '', '', 'FMN', 'FB', 'Fire-Tac'])  # sharing it
 with open(downloads / 'sites' / 'trs_sites_1.csv', 'w', newline='') as f:
     f.write('Site Dec,Site Hex,Description,County Name,Lat,Lon,Range,Frequencies\n001,1,"Site","County",43,-78,10,424.300000c\n')
 # The evidence: two days watched; transmissions on each heard one
@@ -71,7 +74,7 @@ log = d / 'activity.csv'
 with open(log, 'w', newline='') as f:
     w = csv.writer(f)
     w.writerow(['start', 'end', 'frequency_mhz', 'channel_mhz', 'width_khz', 'seconds', 'db_over_floor', 'dbfs', 'known', 'mode_guess'])
-    for mhz in (453.475, 460.1, 461.2, 424.3):
+    for mhz in (453.475, 460.1, 461.2, 424.3, 463.3):
         stamp = '2026-11-25 10:00:00Z'
         w.writerow([stamp, stamp, f'{mhz:.4f}', f'{mhz:.5f}', '12.5', 3, 20, -90, '', ''])
     for k in range(100):  # in no list, busy (40 a day), irregular: audited by activity -U
@@ -91,6 +94,7 @@ with open(tones, 'w', newline='') as f:
     w.writerow(['461.20000', '40', '', '', 'DMR TG 5', 'DMR TG 5 x40'])
     w.writerow(['424.30000', '40', '', '', 'P25 TG 1', 'P25 TG 1 x40'])
     w.writerow(['455.50000', '30', '', '', '127.3 PL', '127.3 PL x30'])
+    w.writerow(['463.30000', '40', '', '', 'DMR TG 9', 'DMR TG 9 x40'])
 conf = d / 'freqs.conf'
 conf.write_text(f'[freqs]\ncatalog = {cat}\ndownloads = {downloads}\nsites = {downloads / "sites"}\n'
                 f'activity = {log}\ntones = {tones}\nbase = {d}\nconfig = {d / "conv.conf"}\nnames = {d / "names.csv"}\n')
@@ -103,6 +107,8 @@ check(by.get('Silent', {}).get('Proposal') == 'Remove', 'a silent one: remove')
 check(by.get('Twn Hwy', {}).get('Proposal') == 'Add (151.4 PL, as listed)', 'a download heard with its tone: add')
 check(by.get('Twn PD', {}).get('Proposal') == 'Add as DMR (listed FMN)', 'a download heard digital: add as that')
 check('Quiet' not in by and 'Trunk' not in by, 'neither the unheard nor a trunked system\'s channel proposed')
+check('On a trunk' not in by, "a catalog channel on a trunked site's frequency: the system's DMR not taken for its own")
+check('Fire Tac' not in by and not any(n.startswith('Site 008') for n in by), "a county list's TRS row: neither it nor a listing sharing it added")
 check(by.get('Unknown 455.50000', {}).get('Proposal') == 'Add (in no list) with 127.3 PL',
       'a busy frequency in no list, measured: added under a placeholder')
 
