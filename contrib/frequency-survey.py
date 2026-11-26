@@ -647,16 +647,13 @@ SHARE = 0.6    # of those heard, the share that must agree
 DIGITAL_MODES = {'P25': 'P25', 'DMR': 'DMR', 'NXDN': 'NXDN', 'YSF': 'YSF', 'DSTAR': 'D-STAR', 'M17': None}
 
 
-FINGERPRINT_FIELDS = ('Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity',
-                      'Service', 'Group')
-
-
-def fingerprint(row):
-    """A listing as it was surveyed (frequency-catalog.py correct checks a
-    removal against it: an old sheet mustn't remove a listing since changed).
-    The same in both scripts"""
+def fingerprint(row, fields):
+    """A listing as it was surveyed, every column of master.csv as the file
+    holds it (frequency-catalog.py correct checks a removal against it: an
+    old sheet mustn't remove a listing changed since). The same in both
+    scripts"""
     import hashlib
-    text = '\x1f'.join((row.get(k) or '').strip() for k in FINGERPRINT_FIELDS)
+    text = '\x1e'.join(f'{k}\x1f{(row.get(k) or "").strip()}' for k in sorted(fields))
     return 'row:' + hashlib.sha1(text.encode()).hexdigest()[:12]
 
 
@@ -668,7 +665,7 @@ def heard_kinds(heard):
     return out
 
 
-def corrections(rows, skip=None):
+def corrections(rows, skip=None, fields=()):
     """Proposed changes to catalog rows (ID, RX Squelch Type...) from their
     survey and tone check: (ID, Name, RX MHz, Action, Field, From, To,
     Evidence). Action: change and remove (applied by frequency-catalog.py
@@ -686,7 +683,7 @@ def corrections(rows, skip=None):
         survey = r.get('Survey', '')
         if survey.startswith('no RF activity') and r.get('Rare-use') != 'yes':
             days = float(r.get('Monitored days') or 0)
-            add('remove' if days >= 2 else 'wait', '', fingerprint(r), '', f'{survey} (not rare-use)')
+            add('remove' if days >= 2 else 'wait', '', fingerprint(r, fields), '', f'{survey} (not rare-use)')
             continue
         if survey != ACTIVE:
             continue
@@ -707,11 +704,17 @@ def corrections(rows, skip=None):
                 if m:
                     nacs[m.group(1)] += n
         # (tone-survey's "other": kinds past its sixteenth, nothing to go by)
-        analog = [(w, n) for w, n in kinds if w.split()[0] not in DIGITAL_MODES and w != 'other']
+        analog = [(w, n) for w, n in kinds if w.split()[0] not in DIGITAL_MODES]
+        listed = listed_tone(r)
+        listed_heard = bool(listed) and listed != 'none' and any(w == listed for w, _ in kinds)
         if digital:
             word, n = digital.most_common(1)[0]
             new = DIGITAL_MODES[word]
             if mode in ('FM', 'FMN') and new:
+                if n >= ENOUGH and n >= SHARE * total and listed_heard:
+                    # The listed tone heard too: analog users still on it, maybe
+                    add('listen', '', '', '', f'heard {word} x{n} of {total}, and the listed {listed} too: shared? {heard}')
+                    continue
                 if n >= ENOUGH and n >= SHARE * total:
                     add('change', 'RX Mode', r.get('RX Mode', ''), new, f'heard {word} x{n} of {total}: {heard}')
                     if (r.get('RX Squelch Type') or '') != 'Digital':
@@ -736,8 +739,12 @@ def corrections(rows, skip=None):
         atotal = sum(n for _, n in analog)
         if not analog or mode not in ('FM', 'FMN'):
             continue
-        what, n = max(analog, key=lambda k: k[1])
-        listed = listed_tone(r)
+        # (the most heard of what's a value; "other", tone-survey's kinds
+        # past its sixteenth, counted in atotal, never proposed)
+        values = [(w, k) for w, k in analog if w != 'other']
+        if not values:
+            continue
+        what, n = max(values, key=lambda k: k[1])
         if what == listed:
             continue
         if what == 'none':
@@ -747,7 +754,7 @@ def corrections(rows, skip=None):
             continue
         if not re.fullmatch(r'\d+\.\d PL|[DI][0-7]{3}', what):
             continue  # (not a tone: nothing to change it to)
-        if listed and listed != 'none' and any(w == listed for w, _ in kinds):
+        if listed_heard:
             # The listed tone heard too: a shared frequency, both users maybe
             add('listen', '', '', '', f'listed {listed}, heard {what} x{n} and the listed one too: shared? {heard}')
             continue
@@ -995,7 +1002,7 @@ def main(argv=None):
         for source in inputs + (out,):
             if same_file(args.corrections, source):
                 sys.exit(f'{args.corrections}: that is {source}: give another output')
-        found = corrections(rows, args.skip)
+        found = corrections(rows, args.skip, fields)
         write_csv(args.corrections, ['ID', 'Name', 'RX MHz', 'Action', 'Field', 'From', 'To', 'Evidence'], found)
         actions = collections.Counter(r['Action'] for r in found)
         changed = len({r['ID'] for r in found if r['Action'] == 'change'})

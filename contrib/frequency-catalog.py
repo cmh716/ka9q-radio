@@ -418,15 +418,12 @@ def apply(args):
     print(f'Kept {kept}; ignored {rejected}; pending {len(pending)}; master {len(master)}. Backup: {backup}')
 
 
-FINGERPRINT_FIELDS = ('Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity',
-                      'Service', 'Group')
-
-
-def fingerprint(row):
-    """A listing as frequency-survey.py saw it (the same there): a removal
-    applies only to the listing it was proposed for"""
+def fingerprint(row, fields):
+    """A listing as frequency-survey.py saw it, every column of master.csv
+    as the file holds it (the same there): a removal applies only to the
+    listing it was proposed for, unchanged"""
     import hashlib
-    text = '\x1f'.join((row.get(k) or '').strip() for k in FINGERPRINT_FIELDS)
+    text = '\x1e'.join(f'{k}\x1f{(row.get(k) or "").strip()}' for k in sorted(fields))
     return 'row:' + hashlib.sha1(text.encode()).hexdigest()[:12]
 
 
@@ -439,6 +436,12 @@ def correct(args):
     w = args.workspace
     master, ignored, inbox, state = load(w)
     rows = read_csv(args.corrections, ['ID', 'Action', 'Field', 'From', 'To'])
+    # Master as the file holds it (before upgrade()'s defaults): what a
+    # removal's fingerprint was taken of
+    with (w / 'master.csv').open(newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        file_fields = list(reader.fieldnames or [])
+        as_filed = {r['ID'].strip(): r for r in reader if r.get('ID')}
     changed, removed, problems = set(), set(), []
     for n, r in enumerate(rows, 2):
         action = r['Action'].lower()
@@ -450,7 +453,7 @@ def correct(args):
             continue
         if action == 'remove':
             # The listing as it was surveyed (From): changed since, not removed
-            if r['From'] != fingerprint(master[key]):
+            if key not in as_filed or r['From'] != fingerprint(as_filed[key], file_fields):
                 problems.append(f'line {n}: {key}: changed since it was surveyed (or no fingerprint): '
                                 'survey again, or remove it by hand')
                 continue

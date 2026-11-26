@@ -306,6 +306,12 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(self.read('master.csv')[0]['My Custom Column'], 'Do not lose')
 
 
+    def fingerprint(self, key):
+        with (self.w / 'master.csv').open(newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            row = next(r for r in reader if r['ID'] == key)
+            return catalog.fingerprint(row, reader.fieldnames)
+
     def keep_both(self):
         rows = self.read('inbox.csv')
         for r in rows:
@@ -323,7 +329,7 @@ class CatalogTest(unittest.TestCase):
             {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Squelch Type', 'From': a['RX Squelch Type'], 'To': 'CTCSS'},
             {'ID': a['ID'], 'Action': 'change', 'Field': 'RX Squelch Value', 'From': a['RX Squelch Value'], 'To': '141.3'},
             {'ID': a['ID'], 'Action': 'listen', 'Field': '', 'From': '', 'To': ''},
-            {'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': catalog.fingerprint(b), 'To': ''}])
+            {'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': self.fingerprint(b['ID']), 'To': ''}])
         self.call(catalog.correct, corrections=sheet)
         after = {r['Name']: r for r in self.read('master.csv')}
         self.assertEqual((after['GMRS 15']['RX Squelch Type'], after['GMRS 15']['RX Squelch Value']), ('CTCSS', '141.3'))
@@ -339,11 +345,11 @@ class CatalogTest(unittest.TestCase):
         master = self.keep_both()
         b = master['GMRS 16']
         sheet = self.root / 'corrections.csv'
-        old = catalog.fingerprint(b)
+        old = self.fingerprint(b['ID'])
         rows = self.read('master.csv')
         for r in rows:
             if r['ID'] == b['ID']:
-                r['Name'] = 'Renamed since'
+                r['Profiles'] = (r.get('Profiles') or '') + ';scanner'   # (a setting the old fingerprint left out)
         catalog.write_csv(self.w / 'master.csv', catalog.FIELDS, rows)
         catalog.write_csv(sheet, ['ID', 'Action', 'Field', 'From', 'To'],
                           [{'ID': b['ID'], 'Action': 'remove', 'Field': '', 'From': old, 'To': ''}])

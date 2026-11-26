@@ -725,5 +725,25 @@ for bad in ('nan', '-5', 'inf'):
         check(False, f'--max-width {bad} refused')
     except SystemExit as e:
         check('--max-width' in str(e), f'--max-width {bad} refused')
+# Digital most heard but the listed tone too: listen; "other" in the count
+cat6 = os.path.join(d, 'cat6.csv')
+with open(cat6, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['ID', 'Name', 'RX MHz', 'RX Mode', 'RX Squelch Type', 'RX Squelch Value', 'RX DCS Polarity', 'CTCSS Notch Hz', 'Service', 'Group', 'P25 NAC'])
+    w.writerow(['u1', 'Mixed', '453.475000', 'FMN', 'CTCSS', '100.0', '', '', 'Fire-Tac', 'fire-tac', ''])
+    w.writerow(['u2', 'Mostly other', '452.700000', 'FMN', 'Carrier', '', '', '', 'Fire-Tac', 'fire-tac', ''])
+tones6 = os.path.join(d, 'tones6.csv')
+with open(tones6, 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['frequency_mhz', 'transmissions', 'first', 'last', 'commonest', 'heard'])
+    w.writerow(['453.47500', '100', '', '', 'DMR TG 1', 'DMR TG 1 x65; 100.0 PL x35'])
+    w.writerow(['452.70000', '50', '', '', 'other', 'other x40; 127.3 PL x10'])
+fixes3 = os.path.join(d, 'fixes3.csv')
+survey.main(['-a', log20, '--tones', tones6, '-o', os.path.join(d, 'out28.csv'), '--corrections', fixes3, cat6])
+by3 = collections.defaultdict(list)
+for r in csv.DictReader(open(fixes3)):
+    by3[r['ID']].append(r['Action'])
+check(by3['u1'] == ['listen'], 'digital most heard, the listed tone too: listen, not a mode change')
+check(by3['u2'] == ['wait'], '10 of 50 (other counted): not enough to change')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)
