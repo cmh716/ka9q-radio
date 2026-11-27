@@ -321,7 +321,7 @@ def unlisted_rows(s, found, results):
                     'Description': f"heard {u['transmissions']} times, busiest {u['busiest_hours']}; first {u['first']}"})
         row = catalog.upgrade(row)
         judged = dict(row, Heard=heard[1])
-        verdict = add_verdict(judged)
+        verdict = add_verdict(judged, voice_only=True)
         if verdict is None:
             continue
         proposal, changes, why = verdict
@@ -334,9 +334,11 @@ def unlisted_rows(s, found, results):
     return out
 
 
-def add_verdict(r):
-    """A downloaded listing's case for adding: (proposal, field changes, why), or None"""
-    kinds = survey.heard_kinds(r.get('Heard'))
+def add_verdict(r, voice_only=False):
+    """A downloaded listing's case for adding: (proposal, field changes, why),
+    or None. voice_only (a frequency in no list): untoned only on "voice",
+    someone heard talking, not on "none" from before voice detection"""
+    kinds = survey.heard_kinds(r.get('Heard'), evidence=True)
     total = sum(n for _, n in kinds)
     if not total:
         return None
@@ -376,6 +378,9 @@ def add_verdict(r):
     if what == 'none':
         if listed and listed != 'none':
             return None  # listed with a tone, heard without: hear it first
+        voiced = sum(k for w, k in survey.heard_kinds(r.get('Heard')) if w == 'voice')
+        if voice_only and voiced < survey.ENOUGH:
+            return None  # (no list's word for it: someone must be heard talking)
         return ('Add (no tone)', {'RX Squelch Type': 'Carrier', 'RX Squelch Value': '', 'RX DCS Polarity': ''},
                 f'heard with no tone on {n} of {total} transmissions')
     if not re.fullmatch(r'\d+\.\d PL|[DI][0-7]{3}', what):

@@ -12,7 +12,9 @@
 // transmission (radiod sends nothing while a channel is squelched: a burst
 // of audio) is judged as it ends: the tone found in most of it (monitor's
 // detector: of the 55 tones, one with over half their energy, every
-// 0.24 s), else the DCS code found most (radiod's decoder), else none; or,
+// 0.24 s), else the DCS code found most (radiod's decoder), else, with no
+// tone, "voice" (someone talking), "carrier" (an empty one) or "noise"
+// (voice-detect.h: from the audio's spectrum and its rise and fall); or,
 // for a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...);
 // a digital transmission with no voice (encrypted, data: no audio), from
 // a mixed channel's status alone, "DMR (no voice)", "P25 NAC 293 (no voice)".
@@ -45,6 +47,7 @@
 #include "status.h"
 #include "iir.h"
 #include "dcs.h"
+#include "voice-detect.h"
 
 #define MAX_GROUPS 16
 #define MAX_SESSIONS 1024
@@ -343,6 +346,7 @@ struct session {
   int periods;
   int tone_votes[N_TONES];
   struct dcs_decoder dcs;
+  struct voice_detect voice;  // with no tone: someone talking, a carrier, or noise
   int dcs_votes;          // periods with a DCS code (the commonest kept below)
   int dcs_code[8];        // codes seen, and their periods
   bool dcs_inv[8];
@@ -371,6 +375,7 @@ static void tx_begin(struct session *sp){
   for(int j = 0; j < N_TONES; j++)
     init_goertzel(&sp->tone[j],PL_tones[j] / (float)SAMPRATE);
   init_dcs_decoder(&sp->dcs,(float)SAMPRATE);
+  vd_init(&sp->voice,(float)SAMPRATE);
   sp->dcs_votes = 0;
   sp->ndcs = 0;
 }
@@ -405,7 +410,8 @@ static void tx_end(struct session *sp){
     else {
       if((double)sp->samples / SAMPRATE < Min_none)
 	return;
-      strlcpy(what,"none",sizeof what);
+      // No tone: someone talking ("voice"), an empty carrier, or noise
+      strlcpy(what,vd_classify(&sp->voice),sizeof what);
     }
   }
   if(Verbose)
@@ -422,6 +428,7 @@ static void audio(struct session *sp,float const *x,int n){
     for(int j = 0; j < N_TONES; j++)
       update_goertzel(&sp->tone[j],x[i]);
     process_dcs_sample(&sp->dcs,x[i]);
+    vd_sample(&sp->voice,x[i]);
     if(++sp->tone_fill >= (int)(Tone_period * SAMPRATE)){
       sp->tone_fill = 0;
       sp->periods++;

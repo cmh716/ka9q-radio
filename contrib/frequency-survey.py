@@ -685,12 +685,22 @@ def fingerprint(row, fields):
     return 'row:' + hashlib.sha1(text.encode()).hexdigest()[:12]
 
 
-def heard_kinds(heard):
-    """tone-survey's 'heard' text: [(what, count)]"""
-    out = []
+UNTONED = ('none', 'voice')     # no tone: "voice" someone talking ("none" from before voice detection)
+NOT_EVIDENCE = ('carrier', 'noise')  # an empty carrier, or noise: nobody's tone, for or against
+
+
+def heard_kinds(heard, evidence=False):
+    """tone-survey's 'heard' text: [(what, count)]. evidence: what speaks to
+    a listing's tone or mode: carriers and noise left out, "voice" counted
+    as "none" (untoned)"""
+    out = collections.Counter() if evidence else []
     for m in re.finditer(r'(?:^|; )(.+?) x(\d+)(?=; |$)', heard or ''):
-        out.append((m.group(1), int(m.group(2))))
-    return out
+        what, n = m.group(1), int(m.group(2))
+        if not evidence:
+            out.append((what, n))
+        elif what not in NOT_EVIDENCE:
+            out['none' if what in UNTONED else what] += n
+    return list(out.items()) if evidence else out
 
 
 def corrections(rows, skip=None, fields=()):
@@ -715,7 +725,7 @@ def corrections(rows, skip=None, fields=()):
             continue
         if survey != ACTIVE:
             continue
-        kinds = heard_kinds(r.get('Heard'))
+        kinds = heard_kinds(r.get('Heard'), evidence=True)
         if not kinds:
             continue
         total = sum(n for _, n in kinds)
@@ -833,16 +843,22 @@ def tone_check(row, results):
         # (only a frequency with activity is audited: the rest wait for none)
         row['Tone check'] = 'not surveyed yet' if row.get('Survey') == ACTIVE else ''
         return
-    commonest, heard = found
+    _, heard = found
     row['Heard'] = heard
     listed = listed_tone(row)
-    kinds = {m.group(1) for m in re.finditer(r'(?:^|; )(.+?) x\d+(?=; |$)', heard)}
+    # (from what speaks to a tone: carriers and noise left out, voice untoned)
+    evidence = heard_kinds(heard, evidence=True)
+    if not evidence:
+        row['Tone check'] = 'carrier or noise only'
+        return
+    commonest = max(evidence, key=lambda k: k[1])[0]
+    kinds = {w for w, _ in evidence}
     if listed and commonest == listed:
         row['Tone check'] = 'confirmed'
     elif listed and listed != 'none' and listed in kinds:
         # A shared frequency: the listed tone heard, another oftener
         row['Tone check'] = f'heard, less often than {commonest}'
-    elif commonest and not re.fullmatch(r'[\d.]+ PL|[DI]\d{3}|none', commonest):
+    elif commonest and not re.fullmatch(r'[\d.]+ PL|[DI]\d{3}|none|other', commonest):
         row['Tone check'] = f'digital: {commonest}'
     elif commonest == 'none':
         row['Tone check'] = 'no tone heard' + (f' (listed {listed})' if listed and listed != 'none' else '')

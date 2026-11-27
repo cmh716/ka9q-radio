@@ -745,5 +745,12 @@ for r in csv.DictReader(open(fixes3)):
     by3[r['ID']].append(r['Action'])
 check(by3['u1'] == ['listen'], 'digital most heard, the listed tone too: listen, not a mode change')
 check(by3['u2'] == ['wait'], '10 of 50 (other counted): not enough to change')
+# tone_check with voice detection's labels
+row = {'RX MHz': '460.000000', 'RX Squelch Type': 'Carrier', 'Survey': survey.ACTIVE}
+survey.tone_check(row, {460000000: ('carrier', 'carrier x12; noise x3')})
+check(row['Tone check'] == 'carrier or noise only', 'carriers and noise only: said so')
+row = {'RX MHz': '460.000000', 'RX Squelch Type': 'Carrier', 'Survey': survey.ACTIVE}
+survey.tone_check(row, {460000000: ('carrier', 'carrier x30; voice x12')})
+check(row['Tone check'] == 'confirmed', 'listed untoned, someone heard talking untoned: confirmed (carriers aside)')
 print('Frequency survey tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

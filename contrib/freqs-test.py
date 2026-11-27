@@ -256,5 +256,17 @@ finally:
     catalog.os.replace = real
 check(c_.read_text() == 'old c' and e_.read_text() == 'old e' and not list(d.glob('.three*')) and not list(d.glob('.four*')),
       'Ctrl-C after a rename: put back, nothing left over')
+# Voice detection: untoned in no list only on "voice"; carriers and noise no evidence
+def verdict(heard, listed_kind='Carrier', voice_only=False):
+    r = catalog.upgrade(dict(dict.fromkeys(catalog.FIELDS, ''), ID='v', Name='v', **{'RX MHz': '459.000000', 'RX Mode': 'FMN',
+                         'RX Squelch Type': listed_kind, 'Heard': heard}))
+    return freqs.add_verdict(r, voice_only=voice_only)
+check(verdict('voice x30', voice_only=True) is not None and verdict('voice x30', voice_only=True)[0] == 'Add (no tone)',
+      'in no list, someone heard talking 30 times, no tone: proposed')
+check(verdict('none x30', voice_only=True) is None, 'in no list, "none" from before voice detection: not enough')
+check(verdict('carrier x30', voice_only=True) is None and verdict('noise x30') is None, 'carriers and noise: never proposed')
+check(verdict('voice x12; carrier x40') is not None, 'a listed untoned channel: its voice counts, carriers between it no evidence against')
+check(verdict('127.3 PL x10; noise x40') is not None and verdict('127.3 PL x10; noise x40')[0].startswith('Add with 127.3 PL'),
+      'a tone among noise: the noise no evidence against it')
 print('freqs tests ' + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

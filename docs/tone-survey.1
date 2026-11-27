@@ -9,7 +9,15 @@ tone-survey listens to radiod channels opened without tone squelch (mode
 mixed: analog FM and every digital mode), normally those activity(1)'s
 on-demand audit opens as frequencies are used, and judges each
 transmission as it ends: the CTCSS tone found in most of it (55 tones,
-looked at every 0.24 s), else the DCS code found most, else none; or, for
+looked at every 0.24 s), else the DCS code found most; else, with no tone,
+.B voice
+(someone talking: a peaky spectrum, harmonics and formants, in many loud
+frames, rising and falling with the syllables),
+.B carrier
+(an empty one: never loud above 300 Hz) or
+.B noise
+(hiss, steady or pulsing, flat in spectrum; or a steady whistle or data
+tone); or, for
 a digital call, its mode and IDs (P25 NAC, talkgroup; DMR, NXDN...), split
 where radiod says each call begins. Under half a second isn't judged; with
 no tone, code or call, under 1.5 s isn't counted.

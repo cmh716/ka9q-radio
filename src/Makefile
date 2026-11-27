@@ -311,6 +311,11 @@ pcmrecord: pcmrecord.o attr.o talkgroup.o libstatus.a libradio.a
 activity: activity.o libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lm -lpthread $(LDLIBS)
 
+tone-survey.o: voice-detect.h
+
+voice-detect-test: voice-detect-test.c voice-detect.h
+	$(CC) $(CFLAGS) -o $@ voice-detect-test.c -lm
+
 tone-survey: tone-survey.o dcs.o libdsp.a libstatus.a libradio.a
 	$(CC) $(LDFLAGS) -o $@ $^ -lopus -lsamplerate -lm $(LDLIBS)
 

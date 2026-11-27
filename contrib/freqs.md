@@ -70,6 +70,12 @@ systemctl --user restart freqs-activity
 
 Until the new survey has enough, reviews propose fewer changes, not wrong ones.
 
+With no tone, tone-survey tells **voice** (someone talking), an empty
+**carrier** and **noise** apart from the audio itself. Carriers and noise count
+neither for nor against a listing, and a frequency in no list is proposed
+without a tone only when someone has been heard talking on it (older results
+say **none**: untoned, not yet told apart).
+
 A proposal appears only when the evidence is strong: at least 10 identified
 transmissions, 60% of them agreeing. FRS and GMRS channels are never changed
 or removed. Trunked systems' channels (their site lists in `downloads/sites/`)
