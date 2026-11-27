@@ -11,6 +11,7 @@ tone-survey's results (the tone or digital mode of each), both running all
 the time. review turns it into proposals, one a row:
 
   Change   a catalog channel heard with another tone, or digital
+  Put on the air   a catalog channel not in the profile, heard as listed (confirmed)
   Remove   a catalog channel silent for days (not fire, EMS or other rare-use)
   Add      a downloaded listing (~/Frequencies/downloads) heard on the air, its
            tone or mode confirmed, at a frequency the catalog doesn't have yet;
@@ -176,6 +177,7 @@ def change_rows(s, logged_tx, coverage, results):
     for r in rows:
         survey.tone_check(r, results)
     by_id = {r['ID']: r for r in rows}
+    out = enable_rows(s, rows)
     found = collections.OrderedDict()
     trunked = trunked_frequencies(s)
     for c in survey.corrections(rows, s['skip'] or None, fields):
@@ -188,7 +190,6 @@ def change_rows(s, logged_tx, coverage, results):
         if (any(c['Field'] == 'RX Mode' for c in found[ident])
                 and round(float(r.get('RX MHz') or 0) * 1000) in trunked):
             del found[ident]
-    out = []
     for ident, cs in found.items():
         r = by_id[ident]
         payload = [{k: c[k] for k in ('ID', 'Action', 'Field', 'From', 'To')} for c in cs]
@@ -215,6 +216,57 @@ def change_rows(s, logged_tx, coverage, results):
         out.append({'Frequency': mhz_text(r.get('RX MHz')), 'Name': r.get('Name', ''), 'Proposal': proposal,
                     'Why': why, 'List': 'catalog', 'Key': key_of(kind, ident, payload),
                     'Payload': json.dumps({'kind': kind, 'corrections': payload})})
+    return out
+
+
+def confirmed_on_air(r):
+    """A catalog row's case for being on the air: its listing confirmed by
+    what's heard, as strongly as an addition needs (10 identified, 60% of
+    the evidence). (why) or None"""
+    evidence = dict(survey.heard_kinds(r.get('Heard'), evidence=True))
+    total = sum(evidence.values())
+    if not total:
+        return None
+    mode = (r.get('RX Mode') or '').upper().rstrip('E')
+    if mode in ('FM', 'FMN'):
+        listed = survey.listed_tone(r) or 'none'
+        n = evidence.get(listed, 0)
+        if listed == 'none':  # untoned: someone heard talking, not older "none"
+            n = sum(k for w, k in survey.heard_kinds(r.get('Heard')) if w == 'voice')
+        what = listed if listed != 'none' else 'voice, no tone'
+    else:
+        word = {'D-STAR': 'DSTAR'}.get(mode, mode)
+        n = sum(k for w, k in evidence.items() if w.split()[0] == word)
+        what = mode
+    if n >= survey.ENOUGH and n >= survey.SHARE * total:
+        return f'heard {what}, as listed, on {n} of {total} transmissions'
+    return None
+
+
+def enable_rows(s, rows):
+    """Catalog channels off the air (not in the profile) heard as listed,
+    confirmed: proposed for it. A rejection is remembered (the key: the
+    channel and the profile), so one taken off on purpose isn't offered
+    again"""
+    out = []
+    profile = s['profile']
+    trunked = trunked_frequencies(s)
+    for r in rows:
+        profiles = [p for p in (r.get('Profiles') or '').split(';') if p]
+        if profile in profiles or r.get('Survey') != survey.ACTIVE or not r.get('ID'):
+            continue
+        if s['skip'] and any(re.search(s['skip'], r.get(k) or '', re.I) for k in ('Service', 'Group', 'Name')):
+            continue
+        if (r.get('Service') or '').strip().upper() in TRUNKED_TAGS or round(float(r.get('RX MHz') or 0) * 1000) in trunked:
+            continue
+        why = confirmed_on_air(r)
+        if why is None:
+            continue
+        new = ';'.join(profiles + [profile])
+        payload = [{'ID': r['ID'], 'Action': 'change', 'Field': 'Profiles', 'From': r.get('Profiles', ''), 'To': new}]
+        out.append({'Frequency': mhz_text(r.get('RX MHz')), 'Name': r.get('Name', ''), 'Proposal': f'Put on the air ({profile} profile)',
+                    'Why': why, 'List': 'catalog', 'Key': key_of('enable', r['ID'], {'profile': profile}),
+                    'Payload': json.dumps({'kind': 'enable', 'corrections': payload})})
     return out
 
 
@@ -420,13 +472,14 @@ def review(s, quiet=False):
             continue
         p['Decision'] = typed.get(p['Key'], '')
         rows.append(p)
-    order = {'change': 0, 'remove': 1, 'add': 2}
+    order = {'change': 0, 'enable': 1, 'remove': 2, 'add': 3}
     rows.sort(key=lambda r: (order[r['Key'].split(':')[0]], float(r['Frequency'] or 0)))
     survey.write_csv(str(sheet), COLUMNS, rows)
     if not quiet:
         kinds = collections.Counter(r['Key'].split(':')[0] for r in rows)
         print(f'{days:.1f} days of evidence. {len(rows)} to decide in {sheet}: '
-              f"{kinds['change']} to change, {kinds['remove']} to remove, {kinds['add']} to add.")
+              f"{kinds['change']} to change, {kinds['enable']} to put on the air, {kinds['remove']} to remove, "
+              f"{kinds['add']} to add.")
         print('Type Approve or Reject in the Decision column, save and close it, then: freqs apply')
         unknown_summary(found, {r['Frequency'] for r in rows if r['List'] == '(none)'})
     return rows

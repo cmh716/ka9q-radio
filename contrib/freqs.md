@@ -25,6 +25,9 @@ cd ~/ka9q-radio/contrib
    | | 444.1500 | WB2JPQ | Remove | no RF activity in 2.3 days monitored |
 
    - **Change**: a catalog channel heard with another tone, or digital.
+   - **Put on the air**: a catalog channel not in your profile (no `uhf` in its
+     Profiles) that's heard as listed, confirmed as strongly as an addition.
+     Approve, and it joins the profile.
    - **Remove**: a catalog channel silent for 2 days or more. Fire, EMS and
      other rare-use channels are never proposed for removal.
    - **Add**: a downloaded listing heard on the air, with its tone or mode
@@ -33,6 +36,11 @@ cd ~/ka9q-radio/contrib
      mode measured, under a placeholder name such as `Unknown 462.03125` and
      Service Unknown (its own `unknown` group in radiod). Rename it in
      `master.csv` once you know what it is.
+
+To take a channel off the air yourself (too distant, an empty carrier), keep it
+in `master.csv` but clear its Profiles, and say why in Notes. If it's later
+proposed to be put back on the air, Reject that once: it isn't offered again.
+Deleting the row instead would only have it proposed as an addition again.
 
 3. Type **Approve** or **Reject** in the Decision column. Leave a row blank to
    decide later. Save, and close the sheet.
